@@ -3,7 +3,7 @@
 </script>
 
 <template>
-  <div class="ml-0 flex-1 max-w-xl">
+  <div class="ml-0 flex-1 w-sm mx-auto">
     <div
         class="flex items-center gap-3 rounded-xl border light-grey-stroke light-grey-background px-2 py-2"
     >
