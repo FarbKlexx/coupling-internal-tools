@@ -1,9 +1,8 @@
 <script setup lang="ts">
+import TopBar from "./components/topbar/TopBar.vue";
 </script>
 
 <template>
-  <div class="min-h-screen bg-zinc-950 text-zinc-100 p-10 text-2xl">
-    Tailwind v4 CLEAN SETUP WORKS
-  </div>
+  <TopBar></TopBar>
 </template>
 
