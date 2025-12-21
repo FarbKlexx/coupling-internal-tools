@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import TopBar from "./components/topbar/TopBar.vue";
+import DashboardLayout from "./layouts/DashboardLayout.vue";
 </script>
 
 <template>
-  <TopBar></TopBar>
+  <DashboardLayout></DashboardLayout>
 </template>
 
