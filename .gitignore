@@ -1,0 +1,12 @@
+# OS / Editor (global)
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Logs
+*.log
+
+# Secrets
+.env
+.env.*
