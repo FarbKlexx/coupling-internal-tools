@@ -49,6 +49,10 @@ a {
   border: 1px solid  #1E1E1E;
 }
 
+.nav-icon--active {
+  color: #ffffff;
+}
+
 .nav-item:hover {
   background: #252526;
   border: 1px solid #333333;
@@ -57,6 +61,11 @@ a {
 .grey-text {
   font-size: 12px;
   color: #9D9DA8;
+}
+
+.white-text {
+  font-size: 12px;
+  color: #ffffff;
 }
 
 .circle {
@@ -82,4 +91,19 @@ a {
   text-align: center;
 
   pointer-events: none;
+}
+
+.sidebar-item {
+  background: #1E1E1E;
+  border: 1px solid  #1E1E1E;
+}
+
+.sidebar-item:hover {
+  background: #252526;
+  border: 1px solid #333333;
+}
+
+.sidebar-item--active {
+  background: #252526;
+  border: 1px solid #333333;
 }

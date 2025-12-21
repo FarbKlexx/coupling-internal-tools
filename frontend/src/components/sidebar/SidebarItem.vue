@@ -1,12 +1,22 @@
 <template>
   <button
-    class="flex items-center gap-3 rounded-lg px-3 py-2 text-left transition"
+    @click="$emit('select')"
+    :class="[
+      'flex items-center gap-3 rounded-lg px-1 py-1 text-left transition sidebar-item',
+      isActive && 'sidebar-item--active'
+    ]"
   >
-    <span class="material-symbols-outlined text-xl">
+    <span :class="[
+      'material-symbols-outlined nav-icon',
+      isActive && 'nav-icon--active',
+      ]">
       {{ icon }}
     </span>
 
-    <span class="text-sm font-medium">
+    <span :class="[
+      'grey-text',
+      isActive && 'white-text',
+      ]">
       {{ label }}
     </span>
   </button>
@@ -16,5 +26,10 @@
 defineProps<{
   icon: string;
   label: string;
+  isActive?: boolean;
+}>();
+
+defineEmits<{
+  (e: 'select'): void;
 }>();
 </script>
