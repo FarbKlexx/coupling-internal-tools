@@ -30,3 +30,21 @@ a {
 .grey-stroke {
   border: 1px solid #252526;
 }
+
+.light-grey-background {
+  background: #252526;
+}
+
+.light-grey-stroke {
+  border: 1px solid #333333;
+}
+
+.nav-icon {
+  font-size: 18px;
+  color: #9D9DA8;
+}
+
+.grey-text {
+  font-size: 12px;
+  color: #9D9DA8;
+}
