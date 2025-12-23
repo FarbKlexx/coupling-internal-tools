@@ -1,8 +1,11 @@
 <template>
   <aside
-    class="w-52 shrink-0 overflow-y-auto grey-background grey-stroke"
+    class="w-52 shrink-0 overflow-y-auto grey-background grey-stroke p-4 gap-3 flex flex-col"
   >
-    <nav class="flex flex-col gap-1 p-4">
+  <span class="grey-text eyebrow"> 
+    Hauptkategorie
+  </span>
+    <nav class="flex flex-col gap-1">
       <SidebarItem
         v-for="item in items"
         :key="item.id"
@@ -21,12 +24,9 @@ import SidebarItem from "./SidebarItem.vue";
 
 const items = [
   { id: 'dashboard', icon: 'dashboard', label: 'Dashboard' },
-  { id: 'analytics', icon: 'bar_chart', label: 'Analytics' },
-  { id: 'orders', icon: 'shopping_cart', label: 'Orders' },
-  { id: 'customers', icon: 'group', label: 'Customers' },
-  { id: 'settings', icon: 'settings', label: 'Settings' },
+  { id: 'abgleiche', icon: 'table', label: 'AWIN Abgleiche' },
 ];
 
-const activeItem = ref(items[0].id);
+const activeItem = ref(items[0]!.id);
 </script>
 

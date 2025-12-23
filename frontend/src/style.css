@@ -8,6 +8,7 @@
 }
 
 html, body {
+  font-family: 'Outfit', sans-serif !important;
   height: 100%;
 }
 
@@ -40,7 +41,7 @@ a {
 }
 
 .nav-icon {
-  font-size: 18px;
+  font-size: 20px;
   color: #9D9DA8;
 }
 
@@ -59,13 +60,25 @@ a {
 }
 
 .grey-text {
-  font-size: 12px;
+  font-size: 14px;
   color: #9D9DA8;
 }
 
+.eyebrow {
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
 .white-text {
-  font-size: 12px;
+  font-size: 14px;
   color: #ffffff;
+}
+
+.outfit-regular {
+  font-family: "Outfit", sans-serif;
+  font-optical-sizing: auto;
+  font-weight: 400;
+  font-style: normal;
 }
 
 .circle {
