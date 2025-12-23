@@ -2,7 +2,7 @@
   <button
     @click="$emit('select')"
     :class="[
-      'flex items-center gap-3 rounded-lg px-1 py-1 text-left transition sidebar-item',
+      'flex items-center gap-3 rounded-md px-1 py-1 text-left transition sidebar-item',
       isActive && 'sidebar-item--active'
     ]"
   >
