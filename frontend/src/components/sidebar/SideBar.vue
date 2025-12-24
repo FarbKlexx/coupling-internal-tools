@@ -11,22 +11,27 @@
         :key="item.id"
         :icon="item.icon"
         :label="item.label"
-        :isActive="activeItem === item.id"
-        @select="activeItem = item.id"
+        :isActive="route.name === item.id"
+        @select="selectItem(item.id)"
       />
     </nav>
   </aside>
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
 import SidebarItem from "./SidebarItem.vue";
+import { useRoute, useRouter } from "vue-router";
+
+const route = useRoute();
+const router = useRouter();
 
 const items = [
   { id: 'dashboard', icon: 'dashboard', label: 'Dashboard' },
   { id: 'abgleiche', icon: 'table', label: 'AWIN Abgleiche' },
 ];
 
-const activeItem = ref(items[0]!.id);
+function selectItem(id: string) {
+  router.push({ name: id });
+}
 </script>
 
