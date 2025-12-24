@@ -55,10 +55,10 @@ async function upload() {
       <label class="text-sm">Konvertierungsoption</label>
       <select
         v-model="option"
-        class="rounded-md bg-zinc-800 border border-zinc-700 px-3 py-2"
+        class="rounded-md light-grey-background light-grey-stroke px-3 py-2"
       >
-        <option value="jf_to_awin">JF → AWIN</option>
-        <option value="jf_bonus">JF Bonus</option>
+        <option value="jf_to_awin">JeansFritz zu AWIN</option>
+        <option value="jf_bonus">JeansFritz Bonus</option>
       </select>
     </div>
 
@@ -69,15 +69,12 @@ async function upload() {
         type="file"
         accept=".csv,text/csv"
         @change="onFileChange"
-        class="block w-full text-sm text-zinc-300
+        class="block w-full text-sm light-grey-text
                file:mr-4 file:rounded-md file:border-0
                file:bg-zinc-700 file:px-4 file:py-2
                file:text-sm file:font-semibold
                hover:file:bg-zinc-600"
       />
-      <span v-if="selectedFile" class="text-xs text-zinc-400">
-        {{ selectedFile.name }}
-      </span>
     </div>
 
     <!-- Error -->
@@ -93,7 +90,7 @@ async function upload() {
              hover:bg-blue-500 disabled:opacity-50"
     >
       <span v-if="!isLoading">Konvertieren & herunterladen</span>
-      <span v-else>Verarbeite…</span>
+      <span v-else>Verarbeite...</span>
     </button>
   </div>
 </template>

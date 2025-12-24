@@ -65,6 +65,11 @@ a {
   color: #9D9DA8;
 }
 
+.light-grey-text {
+  font-size: 14px;
+  color: #b9b9c7;
+}
+
 .eyebrow {
   letter-spacing: 1px;
   text-transform: uppercase;
