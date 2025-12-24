@@ -51,6 +51,7 @@ a {
 }
 
 .nav-icon--active {
+  font-size: 20px;
   color: #ffffff;
 }
 
@@ -107,8 +108,8 @@ a {
 }
 
 .sidebar-item {
-  background: #1E1E1E;
-  border: 1px solid  #1E1E1E;
+  background: #252526; 
+  border: 1px solid #252526;
 }
 
 .sidebar-item:hover {
@@ -117,6 +118,6 @@ a {
 }
 
 .sidebar-item--active {
-  background: #252526;
+  background: #1E1E1E;
   border: 1px solid #333333;
 }

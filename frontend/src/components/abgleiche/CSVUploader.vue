@@ -47,7 +47,7 @@ async function upload() {
 
 
 <template>
-  <div class="max-w-md rounded-xl border border-zinc-800 bg-zinc-900 p-6 space-y-4">
+  <div class="max-w-md rounded-xl border light-grey-background light-grey-stroke p-6 space-y-4">
     <h2 class="text-lg font-semibold">CSV konvertieren</h2>
 
     <!-- Option -->

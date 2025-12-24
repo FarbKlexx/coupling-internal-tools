@@ -1,6 +1,6 @@
 <template>
   <aside
-    class="w-52 shrink-0 overflow-y-auto grey-background grey-stroke p-4 gap-3 flex flex-col"
+    class="w-52 shrink-0 overflow-y-auto light-grey-background grey-stroke p-4 gap-3 flex flex-col"
   >
   <span class="grey-text eyebrow"> 
     Hauptkategorie

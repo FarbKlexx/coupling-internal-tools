@@ -6,17 +6,11 @@
       isActive && 'sidebar-item--active'
     ]"
   >
-    <span :class="[
-      'material-symbols-outlined nav-icon',
-      isActive && 'nav-icon--active',
-      ]">
+    <span class="material-symbols-outlined nav-icon--active">
       {{ icon }}
     </span>
 
-    <span :class="[
-      'grey-text',
-      isActive && 'white-text',
-      ]">
+    <span class="white-text">
       {{ label }}
     </span>
   </button>
