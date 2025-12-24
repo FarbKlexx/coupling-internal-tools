@@ -1,9 +1,10 @@
+import csv
 from fastapi import FastAPI, File, UploadFile, Form
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
-from io import BytesIO
+from io import BytesIO, StringIO
 import zipfile
-from editExcel import *
+from app.services import editExcel
 import os
 import shutil
 from datetime import datetime
@@ -42,7 +43,7 @@ async def upload_file(file: UploadFile = File(...), option: str = Form(...)):
     match option:
         case "jf_to_awin":
             print(option)
-            accepted_data, declined_data, amended_data = process_csv_jf_to_awin(content=content)
+            accepted_data, declined_data, amended_data = editExcel.process_csv_jf_to_awin(content=content)
 
             def csv_to_str(data):
                 buffer = StringIO()
@@ -67,7 +68,7 @@ async def upload_file(file: UploadFile = File(...), option: str = Form(...)):
             )
         case "jf_bonus":
             print(option)
-            processed_data = process_csv_jf_bonus(content=content)
+            processed_data = editExcel.process_csv_jf_bonus(content=content)
 
             csv_buffer = StringIO()
             writer = csv.writer(csv_buffer, delimiter=";")
