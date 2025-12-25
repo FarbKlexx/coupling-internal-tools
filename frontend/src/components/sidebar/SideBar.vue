@@ -26,7 +26,7 @@ const route = useRoute();
 const router = useRouter();
 
 const items = [
-  { id: 'dashboard', icon: 'dashboard', label: 'Dashboard' },
+  { id: 'dashboard', icon: 'home', label: 'Dashboard' },
   { id: 'abgleiche', icon: 'table', label: 'AWIN Abgleiche' },
 ];
 
