@@ -3,7 +3,7 @@
     @click="$emit('select')"
     :class="[
       'flex items-center gap-3 rounded-md px-1 py-1 text-left transition sidebar-item',
-      isActive && 'sidebar-item--active'
+      isActive && 'sidebar-item--active',
     ]"
   >
     <span class="material-symbols-outlined nav-icon--active">
@@ -24,6 +24,6 @@ defineProps<{
 }>();
 
 defineEmits<{
-  (e: 'select'): void;
+  (e: "select"): void;
 }>();
 </script>

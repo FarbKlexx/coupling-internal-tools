@@ -5,4 +5,3 @@ import DashboardLayout from "./layouts/DashboardLayout.vue";
 <template>
   <DashboardLayout></DashboardLayout>
 </template>
-

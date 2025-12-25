@@ -26,10 +26,7 @@ async function upload() {
   try {
     isLoading.value = true;
 
-    const { blob, filename } = await uploadCsv(
-      selectedFile.value,
-      option.value
-    );
+    const { blob, filename } = await uploadCsv(selectedFile.value, option.value);
 
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -45,7 +42,6 @@ async function upload() {
 }
 </script>
 
-
 <template>
   <div class="max-w-md rounded-xl border light-grey-background light-grey-stroke p-6 space-y-4">
     <h2 class="text-lg font-semibold">CSV konvertieren</h2>
@@ -53,10 +49,7 @@ async function upload() {
     <!-- Option -->
     <div class="flex flex-col gap-1">
       <label class="text-sm">Konvertierungsoption</label>
-      <select
-        v-model="option"
-        class="rounded-md light-grey-background light-grey-stroke px-3 py-2"
-      >
+      <select v-model="option" class="rounded-md light-grey-background light-grey-stroke px-3 py-2">
         <option value="jf_to_awin">JeansFritz zu AWIN</option>
         <option value="jf_bonus">JeansFritz Bonus</option>
       </select>
@@ -69,11 +62,7 @@ async function upload() {
         type="file"
         accept=".csv,text/csv"
         @change="onFileChange"
-        class="block w-full text-sm light-grey-text
-               file:mr-4 file:rounded-md file:border-0
-               file:bg-zinc-700 file:px-4 file:py-2
-               file:text-sm file:font-semibold
-               hover:file:bg-zinc-600"
+        class="block w-full text-sm light-grey-text file:mr-4 file:rounded-md file:border-0 file:bg-zinc-700 file:px-4 file:py-2 file:text-sm file:font-semibold hover:file:bg-zinc-600"
       />
     </div>
 
@@ -86,8 +75,7 @@ async function upload() {
     <button
       @click="upload"
       :disabled="isLoading"
-      class="w-full rounded-md bg-blue-600 py-2 font-medium
-             hover:bg-blue-500 disabled:opacity-50"
+      class="w-full rounded-md bg-blue-600 py-2 font-medium hover:bg-blue-500 disabled:opacity-50"
     >
       <span v-if="!isLoading">Konvertieren & herunterladen</span>
       <span v-else>Verarbeite...</span>

@@ -8,16 +8,9 @@ export interface RouteSearchItem {
   keywords?: string[];
 }
 
-export function buildRouteSearchIndex(
-  routes: RouteRecordRaw[]
-): RouteSearchItem[] {
+export function buildRouteSearchIndex(routes: RouteRecordRaw[]): RouteSearchItem[] {
   return routes
-    .filter(
-      (r) =>
-        r.meta?.searchable &&
-        typeof r.path === "string" &&
-        !r.redirect
-    )
+    .filter((r) => r.meta?.searchable && typeof r.path === "string" && !r.redirect)
     .map((r) => ({
       id: String(r.name ?? r.path),
       label: String(r.meta?.label ?? r.name),

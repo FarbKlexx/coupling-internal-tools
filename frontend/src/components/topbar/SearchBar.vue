@@ -22,15 +22,12 @@ function selectResult(item: RouteSearchItem) {
 }
 </script>
 
-
 <template>
   <div class="relative w-sm mx-auto">
     <div
       class="flex items-center gap-3 rounded-xl border light-grey-stroke light-grey-background px-2 py-2"
     >
-      <span class="material-symbols-outlined nav-icon">
-        search
-      </span>
+      <span class="material-symbols-outlined nav-icon"> search </span>
 
       <input
         v-model="query"
@@ -45,7 +42,7 @@ function selectResult(item: RouteSearchItem) {
 
     <!-- Ergebnisse -->
     <div
-      v-if="isOpen && results.length"
+      v-if="isOpen && results.length > 0"
       class="absolute z-50 mt-2 w-full rounded-xl border light-grey-stroke light-grey-background overflow-hidden"
     >
       <button
@@ -56,10 +53,7 @@ function selectResult(item: RouteSearchItem) {
         @mousedown.prevent="selectResult(result.item)"
       >
         <!-- optional: Icon aus route.meta.icon -->
-        <span
-          v-if="result.item.icon"
-          class="material-symbols-outlined nav-icon"
-        >
+        <span v-if="result.item.icon" class="material-symbols-outlined nav-icon">
           {{ result.item.icon }}
         </span>
 
@@ -76,6 +70,4 @@ function selectResult(item: RouteSearchItem) {
   </div>
 </template>
 
-<style scoped>
-
-</style>
+<style scoped></style>

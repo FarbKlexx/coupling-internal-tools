@@ -1,11 +1,7 @@
 import { http } from "./http";
 import type { UploadOption, UploadResponse } from "./types";
 
-export async function uploadCsv(
-  file: File,
-  option: UploadOption
-): Promise<UploadResponse> {
-
+export async function uploadCsv(file: File, option: UploadOption): Promise<UploadResponse> {
   const formData = new FormData();
   formData.append("file", file);
   formData.append("option", option);
