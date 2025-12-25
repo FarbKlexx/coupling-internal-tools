@@ -28,7 +28,6 @@ const router = useRouter();
 const items = [
   { id: 'dashboard', icon: 'dashboard', label: 'Dashboard' },
   { id: 'abgleiche', icon: 'table', label: 'AWIN Abgleiche' },
-  { id: 'test', icon: 'table', label: 'Test' },
 ];
 
 function selectItem(id: string) {
