@@ -35,6 +35,7 @@ async function upload() {
     a.click();
     URL.revokeObjectURL(url);
   } catch (e) {
+    console.error(e);
     error.value = "Upload fehlgeschlagen";
   } finally {
     isLoading.value = false;
