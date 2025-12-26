@@ -1,7 +1,7 @@
 import pytest
-from tests.ressources.test_objects import (test_standard_input, test_standard_output)
-from app.services.editExcel import bonus_to_cash, process_csv_jf_to_awin
 
+from app.services.editExcel import bonus_to_cash, process_csv_jf_to_awin
+from tests.ressources.test_objects import test_standard_input, test_standard_output
 
 # ------------------------------
 # test_bonus_to_cash_thresholds
@@ -63,15 +63,12 @@ process_csv_jf_to_awin_empty_input = (
     ],
 )
 
-process_csv_jf_to_awin_standard = (
-    test_standard_input, test_standard_output
-)
+process_csv_jf_to_awin_standard = (test_standard_input, test_standard_output)
 
 
 @pytest.mark.parametrize(
     "input, expected",
-    [process_csv_jf_to_awin_empty_input,
-     process_csv_jf_to_awin_standard]
+    [process_csv_jf_to_awin_empty_input, process_csv_jf_to_awin_standard],
 )
 def test_process_csv_jf_to_awin(input, expected):
     assert process_csv_jf_to_awin(input) == expected
