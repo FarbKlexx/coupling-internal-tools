@@ -5,8 +5,7 @@
       <img src="/coupling-int-tools-logo.svg" alt="Coupling Logo" class="h-8 w-auto" />
 
       <!-- Search -->
-      <SearchBar></SearchBar>
-
+      <SearchBarPlaceholder></SearchBarPlaceholder>
       <!-- Actions -->
       <profile-area></profile-area>
     </div>
@@ -14,6 +13,6 @@
 </template>
 
 <script setup lang="ts">
-import SearchBar from "./SearchBar.vue";
+import SearchBarPlaceholder from "./SearchBarPlaceholder.vue";
 import ProfileArea from "./ProfileArea.vue";
 </script>
