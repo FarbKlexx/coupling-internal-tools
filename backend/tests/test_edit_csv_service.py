@@ -1,6 +1,6 @@
 import pytest
 
-from app.services.editExcel import bonus_to_cash, process_csv_jf_to_awin
+from app.services.edit_csv_service import bonus_to_cash, process_csv_jf_to_awin
 from tests.ressources.test_objects import test_standard_input, test_standard_output
 
 # ------------------------------
