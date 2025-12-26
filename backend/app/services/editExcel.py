@@ -24,7 +24,7 @@ def process_csv_jf_to_awin(content: bytes):
 
     accepted = [["Order Reference", "Transaction Date", "Status"]]
 
-    text_data = content.decode("utf-8")
+    text_data = content.decode("utf-8-sig")
     csv_file = StringIO(text_data)
     reader = csv.reader(csv_file, delimiter=";")
 
@@ -94,7 +94,7 @@ def process_csv_jf_bonus(content: bytes):
 
     bonus_map = {}
 
-    text_data = content.decode("utf-8")
+    text_data = content.decode("utf-8-sig")
     csv_file = StringIO(text_data)
     reader = csv.reader(csv_file, delimiter=";")
 
@@ -120,7 +120,7 @@ def process_csv_jf_bonus(content: bytes):
                     map_publisher_id,
                     "bonus",
                     "0",
-                    bonus_to_cash(map_bonus),
+                    str(bonus_to_cash(map_bonus)),
                     "confirmed",
                     "",
                     "BONUS_"

@@ -1,0 +1,6 @@
+﻿OrderID;Rate;Netto-Betrag (Euro); Publisher-Prov ;erfasst am;Umsatz Tatsächlich;Neuer Prov.-Betrag;Status;Verkauf;Retour;"Status
+Magento";"Bemerkung
+Jeans Fritz";Bemerkung coupling
+17111948;10%;0,61 €;0,06 €;12.10.2025 16:54;0,61 €;0,06 €;;0,61 €;;Complete;Gutschein 75€ eingelöst;
+17113044;10%;29,38 €;2,94 €;17.10.2025 22:18;5,03 €;0,50 €;T;29,38 €;-24,34 €;Complete;;
+17115229;10%;;;29.10.2025 09:37;;;R;;;Complete;Zahlung komplett mit Gutschein - keine Provision;DEFAULT:0,00
