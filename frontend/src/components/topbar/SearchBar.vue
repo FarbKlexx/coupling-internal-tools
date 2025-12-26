@@ -1,14 +1,28 @@
 <script setup lang="ts">
-import { ref, computed } from "vue";
+import { ref, computed, nextTick } from "vue";
 import { useRouter } from "vue-router";
 import { searchRoutes } from "@/search/useRouteSearch";
 import type { FuseResult } from "fuse.js";
 import type { RouteSearchItem } from "@/search/buildRouteSearchIndex";
 
+const emit = defineEmits<{
+  (e: "close"): void;
+}>();
+
 const router = useRouter();
+
+const inputRef = ref<HTMLInputElement | null>(null);
 
 const query = ref<string>("");
 const isOpen = ref<boolean>(false);
+
+
+function focus() {
+  nextTick(() => {
+    inputRef.value?.focus();
+    isOpen.value = true;
+  });
+}
 
 const results = computed<FuseResult<RouteSearchItem>[]>(() => {
   if (!query.value.trim()) return [];
@@ -18,18 +32,22 @@ const results = computed<FuseResult<RouteSearchItem>[]>(() => {
 function selectResult(item: RouteSearchItem) {
   query.value = "";
   isOpen.value = false;
+  emit("close");
   router.push(item.path);
 }
+
+defineExpose({ focus });
 </script>
 
 <template>
-  <div class="relative w-sm mx-auto">
+  <div class="w-2xl">
     <div
       class="flex items-center gap-3 rounded-xl border light-grey-stroke light-grey-background px-2 py-2"
     >
       <span class="material-symbols-outlined nav-icon"> search </span>
 
       <input
+        ref="inputRef"
         v-model="query"
         type="text"
         placeholder="Type to search"

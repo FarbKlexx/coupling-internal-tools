@@ -1,7 +1,18 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, nextTick } from "vue";
+import SearchBar from "@/components/topbar/SearchBar.vue";
 
 const overlay = ref<boolean>(false);
+
+const searchBarRef = ref<InstanceType<typeof SearchBar> | null>(null);
+
+function openSearch() {
+  overlay.value = !overlay.value;
+
+  nextTick(() => {
+    searchBarRef.value?.focus();
+  });
+}
 </script>
 
 <template>
@@ -12,15 +23,17 @@ const overlay = ref<boolean>(false);
       <span class="material-symbols-outlined nav-icon"> search </span>
 
       <input
-        type="text"
-        placeholder="Type to search"
+        placeholder="Click to search"
+        readonly
         class="w-full bg-transparent grey-text focus:outline-none"
-        @click="overlay = !overlay"
+        @click="openSearch"
         autocomplete="off"
       />
     </div>
   </div>
-  <v-overlay v-model="overlay"><SearchBar></SearchBar></v-overlay>
+  <v-overlay v-model="overlay" class="mt-40 flex justify-center content-center">
+    <SearchBar @close="overlay = false" ref="searchBarRef"></SearchBar>
+  </v-overlay>
 </template>
 
 <style scoped></style>
