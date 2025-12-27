@@ -1,11 +1,9 @@
 import os
 from datetime import datetime
 
-from fastapi import File, Form, UploadFile
-from fastapi.responses import StreamingResponse
-from fastapi import APIRouter
-
 from backend.app.services.upload_service import process_upload
+from fastapi import APIRouter, File, Form, UploadFile
+from fastapi.responses import StreamingResponse
 
 today = datetime.today().date()
 

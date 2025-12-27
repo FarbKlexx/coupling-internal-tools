@@ -1,10 +1,10 @@
 import zipfile
 from datetime import datetime
-from app.services import edit_csv_service
+from io import BytesIO
+
 from app.core.csv_utils import csv_rows_to_str
 from app.schemas.upload import UploadOption
-
-from io import BytesIO
+from app.services import edit_csv_service
 
 today = datetime.today().date()
 
@@ -12,12 +12,14 @@ today = datetime.today().date()
 def process_upload(content: bytes, option: str, filename: str) -> BytesIO:
     zip_buffer = BytesIO()
 
-    with zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zip_file:
+    with zipfile.ZipFile(
+        zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED
+    ) as zip_file:
 
         match option:
             case UploadOption.JF_TO_AWIN.value:
-                accepted, declined, amended = (
-                    edit_csv_service.process_csv_jf_to_awin(content=content)
+                accepted, declined, amended = edit_csv_service.process_csv_jf_to_awin(
+                    content=content
                 )
 
                 zip_file.writestr(
