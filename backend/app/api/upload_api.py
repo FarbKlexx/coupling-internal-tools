@@ -1,11 +1,11 @@
 import os
 from datetime import datetime
 
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import File, Form, UploadFile
 from fastapi.responses import StreamingResponse
 from fastapi import APIRouter
 
-from app.services.upload_service_manager import match_upload_option
+from backend.app.services.upload_service import process_upload
 
 today = datetime.today().date()
 
@@ -21,9 +21,7 @@ async def upload_file(file: UploadFile = File(...), option: str = Form(...)):
     content = await file.read()
     filename = file.filename or "upload"
 
-    result = match_upload_option(content, option, filename)
-
-    zip_buffer = match_upload_option(content, option, filename)
+    zip_buffer = process_upload(content, option, filename)
 
     return StreamingResponse(
         zip_buffer,

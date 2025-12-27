@@ -1,31 +1,21 @@
-import csv
 import zipfile
 from datetime import datetime
 from app.services import edit_csv_service
+from app.core.csv_utils import csv_rows_to_str
+from app.schemas.upload import UploadOption
 
-from io import BytesIO, StringIO
-from enum import Enum
+from io import BytesIO
 
 today = datetime.today().date()
 
-class Option(Enum):
-    JF_TO_AWIN = "jf_to_awin"
-    JF_BONUS = "jf_bonus"
 
-def csv_rows_to_str(rows: list[list[str]]) -> str:
-    buffer = StringIO()
-    writer = csv.writer(buffer, delimiter=";")
-    writer.writerows(rows)
-    return buffer.getvalue()
-
-
-def match_upload_option(content: bytes, option: str, filename: str) -> BytesIO:
+def process_upload(content: bytes, option: str, filename: str) -> BytesIO:
     zip_buffer = BytesIO()
 
     with zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zip_file:
 
         match option:
-            case Option.JF_TO_AWIN.value:
+            case UploadOption.JF_TO_AWIN.value:
                 accepted, declined, amended = (
                     edit_csv_service.process_csv_jf_to_awin(content=content)
                 )
@@ -43,7 +33,7 @@ def match_upload_option(content: bytes, option: str, filename: str) -> BytesIO:
                     csv_rows_to_str(amended),
                 )
 
-            case Option.JF_BONUS.value:
+            case UploadOption.JF_BONUS.value:
                 bonus_rows = edit_csv_service.process_csv_jf_bonus(content=content)
 
                 zip_file.writestr(
