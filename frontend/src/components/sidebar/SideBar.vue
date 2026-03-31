@@ -11,6 +11,7 @@
         :label="item.label"
         :isActive="route.name === item.id"
         @select="selectItem(item.id)"
+        class="cursor-pointer"
       />
     </nav>
   </aside>
