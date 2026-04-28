@@ -3,6 +3,7 @@ import { createRouter, createWebHistory } from "vue-router";
 
 import DashboardView from "@/views/DashboardView.vue";
 import AbgleicheView from "@/views/AbgleicheView.vue";
+import AwinBannerView from "@/views/AwinBannerView.vue";
 
 const routes = [
   {
@@ -25,6 +26,17 @@ const routes = [
       label: "Abgleiche",
       icon: "table",
       keywords: ["awin", "vergleich", "csv"],
+    },
+  },
+  {
+    path: "/awin-banner",
+    name: "awin-banner",
+    component: AwinBannerView,
+    meta: {
+      searchable: true,
+      label: "AWIN Banner CSV",
+      icon: "image",
+      keywords: ["awin", "banner", "csv", "mass upload"],
     },
   },
   {

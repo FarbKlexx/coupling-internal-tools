@@ -1,0 +1,11 @@
+POST http://localhost:8000/awin-banner-csv
+Content-Type: application/json
+
+{
+  "filenames": ["Mobile-Standardbanner_300x250.jpg", "Y-Line-Banner_728x90.gif"],
+  "description": "Sommerkampagne 2024",
+  "tag": "summer24",
+  "target_url": "https://example.com/landing",
+  "alt_text": "Jetzt shoppen",
+  "image_source_stem": "https://cdn.example.com/banners/campaign24"
+}

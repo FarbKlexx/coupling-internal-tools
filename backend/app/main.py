@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.awin_banner_api import router as awin_banner_router
 from app.api.upload_api import router
 
 app = FastAPI()
@@ -22,3 +23,4 @@ app.add_middleware(
 )
 
 app.include_router(router)
+app.include_router(awin_banner_router)

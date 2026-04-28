@@ -27,6 +27,7 @@ const router = useRouter();
 const items = [
   { id: "dashboard", icon: "home", label: "Dashboard" },
   { id: "abgleiche", icon: "table", label: "AWIN Abgleiche" },
+  { id: "awin-banner", icon: "image", label: "AWIN Banner CSV" },
 ];
 
 function selectItem(id: string) {

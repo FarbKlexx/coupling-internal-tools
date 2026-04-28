@@ -1,7 +1,7 @@
 import os
 from datetime import datetime
 
-from backend.app.services.upload_service import process_upload
+from app.services.upload_service import process_upload
 from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.responses import StreamingResponse
 
