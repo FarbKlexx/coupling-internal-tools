@@ -66,6 +66,8 @@ def generate_awin_banner_csv(request: AwinBannerRequest) -> StringIO:
             continue
 
         format_string, width, height = parsed
+        ext = filename.rsplit(".", 1)[-1]
+        image_filename = f"{width}x{height}.{ext}"
 
         writer.writerow(
             [
@@ -81,7 +83,7 @@ def generate_awin_banner_csv(request: AwinBannerRequest) -> StringIO:
                 "",  # Link-Text
                 request.target_url,  # Ziel-URL
                 request.alt_text,  # Alt-Text
-                _build_image_url(request.image_source_stem, filename),  # Bildquelle
+                _build_image_url(request.image_source_stem, image_filename),  # Bildquelle
             ]
         )
 
