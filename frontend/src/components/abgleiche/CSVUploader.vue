@@ -53,6 +53,7 @@ async function upload() {
       <select v-model="option" class="rounded-md light-grey-background light-grey-stroke px-3 py-2">
         <option value="jf_to_awin">JeansFritz zu AWIN</option>
         <option value="jf_bonus">JeansFritz Bonus</option>
+        <option value="awin_to_jf">AWIN zu JeansFritz (Offene Sales)</option>
       </select>
     </div>
 
