@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.awin_banner_api import router as awin_banner_router
+from app.api.image_convert_api import router as image_convert_router
 from app.api.upload_api import router
 
 app = FastAPI()
@@ -19,8 +20,9 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["Content-Disposition"],
+    expose_headers=["Content-Disposition", "X-Converted-Count", "X-Skipped-Count"],
 )
 
 app.include_router(router)
 app.include_router(awin_banner_router)
+app.include_router(image_convert_router)

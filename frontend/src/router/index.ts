@@ -4,6 +4,7 @@ import { createRouter, createWebHistory } from "vue-router";
 import DashboardView from "@/views/DashboardView.vue";
 import AbgleicheView from "@/views/AbgleicheView.vue";
 import AwinBannerView from "@/views/AwinBannerView.vue";
+import WebpConverterView from "@/views/WebpConverterView.vue";
 
 const routes = [
   {
@@ -37,6 +38,27 @@ const routes = [
       label: "AWIN Banner CSV",
       icon: "image",
       keywords: ["awin", "banner", "csv", "mass upload"],
+    },
+  },
+  {
+    path: "/webp-konverter",
+    name: "webp-konverter",
+    component: WebpConverterView,
+    meta: {
+      searchable: true,
+      label: "WebP Konverter",
+      icon: "compress",
+      keywords: [
+        "bild",
+        "bilder",
+        "image",
+        "webp",
+        "konvertieren",
+        "jpg",
+        "png",
+        "heic",
+        "komprimieren",
+      ],
     },
   },
   {

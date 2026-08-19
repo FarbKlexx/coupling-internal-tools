@@ -1,4 +1,4 @@
-import { http } from "./http";
+import { filenameFromDisposition, http } from "./http";
 import type { UploadOption, UploadResponse } from "./types";
 
 export async function uploadCsv(file: File, option: UploadOption): Promise<UploadResponse> {
@@ -10,19 +10,9 @@ export async function uploadCsv(file: File, option: UploadOption): Promise<Uploa
     responseType: "blob",
   });
 
-  // Filename aus Header extrahieren
-  const contentDisposition = response.headers["content-disposition"];
-  let filename = "download";
-
-  if (contentDisposition) {
-    const match = contentDisposition.match(/filename="(.+)"/);
-    if (match?.[1]) {
-      filename = match[1];
-    }
-  }
-
   return {
     blob: response.data,
-    filename,
+    // Filename aus Header extrahieren
+    filename: filenameFromDisposition(response.headers["content-disposition"]),
   };
 }

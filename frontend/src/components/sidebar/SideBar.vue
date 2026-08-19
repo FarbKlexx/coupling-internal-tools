@@ -28,6 +28,7 @@ const items = [
   { id: "dashboard", icon: "home", label: "Dashboard" },
   { id: "abgleiche", icon: "table", label: "AWIN Abgleiche" },
   { id: "awin-banner", icon: "image", label: "AWIN Banner CSV" },
+  { id: "webp-konverter", icon: "compress", label: "WebP Konverter" },
 ];
 
 function selectItem(id: string) {
