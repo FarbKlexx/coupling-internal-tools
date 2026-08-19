@@ -5,7 +5,7 @@
     <span class="grey-text eyebrow"> Hauptkategorie </span>
     <nav class="flex flex-col gap-1">
       <SidebarItem
-        v-for="item in items"
+        v-for="item in visibleItems"
         :key="item.id"
         :icon="item.icon"
         :label="item.label"
@@ -24,12 +24,15 @@ import { useRoute, useRouter } from "vue-router";
 const route = useRoute();
 const router = useRouter();
 
+// `enabled: false` blendet einen Eintrag aus, ohne ihn zu entfernen.
 const items = [
-  { id: "dashboard", icon: "home", label: "Dashboard" },
+  { id: "dashboard", icon: "home", label: "Dashboard", enabled: false },
   { id: "abgleiche", icon: "table", label: "AWIN Abgleiche" },
   { id: "awin-banner", icon: "image", label: "AWIN Banner CSV" },
   { id: "webp-konverter", icon: "compress", label: "WebP Konverter" },
 ];
+
+const visibleItems = items.filter((item) => item.enabled !== false);
 
 function selectItem(id: string) {
   router.push({ name: id });
