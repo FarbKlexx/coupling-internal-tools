@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.awin_banner_api import router as awin_banner_router
 from app.api.image_convert_api import router as image_convert_router
+from app.api.pdf_protect_api import router as pdf_protect_router
 from app.api.qr_code_api import router as qr_code_router
 from app.api.upload_api import router
 
@@ -28,3 +29,4 @@ app.include_router(router)
 app.include_router(awin_banner_router)
 app.include_router(image_convert_router)
 app.include_router(qr_code_router)
+app.include_router(pdf_protect_router)

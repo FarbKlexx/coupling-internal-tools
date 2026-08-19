@@ -6,6 +6,7 @@ import AbgleicheView from "@/views/AbgleicheView.vue";
 import AwinBannerView from "@/views/AwinBannerView.vue";
 import WebpConverterView from "@/views/WebpConverterView.vue";
 import QrCodeView from "@/views/QrCodeView.vue";
+import PdfProtectView from "@/views/PdfProtectView.vue";
 
 const routes = [
   // Die Dashboard-Seite ist noch ein Stub und deshalb weder in der Sidebar
@@ -74,6 +75,17 @@ const routes = [
       label: "QR-Code Generator",
       icon: "qr_code_2",
       keywords: ["qr", "qr-code", "link", "png", "svg", "generator"],
+    },
+  },
+  {
+    path: "/pdf-schutz",
+    name: "pdf-schutz",
+    component: PdfProtectView,
+    meta: {
+      searchable: true,
+      label: "PDF Passwortschutz",
+      icon: "lock",
+      keywords: ["pdf", "passwort", "schutz", "verschluesseln", "sichern", "aes"],
     },
   },
   {
