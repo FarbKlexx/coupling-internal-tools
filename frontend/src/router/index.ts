@@ -5,6 +5,7 @@ import DashboardView from "@/views/DashboardView.vue";
 import AbgleicheView from "@/views/AbgleicheView.vue";
 import AwinBannerView from "@/views/AwinBannerView.vue";
 import WebpConverterView from "@/views/WebpConverterView.vue";
+import QrCodeView from "@/views/QrCodeView.vue";
 
 const routes = [
   // Die Dashboard-Seite ist noch ein Stub und deshalb weder in der Sidebar
@@ -62,6 +63,17 @@ const routes = [
         "heic",
         "komprimieren",
       ],
+    },
+  },
+  {
+    path: "/qr-code",
+    name: "qr-code",
+    component: QrCodeView,
+    meta: {
+      searchable: true,
+      label: "QR-Code Generator",
+      icon: "qr_code_2",
+      keywords: ["qr", "qr-code", "link", "png", "svg", "generator"],
     },
   },
   {

@@ -30,6 +30,7 @@ const items = [
   { id: "abgleiche", icon: "table", label: "AWIN Abgleiche" },
   { id: "awin-banner", icon: "image", label: "AWIN Banner CSV" },
   { id: "webp-konverter", icon: "compress", label: "WebP Konverter" },
+  { id: "qr-code", icon: "qr_code_2", label: "QR-Code Generator" },
 ];
 
 const visibleItems = items.filter((item) => item.enabled !== false);
