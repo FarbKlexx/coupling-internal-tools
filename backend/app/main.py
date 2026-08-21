@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.awin_banner_api import router as awin_banner_router
+from app.api.health_api import router as health_router
 from app.api.image_convert_api import router as image_convert_router
 from app.api.kanban_api import router as kanban_router
 from app.api.pdf_protect_api import router as pdf_protect_router
@@ -38,6 +39,7 @@ app.add_middleware(
     expose_headers=["Content-Disposition", "X-Converted-Count", "X-Skipped-Count"],
 )
 
+app.include_router(health_router)
 app.include_router(router)
 app.include_router(awin_banner_router)
 app.include_router(image_convert_router)

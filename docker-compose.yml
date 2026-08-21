@@ -1,9 +1,14 @@
+# Expliziter Projektname. Ohne ihn leitet Compose ihn aus dem
+# Verzeichnisnamen ab - beide Compose-Dateien landen dann im selben Namespace
+# und ein `up` mit der einen Datei recreated die Container der anderen.
+name: coupling-internal-tools
+
 services:
   backend:
     build:
       context: ./backend
       dockerfile: backend.dockerfile
-    container_name: backend
+    restart: unless-stopped
     expose:
       - "8000"
     volumes:
@@ -11,24 +16,70 @@ services:
       # Ohne dieses Mount liegt die SQLite-Datei im Container und ist beim
       # naechsten Image-Rebuild verloren. Backup = dieses Verzeichnis sichern.
       - ./data/kanban:/app/data
+    healthcheck:
+      # python:3.11-slim bringt weder curl noch wget noch nc mit - Python ist
+      # das einzige Werkzeug im Image. /health kommt ohne Datenbankzugriff aus,
+      # damit ein gesperrtes SQLite nicht als "unhealthy" gilt und einen
+      # ansonsten funktionierenden Backend-Container neu startet.
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).status == 200 else 1)",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      # Ein kalter Start inklusive Import von Pillow/pypdf braucht ein paar
+      # Sekunden; in dieser Zeit zaehlen Fehlversuche nicht.
+      start_period: 20s
 
   frontend:
     build:
       context: ./frontend
       dockerfile: frontend.dockerfile
-    container_name: frontend
+    restart: unless-stopped
     ports:
       - "80:80"
       - "443:443"
     volumes:
+      # Muss als Datei existieren, bevor der Container startet - sonst legt
+      # Docker ein Verzeichnis mit diesem Namen an und nginx bricht ab.
+      # Anlegen siehe README, Abschnitt Deployment.
       - ./auth/.htpasswd:/etc/nginx/.htpasswd:ro
       - ./certbot/www:/var/www/certbot
       - ./certbot/conf:/etc/letsencrypt
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+    healthcheck:
+      # nginx:alpine hat wget an Bord. /healthz liegt im HTTP-Block, also ohne
+      # Zertifikat und ohne Basic Auth erreichbar. Der Deploy braucht das:
+      # `docker compose up -d` kehrt auch dann erfolgreich zurueck, wenn nginx
+      # sofort stirbt - ohne diesen Healthcheck waere ein Deploy gruen und die
+      # Seite tot.
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   certbot:
     image: certbot/certbot
+    restart: unless-stopped
     volumes:
       - ./certbot/www:/var/www/certbot
       - ./certbot/conf:/etc/letsencrypt
+    # Ohne entrypoint gibt das Image nur seine Hilfe aus und terminiert - es
+    # wurde also nie etwas erneuert. `certbot renew` ist ein No-Op, solange das
+    # Zertifikat mehr als 30 Tage Restlaufzeit hat, darf also oft laufen. Die
+    # Erneuerung nutzt die Webroot-Konfiguration aus certbot/conf/renewal/,
+    # die beim erstmaligen Ausstellen entsteht (siehe README).
+    # `$$` ist die Compose-Maskierung fuer ein literales `$`.
+    entrypoint: >
+      /bin/sh -c 'trap exit TERM;
+      while :; do
+      certbot renew;
+      sleep 12h & wait $${!};
+      done'

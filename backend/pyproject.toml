@@ -13,4 +13,7 @@ fixable = ["ALL"]
 [tool.ruff.lint.per-file-ignores]
 "app/*.py" = ["B008"]
 
-
+[tool.pytest.ini_options]
+# Damit `pytest` aus backend/ heraus deterministisch nur die eigenen Tests
+# einsammelt und nicht in venv/ hineinlaeuft.
+testpaths = ["tests"]

@@ -156,7 +156,10 @@ async function generateCsv() {
     </div>
 
     <!-- Error -->
-    <p v-if="errorMessage" class="rounded-md bg-red-900/30 border border-red-700 px-3 py-2 text-sm text-red-400">
+    <p
+      v-if="errorMessage"
+      class="rounded-md bg-red-900/30 border border-red-700 px-3 py-2 text-sm text-red-400"
+    >
       {{ errorMessage }}
     </p>
 
@@ -169,7 +172,14 @@ async function generateCsv() {
       <span v-if="!isLoading">CSV generieren & herunterladen</span>
       <span v-else class="flex items-center justify-center gap-2">
         <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
-          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+          <circle
+            class="opacity-25"
+            cx="12"
+            cy="12"
+            r="10"
+            stroke="currentColor"
+            stroke-width="4"
+          />
           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
         </svg>
         Verarbeite...

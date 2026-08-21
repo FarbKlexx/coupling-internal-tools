@@ -1,3 +1,7 @@
+# Eigener Namespace, damit ein lokales `up` nicht die Produktionscontainer
+# im selben Verzeichnis recreated (und umgekehrt).
+name: coupling-internal-tools-dev
+
 services:
   backend:
     build:

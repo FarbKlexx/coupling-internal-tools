@@ -16,7 +16,6 @@ const inputRef = ref<HTMLInputElement | null>(null);
 const query = ref<string>("");
 const isOpen = ref<boolean>(false);
 
-
 function focus() {
   nextTick(() => {
     inputRef.value?.focus();

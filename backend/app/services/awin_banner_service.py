@@ -62,7 +62,9 @@ def generate_awin_banner_csv(request: AwinBannerRequest) -> StringIO:
     for filename in request.filenames:
         parsed = _parse_filename(filename)
         if parsed is None:
-            logger.warning("Skipping '%s': filename matches no known banner pattern.", filename)
+            logger.warning(
+                "Skipping '%s': filename matches no known banner pattern.", filename
+            )
             continue
 
         format_string, width, height = parsed
@@ -71,7 +73,7 @@ def generate_awin_banner_csv(request: AwinBannerRequest) -> StringIO:
 
         writer.writerow(
             [
-                "",   # ID
+                "",  # ID
                 "1",  # Status
                 "3",  # Werbemitteltyp
                 f"{format_string} {width}x{height}",  # Werbemittel-Titel
@@ -83,7 +85,9 @@ def generate_awin_banner_csv(request: AwinBannerRequest) -> StringIO:
                 "",  # Link-Text
                 request.target_url,  # Ziel-URL
                 request.alt_text,  # Alt-Text
-                _build_image_url(request.image_source_stem, image_filename),  # Bildquelle
+                _build_image_url(
+                    request.image_source_stem, image_filename
+                ),  # Bildquelle
             ]
         )
 

@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.vitest.tsbuildinfo",
+
+    /* Die Tests lesen Dateien vom Datentraeger (Abgleich der Farbpalette gegen
+       das Backend-Enum) und brauchen dafuer die Node-Typen. tsconfig.app.json
+       bindet sie bewusst nicht ein, damit Anwendungscode nicht versehentlich
+       Node-APIs benutzt - deshalb hier ein eigenes Projekt. */
+    "types": ["vite/client", "node"]
+  },
+  /* Die .d.ts muessen mit: src/router/meta.d.ts augmentiert RouteMeta, ohne
+     das ist route.meta.keywords hier `unknown`. */
+  "include": ["src/**/*.test.ts", "src/**/*.d.ts"],
+  /* extends erbt das exclude aus tsconfig.app.json - das wuerde hier genau
+     die Dateien ausschliessen, um die es geht. */
+  "exclude": []
+}

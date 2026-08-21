@@ -1,0 +1,17 @@
+# Test- und Lint-Werkzeuge fuer CI und lokale Entwicklung.
+#
+# Absichtlich getrennt von requirements.txt: das Produktionsimage
+# (backend.dockerfile) installiert nur requirements.txt und bleibt damit ohne
+# Test-Abhaengigkeiten.
+#
+# Installation - beide Dateien, weil hier bewusst kein `-r requirements.txt`
+# steht: requirements.txt ist UTF-16/LE-kodiert, und verschachtelt eingelesen
+# ist das eine unnoetige Fehlerquelle.
+#
+#     pip install -r requirements.txt -r requirements-dev.txt
+
+pytest==9.1.1
+# Von fastapi.testclient benoetigt (Starlette laesst es absichtlich optional).
+httpx==0.28.1
+ruff==0.15.19
+black==26.5.1

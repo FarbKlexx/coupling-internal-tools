@@ -11,4 +11,31 @@ Thumbs.db
 .env
 .env.*
 
+# ---------------------------------------------------------------------------
+# Laufzeitdaten auf dem Server
+#
+# Der Deploy macht `git pull` im Serververzeichnis. Alles, was die Bind-Mounts
+# aus docker-compose.yml dort zur Laufzeit anlegen, darf deshalb nicht im Repo
+# liegen: ein getrackter Pfad wuerde beim Pull ueberschrieben (Datenverlust im
+# Kanban-Board) oder liesse den Pull an lokalen Aenderungen scheitern.
+#
+# Die .gitkeep-Dateien bleiben absichtlich versioniert, damit die Verzeichnisse
+# nach einem frischen Clone existieren. Ohne sie legt Docker sie beim ersten
+# Start selbst an - als root gehoerende Ordner.
+# ---------------------------------------------------------------------------
+
+# SQLite des Kanban-Boards
+/data/kanban/*
+!/data/kanban/.gitkeep
+
+# Let's-Encrypt-Zertifikate und ACME-Webroot
+/certbot/conf/*
+!/certbot/conf/.gitkeep
+/certbot/www/*
+!/certbot/www/.gitkeep
+
+# Basic-Auth-Datei (Passwort-Hashes) - wird manuell auf dem Server angelegt
+/auth/*
+!/auth/.gitkeep
+
 CLAUDE.md

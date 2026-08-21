@@ -1,7 +1,8 @@
-from app.schemas.awin_banner import AwinBannerRequest
-from app.services.awin_banner_service import generate_awin_banner_csv
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
+
+from app.schemas.awin_banner import AwinBannerRequest
+from app.services.awin_banner_service import generate_awin_banner_csv
 
 router = APIRouter()
 

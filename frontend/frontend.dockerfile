@@ -20,4 +20,9 @@ COPY nginx.conf /etc/nginx/conf.d/default.conf
 
 EXPOSE 80
 
-CMD ["nginx", "-g", "daemon off;"]
+# nginx laedt ein erneuertes Zertifikat nicht von selbst - es haelt die alte
+# Datei offen, bis es neu geladen wird. Ohne diese Schleife laeuft der Server
+# nach einem Renewal bis zum naechsten Neustart mit dem abgelaufenen
+# Zertifikat. `nginx -s reload` ist unterbrechungsfrei (alte Worker bedienen
+# laufende Requests aus), 6 h ist damit unkritisch oft.
+CMD ["/bin/sh", "-c", "while :; do sleep 6h & wait ${!}; nginx -s reload; done & nginx -g 'daemon off;'"]
