@@ -9,7 +9,10 @@
       <Sidebar />
 
       <!-- Main Content -->
-      <main class="flex-1 p-6">
+      <!-- min-w-0: ohne das kann <main> nicht schmaler werden als sein
+           Inhalt, und eine breite Seite (Kanban-Board) schiebt Sidebar und
+           Topbar aus dem Bild statt selbst zu scrollen. -->
+      <main class="min-w-0 flex-1 p-6">
         <RouterView />
       </main>
     </div>

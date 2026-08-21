@@ -6,6 +6,11 @@ services:
     container_name: backend
     expose:
       - "8000"
+    volumes:
+      # Das Kanban-Board ist der einzige persistente Zustand der App.
+      # Ohne dieses Mount liegt die SQLite-Datei im Container und ist beim
+      # naechsten Image-Rebuild verloren. Backup = dieses Verzeichnis sichern.
+      - ./data/kanban:/app/data
 
   frontend:
     build:

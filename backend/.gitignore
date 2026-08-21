@@ -35,6 +35,8 @@ Thumbs.db
 # Local databases
 *.sqlite3
 *.db
+# Kanban-SQLite inkl. der WAL-/SHM-Dateien, die *.db nicht erfasst
+data/
 
 # Jupyter
 .ipynb_checkpoints/

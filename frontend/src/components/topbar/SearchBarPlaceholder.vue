@@ -25,7 +25,7 @@ function openSearch() {
       <input
         placeholder="Click to search"
         readonly
-        class="w-full bg-transparent grey-text focus:outline-none"
+        class="w-full cursor-pointer bg-transparent grey-text focus:outline-none"
         @click="openSearch"
         autocomplete="off"
       />

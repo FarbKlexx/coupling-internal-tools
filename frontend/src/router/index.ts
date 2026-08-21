@@ -7,6 +7,7 @@ import AwinBannerView from "@/views/AwinBannerView.vue";
 import WebpConverterView from "@/views/WebpConverterView.vue";
 import QrCodeView from "@/views/QrCodeView.vue";
 import PdfProtectView from "@/views/PdfProtectView.vue";
+import KanbanView from "@/views/KanbanView.vue";
 
 const routes = [
   // Die Dashboard-Seite ist noch ein Stub und deshalb weder in der Sidebar
@@ -86,6 +87,17 @@ const routes = [
       label: "PDF Passwortschutz",
       icon: "lock",
       keywords: ["pdf", "passwort", "schutz", "verschluesseln", "sichern", "aes"],
+    },
+  },
+  {
+    path: "/kanban",
+    name: "kanban",
+    component: KanbanView,
+    meta: {
+      searchable: true,
+      label: "Kanban Board",
+      icon: "view_kanban",
+      keywords: ["kanban", "board", "aufgaben", "todo", "tasks", "karten", "kunden"],
     },
   },
   {

@@ -32,6 +32,7 @@ const items = [
   { id: "webp-konverter", icon: "compress", label: "WebP Konverter" },
   { id: "qr-code", icon: "qr_code_2", label: "QR-Code Generator" },
   { id: "pdf-schutz", icon: "lock", label: "PDF Passwortschutz" },
+  { id: "kanban", icon: "view_kanban", label: "Kanban Board" },
 ];
 
 const visibleItems = items.filter((item) => item.enabled !== false);

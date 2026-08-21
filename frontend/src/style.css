@@ -134,3 +134,134 @@ a {
   background: #1e1e1e;
   border: 1px solid #333333;
 }
+
+/* --------------------------------------------------------------------------
+   Klickbarkeit
+   --------------------------------------------------------------------------
+
+   Browser geben <button> und <select> den Standard-Pfeil, nicht die Hand.
+   Bisher wurde das pro Element mit `cursor-pointer` nachgetragen, was
+   zwangsläufig Lücken hinterlässt (Spalten-Auswahl in den Abgleichen, die
+   PNG/SVG-Umschalter beim QR-Code, "Passwort anzeigen", …). Deshalb einmal
+   zentral, statt an jedem neuen Knopf daran denken zu müssen. */
+button:not(:disabled),
+select:not(:disabled),
+summary,
+[role="button"]:not([aria-disabled="true"]) {
+  cursor: pointer;
+}
+
+input[type="checkbox"]:not(:disabled),
+input[type="radio"]:not(:disabled),
+input[type="range"]:not(:disabled),
+input[type="file"]:not(:disabled) {
+  cursor: pointer;
+}
+
+/* Ein Label, das nur eine Checkbox umschließt, ist Teil derselben Schaltfläche. */
+label:has(> input[type="checkbox"]),
+label:has(> input[type="radio"]) {
+  cursor: pointer;
+}
+
+/* Deaktiviert heißt: nicht anklickbar – und soll auch so aussehen. */
+button:disabled,
+select:disabled,
+input:disabled,
+textarea:disabled {
+  cursor: not-allowed;
+}
+
+/* --------------------------------------------------------------------------
+   Kanban-Board
+   -------------------------------------------------------------------------- */
+
+/* Label-Farben.
+   Die Slugs müssen zu `LabelColor` in backend/app/schemas/kanban.py und zu
+   LABEL_COLORS in src/api/kanban.api.ts passen – eine elfte Farbe braucht
+   einen Eintrag an allen drei Stellen. Die Werte sind hell genug für den
+   dunklen Untergrund (#252526) gewählt. */
+.label-slate {
+  --label-color: #a1a1aa;
+}
+.label-blue {
+  --label-color: #60a5fa;
+}
+.label-teal {
+  --label-color: #2dd4bf;
+}
+.label-green {
+  --label-color: #4ade80;
+}
+.label-lime {
+  --label-color: #a3e635;
+}
+.label-amber {
+  --label-color: #fbbf24;
+}
+.label-orange {
+  --label-color: #fb923c;
+}
+.label-red {
+  --label-color: #f87171;
+}
+.label-pink {
+  --label-color: #f472b6;
+}
+.label-violet {
+  --label-color: #a78bfa;
+}
+
+.label-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+
+  padding: 0 8px;
+  border-radius: 999px;
+
+  background: color-mix(in srgb, var(--label-color) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--label-color) 42%, transparent);
+  color: var(--label-color);
+
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.label-chip--archived {
+  opacity: 0.55;
+}
+
+.label-swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--label-color);
+}
+
+.kanban-column {
+  background: #212122;
+  border: 1px solid #333333;
+}
+
+.kanban-card {
+  background: #252526;
+  border: 1px solid #333333;
+}
+
+.kanban-card:hover {
+  border-color: #454545;
+}
+
+/* Platzhalter, den sortablejs an der Einfügestelle einblendet. */
+.kanban-ghost {
+  opacity: 0.4;
+  background: #1e1e1e;
+  border-style: dashed;
+}
+
+.kanban-drag {
+  opacity: 0.9;
+}
