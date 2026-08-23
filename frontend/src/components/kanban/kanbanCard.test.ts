@@ -72,4 +72,51 @@ describe("KanbanCard", () => {
 
     expect(wrapper.emitted("open")?.[0]).toEqual([card]);
   });
+
+  it("bietet in Ideen genau einen Weg nach TODO", async () => {
+    const wrapper = mount(KanbanCard, {
+      props: { card, columnLabels: { todo: "TODO" } },
+    });
+    const button = wrapper.get("button");
+
+    expect(wrapper.findAll("button")).toHaveLength(1);
+    expect(button.attributes("title")).toBe("Nach TODO verschieben");
+
+    await button.trigger("click");
+
+    expect(wrapper.emitted("advance")?.[0]).toEqual([{ card, to: "todo" }]);
+    // click.stop: der Button darf nicht zusaetzlich den Dialog aufmachen.
+    expect(wrapper.emitted("open")).toBeUndefined();
+  });
+
+  it("bietet aus In Progress sowohl Done als auch On hold", () => {
+    const wrapper = mount(KanbanCard, {
+      props: {
+        card: { ...card, column_id: "in_progress" },
+        columnLabels: { done: "Done", on_hold: "On hold" },
+      },
+    });
+
+    // Ueber `title` statt `text`: der Buttontext enthaelt auch die Icon-Ligatur.
+    expect(wrapper.findAll("button").map((b) => b.attributes("title"))).toEqual([
+      "Nach Done verschieben",
+      "Nach On hold verschieben",
+    ]);
+  });
+
+  it("laesst Endspalten ohne Button", () => {
+    for (const columnId of ["done", "on_hold"] as const) {
+      const wrapper = mount(KanbanCard, {
+        props: { card: { ...card, column_id: columnId } },
+      });
+
+      expect(wrapper.findAll("button")).toHaveLength(0);
+    }
+  });
+
+  it("sperrt die Buttons waehrend eines Schreibvorgangs", () => {
+    const wrapper = mount(KanbanCard, { props: { card, isBusy: true } });
+
+    expect(wrapper.get("button").attributes("disabled")).toBeDefined();
+  });
 });

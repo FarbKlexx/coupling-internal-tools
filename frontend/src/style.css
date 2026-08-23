@@ -282,6 +282,23 @@ textarea:disabled {
   border-color: #454545;
 }
 
+/* Weiter-Button auf einer Karte. Etwas heller als die Karte selbst, damit er
+   sich abhebt, ohne wie ein Label auszusehen. */
+.card-action {
+  background: #2d2d2e;
+  border: 1px solid #3a3a3a;
+  color: #b9b9c7;
+}
+
+.card-action:hover:not(:disabled) {
+  background: #333333;
+  color: #ffffff;
+}
+
+.card-action:disabled {
+  opacity: 0.5;
+}
+
 /* Platzhalter, den sortablejs an der Einfügestelle einblendet. */
 .kanban-ghost {
   opacity: 0.4;

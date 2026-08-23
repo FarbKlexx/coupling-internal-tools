@@ -25,13 +25,23 @@
       group="kanban"
       :animation="150"
       :disabled="dragDisabled"
+      filter=".card-action"
+      :prevent-on-filter="false"
       ghost-class="kanban-ghost"
       drag-class="kanban-drag"
       class="flex min-h-24 flex-1 flex-col gap-2 px-2 pb-3"
       @start="emit('dragStart')"
       @end="emit('dragEnd', $event)"
     >
-      <KanbanCard v-for="card in cards" :key="card.id" :card="card" @open="emit('open', $event)" />
+      <KanbanCard
+        v-for="card in cards"
+        :key="card.id"
+        :card="card"
+        :column-labels="columnLabels"
+        :is-busy="isBusy"
+        @open="emit('open', $event)"
+        @advance="emit('advance', $event)"
+      />
     </VueDraggable>
   </section>
 </template>
@@ -54,11 +64,15 @@ defineProps<{
   column: KanbanColumnView;
   /** Bei aktivem Filter gesperrt: die Indizes wären dann nicht die echten. */
   dragDisabled?: boolean;
+  /** Nur durchgereicht: die Karten beschriften damit ihre Zielspalte. */
+  columnLabels?: Partial<Record<KanbanColumnId, string>>;
+  isBusy?: boolean;
 }>();
 
 const emit = defineEmits<{
   (e: "add", columnId: KanbanColumnId): void;
   (e: "open", card: KanbanCardType): void;
+  (e: "advance", payload: { card: KanbanCardType; to: KanbanColumnId }): void;
   (e: "dragStart"): void;
   (
     e: "dragEnd",

@@ -36,8 +36,11 @@
         v-model="lists[column.id]"
         :column="column"
         :drag-disabled="isFiltered"
+        :column-labels="columnLabels"
+        :is-busy="isSaving"
         @add="startCreate"
         @open="startEdit"
+        @advance="advanceCard"
         @drag-start="isDragging = true"
         @drag-end="onDragEnd"
       />
@@ -142,6 +145,16 @@ const justCreatedLabelId = ref<string | null>(null);
 const managerOpen = ref(false);
 const managedLabels = ref<KanbanLabel[]>([]);
 
+/**
+ * Slug -> Beschriftung, aus der Board-Antwort. Die Karten benennen damit das
+ * Ziel ihres Weiter-Buttons, ohne die Labels im Frontend zu doppeln.
+ */
+const columnLabels = computed(() => {
+  const map: Partial<Record<KanbanColumnId, string>> = {};
+  for (const column of columns.value) map[column.id] = column.label;
+  return map;
+});
+
 /** Wie viele Karten je Label – das Board liegt komplett im Speicher. */
 const labelUsage = computed(() => {
   const counts: Record<string, number> = {};
@@ -219,6 +232,14 @@ async function saveCard(payload: {
   }
 
   if (ok) closeDialog();
+}
+
+/**
+ * Ein Klick auf den Weiter-Button. Die Karte landet oben in der Zielspalte –
+ * genauso, wie ein Wechsel über die Spaltenauswahl im Dialog es tut.
+ */
+async function advanceCard(payload: { card: KanbanCard; to: KanbanColumnId }) {
+  await relocateCard(payload.card.id, payload.to, 0);
 }
 
 async function deleteCard(cardId: string) {
