@@ -4,7 +4,9 @@
     <TopBar />
 
     <!-- Body -->
-    <div class="flex flex-1 overflow-hidden">
+    <!-- light-grey-background: liegt hinter <main>, damit dessen
+         abgerundete obere linke Ecke die Nav-Farbe durchscheinen laesst. -->
+    <div class="flex flex-1 overflow-hidden light-grey-background">
       <!-- Sidebar -->
       <Sidebar />
 
@@ -12,7 +14,7 @@
       <!-- min-w-0: ohne das kann <main> nicht schmaler werden als sein
            Inhalt, und eine breite Seite (Kanban-Board) schiebt Sidebar und
            Topbar aus dem Bild statt selbst zu scrollen. -->
-      <main class="min-w-0 flex-1 p-6">
+      <main class="min-w-0 flex-1 rounded-tl-xl grey-background p-6">
         <RouterView />
       </main>
     </div>
