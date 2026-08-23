@@ -135,6 +135,33 @@ a {
   border: 1px solid #333333;
 }
 
+/* Icon-Button in der Topbar (Burger). Gleiche Optik wie ein Nav-Eintrag,
+   aber ohne dessen Semantik. */
+.icon-button {
+  background: #252526;
+  border: 1px solid #252526;
+}
+
+.icon-button:hover {
+  border: 1px solid #333333;
+}
+
+/* Beschriftung der eingeklappten Navigation. Wird per Teleport an <body>
+   gehaengt, deshalb `fixed` und ein z-index ueber der Topbar (z-40). */
+.sidebar-tooltip {
+  position: fixed;
+  z-index: 60;
+  transform: translateY(-50%);
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: #252526;
+  border: 1px solid #333333;
+  color: #ffffff;
+  font-size: 14px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
 /* --------------------------------------------------------------------------
    Klickbarkeit
    --------------------------------------------------------------------------

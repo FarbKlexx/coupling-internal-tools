@@ -1,8 +1,22 @@
 <template>
   <aside
-    class="w-52 shrink-0 overflow-y-auto light-grey-background grey-stroke p-4 gap-3 flex flex-col"
+    :class="[
+      'shrink-0 overflow-y-auto overflow-x-hidden light-grey-background grey-stroke gap-3 flex flex-col',
+      // Padding bleibt konstant - sonst springt der Inhalt beim Umschalten,
+      // waehrend die Breite noch animiert.
+      'p-3 transition-[width] duration-200 ease-out',
+      collapsed ? 'w-16' : 'w-52',
+    ]"
   >
-    <span class="grey-text eyebrow"> Hauptkategorie </span>
+    <!-- Wird ausgeblendet statt entfernt: der Platz bleibt reserviert, sonst
+         springen die Icons beim Einklappen nach oben. `overflow-hidden`, weil
+         der Text breiter ist als die eingeklappte Sidebar. -->
+    <span
+      class="grey-text eyebrow overflow-hidden whitespace-nowrap px-2 transition-opacity duration-150"
+      :class="collapsed ? 'opacity-0' : 'opacity-100'"
+    >
+      Hauptkategorie
+    </span>
     <nav class="flex flex-col gap-1">
       <SidebarItem
         v-for="item in visibleItems"
@@ -10,7 +24,9 @@
         :icon="item.icon"
         :label="item.label"
         :isActive="route.name === item.id"
+        :collapsed="collapsed"
         @select="selectItem(item.id)"
+        data-nav-item
         class="cursor-pointer"
       />
     </nav>
@@ -20,9 +36,11 @@
 <script setup lang="ts">
 import SidebarItem from "./SidebarItem.vue";
 import { useRoute, useRouter } from "vue-router";
+import { useSidebar } from "@/composables/useSidebar";
 
 const route = useRoute();
 const router = useRouter();
+const { collapsed } = useSidebar();
 
 // `enabled: false` blendet einen Eintrag aus, ohne ihn zu entfernen.
 const items = [

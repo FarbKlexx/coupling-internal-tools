@@ -17,7 +17,9 @@ async function reachableRouteNames(): Promise<string[]> {
   const wrapper = mount(SideBar, { global: { plugins: [router] } });
   const names: string[] = [];
 
-  for (const item of wrapper.findAll("button")) {
+  // Nur die Nav-Eintraege – der Ein-/Ausklapp-Button ist ebenfalls ein
+  // <button>, navigiert aber nicht.
+  for (const item of wrapper.findAll("[data-nav-item]")) {
     await item.trigger("click");
     // Der Klick-Handler ruft router.push, wartet es aber nicht ab.
     await flushPromises();
