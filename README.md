@@ -1,7 +1,8 @@
 # coupling-internal-tools
 
 Internes Back-Office-Werkzeug für Coupling Media: AWIN-Abgleiche, Banner-CSVs,
-WebP-Konvertierung, QR-Codes, PDF-Passwortschutz und ein Kanban-Board.
+WebP-Konvertierung, QR-Codes, PDF-Passwortschutz, Namensschilder für
+Veranstaltungen und ein Kanban-Board.
 
 Vue-3-SPA (`frontend/`) über einer FastAPI-Anwendung (`backend/`).
 
@@ -43,6 +44,83 @@ SQLite-Datei:
 
 Das Board schreibt außerdem `kanban.db-wal` und `kanban.db-shm` daneben (WAL-Modus);
 die gehören zur Datenbank und werden beim Backup mitgenommen.
+
+## Namensschilder: drucken und kalibrieren
+
+Das Werkzeug (`/namensschilder`) macht aus einer Teilnehmerliste ein PDF für
+perforierte Einsteckschilder-Bögen. Der Bogen wird **direkt bedruckt und nicht
+geschnitten** — deshalb enthält das PDF keinen Anschnitt, keine Schnitt- oder
+Passermarken und nichts außerhalb der Seite. Die Liste wird nirgends
+gespeichert.
+
+### Beim Drucken
+
+| Einstellung | Wert |
+|---|---|
+| Größe | **„Tatsächliche Größe“ bzw. 100 %** — niemals „An Seite anpassen“ |
+| Einzug | manueller Schacht, Bögen einzeln |
+| Medientyp | Karton, 120–160 g/m² |
+| Seiten | einseitig, kein Duplex |
+
+Die stille Skalierung auf ~96 % im Druckdialog ist der häufigste Fehler und
+macht das ganze Raster unbrauchbar. Das PDF setzt deshalb `PrintScaling` auf
+`None`, damit Viewer von sich aus die tatsächliche Größe wählen — der
+Druckdialog kann trotzdem übersteuert werden, also im Zweifel nachsehen.
+
+### Kalibrieren (einmal pro Drucker)
+
+Jeder Drucker legt das Blatt ein paar Zehntelmillimeter versetzt an. Die
+Registerkorrektur gleicht genau diesen **systematischen** Versatz aus.
+
+1. **Kalibrierbogen herunterladen** (Knopf unter den Einstellungen) und auf
+   **Normalpapier** drucken — mit denselben Einstellungen wie oben.
+2. Den Ausdruck **deckungsgleich auf einen leeren Einsteckschilder-Bogen
+   legen** und beides **gegen das Licht halten**.
+3. Ablesen, wie weit die gedruckten Kartenumrisse gegenüber der Perforation
+   verschoben sind — in Millimetern, mit Vorzeichen.
+   *Beispiel:* Die Umrisse liegen 0,8 mm zu weit links und 0,4 mm zu tief.
+4. Die **Gegenwerte** eintragen: X `+0,8`, Y `−0,4`. Positiv heißt nach rechts
+   bzw. nach unten.
+5. Kalibrierbogen erneut drucken und prüfen. Zwei Durchgänge genügen in aller
+   Regel.
+
+Die Fadenkreuze in den Blattecken wandern dabei **nicht** mit: sie sitzen
+immer 10 mm von der Blattecke entfernt und sind die Referenz auf das Blatt
+selbst — an ihnen ist zu sehen, wie der Drucker das Papier anlegt,
+unabhängig vom eingestellten Versatz.
+
+### Was der Versatz nicht kann
+
+Er korrigiert den **festen** Anteil der Abweichung. Die zufällige Streuung des
+Papiereinzugs von etwa **±0,5 mm von Blatt zu Blatt** bleibt und lässt sich
+nicht wegrechnen. Genau dafür gibt es die **Sicherheitszone von 4 mm** um jede
+Karte: solange aller Text darin steht — und dafür verkleinert das Werkzeug
+lange Namen automatisch — bleibt auch ein um einen halben Millimeter
+verrutschter Bogen brauchbar.
+
+Zum Prüfen im Ernstfall lässt sich „Kartenumrisse mitdrucken“ einschalten und
+ein Bogen auf Normalpapier ausgeben.
+
+### Ein weiteres Bogenformat aufnehmen
+
+Format und Kartenlayout sind Konfiguration, kein Code:
+
+| Was | Wo |
+|---|---|
+| Blattmaß, Raster, Kartenmaß, Ränder, Sicherheitszone | `SHEET_FORMATS` in `backend/app/core/badge_geometry.py` |
+| Felder der Karte (Grundlinie, Größe, fett, Ausrichtung) | `CARD_LAYOUTS` in `backend/app/core/badge_layout.py` |
+
+Die Werte werden am tatsächlichen Bogen **ausgemessen**, nicht ausgerechnet.
+Beim Start prüft `SheetFormat.validate()`, ob Ränder, Karten und Spalt exakt
+auf das Blattmaß aufgehen, und bricht mit der Differenz in Millimetern ab,
+wenn nicht — eine unstimmige Konfiguration lässt die Anwendung also gar nicht
+erst starten. Sichtbar wird das neue Format ohne jede Frontend-Änderung: das
+Kartenraster im UI zeichnet sich aus `GET /api/name-badges/formats`.
+
+Die Schriften liegen als eingebettete Subsets bei
+(`backend/app/assets/fonts/`, siehe die README dort). System- oder
+Base-14-Schriften kommen bewusst nicht in Frage: der Druckertreiber zöge dafür
+eine eigene Metrik, und der Text liefe aus der Sicherheitszone.
 
 ## Tests
 

@@ -7,6 +7,7 @@ from app.api.awin_banner_api import router as awin_banner_router
 from app.api.health_api import router as health_router
 from app.api.image_convert_api import router as image_convert_router
 from app.api.kanban_api import router as kanban_router
+from app.api.name_badge_api import router as name_badge_router
 from app.api.pdf_protect_api import router as pdf_protect_router
 from app.api.qr_code_api import router as qr_code_router
 from app.api.upload_api import router
@@ -36,7 +37,12 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["Content-Disposition", "X-Converted-Count", "X-Skipped-Count"],
+    expose_headers=[
+        "Content-Disposition",
+        "X-Converted-Count",
+        "X-Skipped-Count",
+        "X-Sheet-Count",
+    ],
 )
 
 app.include_router(health_router)
@@ -45,4 +51,5 @@ app.include_router(awin_banner_router)
 app.include_router(image_convert_router)
 app.include_router(qr_code_router)
 app.include_router(pdf_protect_router)
+app.include_router(name_badge_router)
 app.include_router(kanban_router)

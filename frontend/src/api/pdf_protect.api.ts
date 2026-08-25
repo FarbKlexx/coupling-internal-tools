@@ -22,20 +22,7 @@ export async function protectPdf(file: File, password: string): Promise<UploadRe
   };
 }
 
-/**
- * Fehlermeldung aus einer Blob-Antwort lesen.
- *
- * Der Request läuft mit `responseType: "blob"`, deshalb kommt auch das
- * JSON-Fehlerobjekt als Blob an und muss erst ausgepackt werden.
- */
-export async function readErrorDetail(payload: unknown): Promise<string | null> {
-  if (!(payload instanceof Blob)) return null;
-
-  try {
-    const parsed: unknown = JSON.parse(await payload.text());
-    const detail = (parsed as { detail?: unknown })?.detail;
-    return typeof detail === "string" ? detail : null;
-  } catch {
-    return null;
-  }
-}
+// Liegt in der gemeinsamen http-Schicht, weil auch die Namensschilder ihre
+// Fehlermeldungen aus Blob-Antworten lesen. Re-Export, damit die bestehenden
+// Importe aus diesem Modul unveraendert bleiben.
+export { readErrorDetail } from "./http";

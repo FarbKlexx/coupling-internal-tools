@@ -17,6 +17,7 @@ const EXPECTED_PATHS = [
   "/webp-konverter",
   "/qr-code",
   "/pdf-schutz",
+  "/namensschilder",
   "/kanban",
 ];
 

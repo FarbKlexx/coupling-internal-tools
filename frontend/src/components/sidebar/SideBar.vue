@@ -50,6 +50,7 @@ const items = [
   { id: "webp-konverter", icon: "compress", label: "WebP Konverter" },
   { id: "qr-code", icon: "qr_code_2", label: "QR-Code Generator" },
   { id: "pdf-schutz", icon: "lock", label: "PDF Passwortschutz" },
+  { id: "namensschilder", icon: "badge", label: "Namensschilder" },
   { id: "kanban", icon: "view_kanban", label: "Kanban Board" },
 ];
 

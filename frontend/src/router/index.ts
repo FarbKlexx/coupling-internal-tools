@@ -7,6 +7,7 @@ import AwinBannerView from "@/views/AwinBannerView.vue";
 import WebpConverterView from "@/views/WebpConverterView.vue";
 import QrCodeView from "@/views/QrCodeView.vue";
 import PdfProtectView from "@/views/PdfProtectView.vue";
+import NameBadgeView from "@/views/NameBadgeView.vue";
 import KanbanView from "@/views/KanbanView.vue";
 
 const routes = [
@@ -87,6 +88,28 @@ const routes = [
       label: "PDF Passwortschutz",
       icon: "lock",
       keywords: ["pdf", "passwort", "schutz", "verschluesseln", "sichern", "aes"],
+    },
+  },
+  {
+    path: "/namensschilder",
+    name: "namensschilder",
+    component: NameBadgeView,
+    meta: {
+      searchable: true,
+      label: "Namensschilder",
+      icon: "badge",
+      keywords: [
+        "namensschild",
+        "namensschilder",
+        "einsteckschilder",
+        "schilder",
+        "veranstaltung",
+        "event",
+        "teilnehmer",
+        "csv",
+        "pdf",
+        "drucken",
+      ],
     },
   },
   {
