@@ -4,10 +4,14 @@ import axios from "axios";
 import {
   convertImagesToWebp,
   DEFAULT_QUALITY,
+  DEFAULT_SCALE,
   estimateWebpSizes,
   interpolateSize,
   MAX_QUALITY,
+  MAX_SCALE,
   MIN_QUALITY,
+  MIN_SCALE,
+  SCALE_STEP,
   type FileEstimate,
 } from "@/api/image_convert.api";
 
@@ -17,31 +21,50 @@ const ACCEPTED_EXTENSIONS = "image/*,.jpg,.jpeg,.jpe,.png,.webp,.gif,.bmp,.tif,.
 /** Parallele Schätz-Requests. Das Backend rechnet pro Bild bereits mehrkernig. */
 const ESTIMATE_CONCURRENCY = 2;
 
+/**
+ * Wartezeit, bevor eine neue Auflösung vermessen wird. Der Qualitätsregler
+ * rechnet lokal, der Auflösungsregler braucht pro Stufe einen Request — ohne
+ * Verzögerung würde ein Zug über die Skala ein Dutzend Messungen auslösen.
+ */
+const SCALE_DEBOUNCE_MS = 400;
+
 const selectedFiles = ref<File[]>([]);
 const quality = ref(DEFAULT_QUALITY);
+const scale = ref(DEFAULT_SCALE);
 const isLoading = ref(false);
 const isDragOver = ref(false);
 const errorMessage = ref<string | null>(null);
 const successMessage = ref<string | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
 
-/** Gemessene Größenkurven, gecacht pro Datei — Key: Name + Größe + Zeitstempel. */
+/**
+ * Gemessene Größenkurven, gecacht pro Datei *und* Auflösung — eine Kurve gilt
+ * nur für die Auflösung, bei der sie gemessen wurde. Dadurch ist ein Zurück auf
+ * eine bereits vermessene Stufe sofort da.
+ */
 const estimates = ref(new Map<string, FileEstimate>());
-/** Keys der Dateien, deren Messung gerade läuft oder eingeplant ist. */
+/** Keys der Messungen, die gerade laufen oder eingeplant sind. */
 const inFlight = ref(new Set<string>());
 const estimateFailed = ref(false);
 let estimateController: AbortController | null = null;
+let estimateTimer: ReturnType<typeof setTimeout> | null = null;
 
 const canSubmit = computed(() => selectedFiles.value.length > 0);
 
 const isEstimating = computed(() => inFlight.value.size > 0);
 
+/** Identität einer Datei — auch für das Filtern von Duplikaten. */
 function fileKey(file: File): string {
   return `${file.name}:${file.size}:${file.lastModified}`;
 }
 
+/** Cache-Key einer Messung: dieselbe Datei bei dieser Auflösung. */
+function cacheKey(file: File, atScale: number): string {
+  return `${fileKey(file)}@${atScale}`;
+}
+
 function estimateFor(file: File): FileEstimate | undefined {
-  return estimates.value.get(fileKey(file));
+  return estimates.value.get(cacheKey(file, scale.value));
 }
 
 type RowStatus = "ready" | "pending" | "skipped";
@@ -54,29 +77,54 @@ interface FileRow {
   estimated: number | null;
   /** Ersparnis in Prozent, positiv = kleiner als das Original. */
   savings: number | null;
+  /** Auflösung nach dem Verkleinern, z. B. "1920×1080 → 960×540". */
+  resolution: string | null;
+}
+
+function resolutionLabel(estimate: FileEstimate): string | null {
+  const { width, height, scaled_width: targetWidth, scaled_height: targetHeight } = estimate;
+  if (width === null || height === null) return null;
+
+  const source = `${width}×${height}`;
+  if (targetWidth === null || targetHeight === null) return source;
+  if (targetWidth === width && targetHeight === height) return source;
+
+  return `${source} → ${targetWidth}×${targetHeight}`;
 }
 
 /**
  * Eine Zeile pro Datei, inklusive der aus den Messpunkten interpolierten
  * Zielgröße. Hängt an `quality`, wird also bei jeder Regler-Bewegung neu
- * berechnet – reine Arithmetik, kein Request.
+ * berechnet – reine Arithmetik, kein Request. Eine neue Auflösung dagegen
+ * wechselt die Messkurve, weshalb die Zeilen dort kurz auf "pending" fallen.
  */
 const rows = computed<FileRow[]>(() =>
   selectedFiles.value.map((file) => {
     const estimate = estimateFor(file);
+    // Die Zeilen-Identität ist die Datei, nicht die Messung — sonst würde jede
+    // Reglerstufe die DOM-Zeilen neu aufbauen statt sie zu aktualisieren.
+    const blank = {
+      file,
+      key: fileKey(file),
+      estimated: null,
+      savings: null,
+      resolution: null,
+    };
 
-    if (!estimate) {
-      return { file, key: fileKey(file), status: "pending", estimated: null, savings: null };
-    }
-    if (!estimate.supported) {
-      return { file, key: fileKey(file), status: "skipped", estimated: null, savings: null };
-    }
+    if (!estimate) return { ...blank, status: "pending" };
+    if (!estimate.supported) return { ...blank, status: "skipped" };
 
     const estimated = interpolateSize(estimate.samples, quality.value);
     const savings =
       estimated === null || file.size === 0 ? null : Math.round((1 - estimated / file.size) * 100);
 
-    return { file, key: fileKey(file), status: "ready", estimated, savings };
+    return {
+      ...blank,
+      status: "ready",
+      estimated,
+      savings,
+      resolution: resolutionLabel(estimate),
+    };
   }),
 );
 
@@ -94,6 +142,14 @@ const totalSavings = computed(() => {
   return Math.round((1 - estimatedTotal.value / originalTotal.value) * 100);
 });
 
+const scaleHint = computed(() => {
+  if (scale.value >= MAX_SCALE) return "Originalauflösung, es wird nur komprimiert.";
+  if (scale.value >= 75) return "Leicht verkleinert, für Druck und Retina noch ausreichend.";
+  if (scale.value >= 50) return "Halbe Kantenlänge: passend für normale Web-Darstellung.";
+  if (scale.value >= 25) return "Stark verkleinert, geeignet für Thumbnails und Vorschauen.";
+  return "Minimale Auflösung, nur noch als Miniatur brauchbar.";
+});
+
 const qualityHint = computed(() => {
   if (quality.value >= 90) return "Kaum sichtbarer Qualitätsverlust, größere Dateien.";
   if (quality.value >= 70) return "Empfohlen: guter Kompromiss aus Qualität und Größe.";
@@ -108,20 +164,25 @@ function formatSize(bytes: number): string {
 }
 
 /**
- * Holt die Größenkurven für alle noch nicht vermessenen Dateien nach.
- * Jede Datei geht einzeln raus, damit die Liste sich nach und nach füllt.
+ * Holt die Größenkurven für alle bei der aktuellen Auflösung noch nicht
+ * vermessenen Dateien nach. Jede Datei geht einzeln raus, damit die Liste sich
+ * nach und nach füllt. Die Auflösung wird beim Start festgehalten: bewegt der
+ * Nutzer den Regler weiter, landet das Ergebnis unter der Stufe, für die es
+ * gemessen wurde – nicht unter der gerade sichtbaren.
  */
 async function refreshEstimates() {
-  const missing = selectedFiles.value.filter(
-    (file) => !estimates.value.has(fileKey(file)) && !inFlight.value.has(fileKey(file)),
-  );
+  const atScale = scale.value;
+  const missing = selectedFiles.value.filter((file) => {
+    const key = cacheKey(file, atScale);
+    return !estimates.value.has(key) && !inFlight.value.has(key);
+  });
   if (missing.length === 0) return;
 
   estimateController ??= new AbortController();
   const { signal } = estimateController;
 
   estimateFailed.value = false;
-  missing.forEach((file) => inFlight.value.add(fileKey(file)));
+  missing.forEach((file) => inFlight.value.add(cacheKey(file, atScale)));
 
   const queue = [...missing];
   const worker = async () => {
@@ -130,14 +191,14 @@ async function refreshEstimates() {
       if (!file) return;
 
       try {
-        const [estimate] = await estimateWebpSizes([file], signal);
-        if (estimate) estimates.value.set(fileKey(file), estimate);
+        const [estimate] = await estimateWebpSizes([file], atScale, signal);
+        if (estimate) estimates.value.set(cacheKey(file, atScale), estimate);
       } catch (e) {
         if (axios.isCancel(e)) return;
         console.error(e);
         estimateFailed.value = true;
       } finally {
-        inFlight.value.delete(fileKey(file));
+        inFlight.value.delete(cacheKey(file, atScale));
       }
     }
   };
@@ -145,13 +206,27 @@ async function refreshEstimates() {
   await Promise.all(Array.from({ length: Math.min(ESTIMATE_CONCURRENCY, missing.length) }, worker));
 }
 
+/** Messung einplanen; ein bereits geplanter Lauf wird dabei verworfen. */
+function scheduleEstimates(delay = 0) {
+  if (estimateTimer) clearTimeout(estimateTimer);
+  estimateTimer = setTimeout(() => {
+    estimateTimer = null;
+    void refreshEstimates();
+  }, delay);
+}
+
 function cancelEstimates() {
+  if (estimateTimer) clearTimeout(estimateTimer);
+  estimateTimer = null;
   estimateController?.abort();
   estimateController = null;
   inFlight.value.clear();
 }
 
-watch(selectedFiles, () => void refreshEstimates());
+watch(selectedFiles, () => scheduleEstimates());
+// Laufende Messungen bleiben stehen: sie gehören zu ihrer eigenen Stufe und
+// füllen den Cache, in den der Regler zurückkehren kann.
+watch(scale, () => scheduleEstimates(SCALE_DEBOUNCE_MS));
 
 onUnmounted(cancelEstimates);
 
@@ -203,6 +278,7 @@ async function convert() {
     const { blob, filename, convertedCount, skippedCount } = await convertImagesToWebp(
       selectedFiles.value,
       quality.value,
+      scale.value,
     );
 
     const url = URL.createObjectURL(blob);
@@ -212,8 +288,13 @@ async function convert() {
     a.click();
     URL.revokeObjectURL(url);
 
+    const settings =
+      scale.value < MAX_SCALE
+        ? `${scale.value} % Auflösung, Qualität ${quality.value}`
+        : `Qualität ${quality.value}`;
+
     successMessage.value =
-      `${convertedCount} Bild(er) konvertiert und als ${filename} heruntergeladen.` +
+      `${convertedCount} Bild(er) mit ${settings} konvertiert und als ${filename} heruntergeladen.` +
       (skippedCount > 0
         ? ` ${skippedCount} Datei(en) wurden übersprungen – Details stehen im ZIP.`
         : "");
@@ -231,8 +312,8 @@ async function convert() {
     <div class="space-y-1">
       <h2 class="text-lg font-semibold">Bilder zu WebP konvertieren</h2>
       <p class="text-xs text-zinc-500">
-        JPG, JPEG, PNG, HEIC, GIF, TIFF und BMP werden zu WebP konvertiert und als ZIP
-        heruntergeladen.
+        JPG, JPEG, PNG, HEIC, GIF, TIFF und BMP werden zuerst auf die gewählte Auflösung
+        verkleinert, dann als WebP kodiert und als ZIP heruntergeladen.
       </p>
     </div>
 
@@ -283,7 +364,12 @@ async function convert() {
         :key="row.key"
         class="flex items-center justify-between gap-3 rounded-md px-3 py-1.5 text-sm grey-background light-grey-stroke"
       >
-        <span class="light-grey-text truncate">{{ row.file.name }}</span>
+        <span class="min-w-0 flex flex-col">
+          <span class="light-grey-text truncate">{{ row.file.name }}</span>
+          <span v-if="row.resolution" class="text-xs text-zinc-500 tabular-nums">
+            {{ row.resolution }} px
+          </span>
+        </span>
 
         <span class="flex items-center gap-2 shrink-0 tabular-nums">
           <span class="text-xs text-zinc-500">{{ formatSize(row.file.size) }}</span>
@@ -346,6 +432,28 @@ async function convert() {
     <p v-else class="text-xs text-zinc-500">Noch keine Dateien ausgewählt.</p>
 
     <div class="border-t light-grey-stroke" />
+
+    <!-- Auflösung -->
+    <div class="flex flex-col gap-2">
+      <div class="flex items-center justify-between">
+        <label class="text-sm font-medium" for="scale">Auflösung</label>
+        <span class="white-text tabular-nums">{{ scale }} %</span>
+      </div>
+      <input
+        id="scale"
+        v-model.number="scale"
+        type="range"
+        :min="MIN_SCALE"
+        :max="MAX_SCALE"
+        :step="SCALE_STEP"
+        class="w-full accent-blue-600 cursor-pointer"
+      />
+      <div class="flex justify-between text-xs text-zinc-500">
+        <span>{{ MIN_SCALE }} % · kleinste Auflösung</span>
+        <span>{{ MAX_SCALE }} % · Original</span>
+      </div>
+      <p class="text-xs text-zinc-500">{{ scaleHint }}</p>
+    </div>
 
     <!-- Qualität -->
     <div class="flex flex-col gap-2">

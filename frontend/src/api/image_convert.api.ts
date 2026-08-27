@@ -5,6 +5,13 @@ export const MIN_QUALITY = 1;
 export const MAX_QUALITY = 100;
 export const DEFAULT_QUALITY = 80;
 
+/** Auflösung in Prozent der Originalkantenlänge (Spiegel von `image_utils.py`). */
+export const MIN_SCALE = 10;
+export const MAX_SCALE = 100;
+export const DEFAULT_SCALE = 100;
+/** Rasterung des Auflösungsreglers — jede Stufe kostet einen Mess-Request. */
+export const SCALE_STEP = 5;
+
 /** Bulk-Uploads brauchen deutlich mehr als das 60s-Default-Timeout. */
 const LONG_TIMEOUT = 300_000;
 
@@ -25,25 +32,38 @@ export interface FileEstimate {
   original_size: number;
   supported: boolean;
   samples: SizeSample[];
+  /** Auflösung des dekodierten Originals (null, wenn nicht lesbar). */
+  width: number | null;
+  height: number | null;
+  /** Auflösung nach dem Verkleinern — bei 100 % identisch zum Original. */
+  scaled_width: number | null;
+  scaled_height: number | null;
   error: string | null;
 }
 
 interface EstimateResponse {
   qualities: number[];
+  /** Auflösung, bei der gemessen wurde. */
+  scale: number;
   files: FileEstimate[];
 }
 
 /**
  * Lädt beliebig viele Bilder hoch und erhält sie als WebP-ZIP zurück.
- * `quality` steuert den Qualitätsverlust (1 = stark komprimiert, 100 = kaum Verlust).
+ *
+ * `scale` verkleinert die Auflösung (Prozent der Kantenlänge, 100 = unverändert)
+ * und wird vom Backend *vor* der WebP-Kodierung angewendet; `quality` steuert
+ * anschließend den Qualitätsverlust (1 = stark komprimiert, 100 = kaum Verlust).
  */
 export async function convertImagesToWebp(
   files: File[],
   quality: number,
+  scale: number = DEFAULT_SCALE,
 ): Promise<ImageConvertResponse> {
   const formData = new FormData();
   files.forEach((file) => formData.append("files", file));
   formData.append("quality", String(quality));
+  formData.append("scale", String(scale));
 
   const response = await http.post("/convert-images", formData, {
     responseType: "blob",
@@ -59,16 +79,20 @@ export async function convertImagesToWebp(
 }
 
 /**
- * Misst für jede Datei die WebP-Größe an mehreren Qualitätsstufen.
+ * Misst für jede Datei die WebP-Größe an mehreren Qualitätsstufen — gemessen bei
+ * der Auflösung `scale`, denn die Kurve gilt nur für diese eine Auflösung.
+ *
  * Die Antwort kommt in derselben Reihenfolge wie die gesendeten Dateien —
  * Dateinamen sind nicht eindeutig, deshalb wird über den Index zugeordnet.
  */
 export async function estimateWebpSizes(
   files: File[],
+  scale: number = DEFAULT_SCALE,
   signal?: AbortSignal,
 ): Promise<FileEstimate[]> {
   const formData = new FormData();
   files.forEach((file) => formData.append("files", file));
+  formData.append("scale", String(scale));
 
   const response = await http.post<EstimateResponse>("/convert-images/estimate", formData, {
     timeout: LONG_TIMEOUT,
@@ -83,6 +107,8 @@ export async function estimateWebpSizes(
  *
  * Zwischen zwei Stufen wird linear interpoliert (in der Praxis wenige Prozent
  * daneben, auf den Stufen selbst exakt), außerhalb wird der Randwert gehalten.
+ * Gilt nur innerhalb einer Auflösung — für eine andere `scale` muss neu
+ * gemessen werden.
  */
 export function interpolateSize(samples: SizeSample[], quality: number): number | null {
   const sorted = [...samples].sort((a, b) => a.quality - b.quality);

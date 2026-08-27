@@ -8,6 +8,7 @@ from typing import BinaryIO
 
 from app.core.image_utils import (
     DEFAULT_QUALITY,
+    DEFAULT_SCALE,
     ESTIMATE_QUALITIES,
     ImageConversionError,
     convert_to_webp,
@@ -45,8 +46,14 @@ def _unique_name(name: str, taken: set[str]) -> str:
 def convert_images_to_webp(
     sources: Iterable[tuple[str, BinaryIO]],
     quality: int = DEFAULT_QUALITY,
+    scale: int = DEFAULT_SCALE,
 ) -> ImageConversionResult:
     """Convert every source image to WebP and pack the results into one zip.
+
+    Every image is first scaled down to `scale` percent of its edge length and
+    then encoded at `quality` — that order is what makes the two settings
+    independent: the encoder never sees the pixels the resolution step threw
+    away.
 
     `sources` is consumed lazily as `(filename, stream)` pairs, so only one
     original is held in memory at a time — the batch size is bounded by the
@@ -71,7 +78,7 @@ def convert_images_to_webp(
                 continue
 
             try:
-                webp_bytes = convert_to_webp(stream.read(), quality)
+                webp_bytes = convert_to_webp(stream.read(), quality, scale)
             except ImageConversionError as exc:
                 logger.warning("Skipping '%s': %s", filename, exc)
                 result.skipped.append(
@@ -96,6 +103,7 @@ def convert_images_to_webp(
 def estimate_image_sizes(
     sources: Iterable[tuple[str, BinaryIO]],
     qualities: tuple[int, ...] = ESTIMATE_QUALITIES,
+    scale: int = DEFAULT_SCALE,
 ) -> list[ImageEstimate]:
     """Measure what each source image would weigh at every sampled quality.
 
@@ -121,7 +129,7 @@ def estimate_image_sizes(
             continue
 
         try:
-            samples = estimate_webp_sizes(data, qualities)
+            estimate = estimate_webp_sizes(data, qualities, scale)
         except ImageConversionError as exc:
             logger.warning("No estimate for '%s': %s", filename, exc)
             estimates.append(
@@ -134,7 +142,13 @@ def estimate_image_sizes(
             continue
 
         estimates.append(
-            ImageEstimate(filename=filename, original_size=len(data), samples=samples)
+            ImageEstimate(
+                filename=filename,
+                original_size=len(data),
+                samples=estimate.sizes,
+                pixels=estimate.source,
+                scaled_pixels=estimate.target,
+            )
         )
 
     return estimates

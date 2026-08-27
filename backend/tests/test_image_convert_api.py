@@ -1,0 +1,121 @@
+"""HTTP-Ebene des WebP-Konverters: die beiden Regler als Formularfelder.
+
+Die Konvertierung selbst hängt in `test_image_convert_service.py`; hier geht es
+nur darum, dass `quality`/`scale` durchgereicht und Fehlwerte abgelehnt werden.
+"""
+
+import zipfile
+from io import BytesIO
+
+import pytest
+from PIL import Image
+
+from app.core.image_utils import MAX_SCALE, MIN_SCALE
+
+
+def _png(size=(400, 300)) -> bytes:
+    buffer = BytesIO()
+    Image.new("RGB", size, color="red").save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def _upload(name: str = "foto.png", size=(400, 300)):
+    return {"files": (name, BytesIO(_png(size)), "image/png")}
+
+
+def test_conversion_applies_the_requested_scale(client):
+    response = client.post(
+        "/convert-images", files=_upload(), data={"quality": 80, "scale": 25}
+    )
+
+    assert response.status_code == 200
+    with zipfile.ZipFile(BytesIO(response.content)) as archive:
+        with Image.open(BytesIO(archive.read("foto.webp"))) as image:
+            assert image.size == (100, 75)
+
+
+def test_conversion_without_a_scale_keeps_the_resolution(client):
+    response = client.post("/convert-images", files=_upload(), data={"quality": 80})
+
+    assert response.status_code == 200
+    with zipfile.ZipFile(BytesIO(response.content)) as archive:
+        with Image.open(BytesIO(archive.read("foto.webp"))) as image:
+            assert image.size == (400, 300)
+
+
+@pytest.mark.parametrize("scale", [0, MIN_SCALE - 1, MAX_SCALE + 1, 1000])
+def test_an_out_of_range_scale_is_rejected(client, scale):
+    # Die Core-Helfer klemmen den Wert ab; ein stillschweigend anderer Download
+    # wäre schlimmer als ein Fehler.
+    response = client.post(
+        "/convert-images", files=_upload(), data={"quality": 80, "scale": scale}
+    )
+
+    assert response.status_code == 400
+    assert "scale" in response.json()["detail"]
+
+
+@pytest.mark.parametrize("quality", [0, 101])
+def test_an_out_of_range_quality_is_still_rejected(client, quality):
+    response = client.post(
+        "/convert-images", files=_upload(), data={"quality": quality}
+    )
+
+    assert response.status_code == 400
+    assert "quality" in response.json()["detail"]
+
+
+def test_estimate_reports_the_scale_and_both_resolutions(client):
+    response = client.post(
+        "/convert-images/estimate", files=_upload(), data={"scale": 50}
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["scale"] == 50
+
+    [estimate] = body["files"]
+    assert estimate["supported"] is True
+    assert (estimate["width"], estimate["height"]) == (400, 300)
+    assert (estimate["scaled_width"], estimate["scaled_height"]) == (200, 150)
+    assert [sample["quality"] for sample in estimate["samples"]] == body["qualities"]
+
+
+def test_estimate_of_an_unreadable_file_has_no_resolution(client):
+    response = client.post(
+        "/convert-images/estimate",
+        files={"files": ("notiz.txt", BytesIO(b"kein bild"), "text/plain")},
+    )
+
+    assert response.status_code == 200
+    [estimate] = response.json()["files"]
+    assert estimate["supported"] is False
+    assert estimate["width"] is None and estimate["scaled_width"] is None
+
+
+def test_estimate_rejects_an_out_of_range_scale(client):
+    response = client.post(
+        "/convert-images/estimate", files=_upload(), data={"scale": 250}
+    )
+
+    assert response.status_code == 400
+
+
+def test_the_estimate_matches_what_the_download_weighs(client):
+    """Die Vorschau ist nur dann etwas wert, wenn sie exakt trifft."""
+    quality, scale = 55, 40
+
+    estimate = client.post(
+        "/convert-images/estimate", files=_upload(), data={"scale": scale}
+    ).json()["files"][0]
+    predicted = next(
+        sample["size"]
+        for sample in estimate["samples"]
+        if sample["quality"] == quality  # 55 ist eine gemessene Stützstelle
+    )
+
+    download = client.post(
+        "/convert-images", files=_upload(), data={"quality": quality, "scale": scale}
+    )
+    with zipfile.ZipFile(BytesIO(download.content)) as archive:
+        assert len(archive.read("foto.webp")) == predicted
