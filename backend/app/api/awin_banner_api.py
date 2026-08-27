@@ -1,8 +1,13 @@
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
+from app.schemas.access import Page
 from app.schemas.awin_banner import AwinBannerRequest
 from app.services.awin_banner_service import generate_awin_banner_csv
+
+# Permission this router lives behind. `main.py` reads it when including
+# the router, so a feature module without it cannot be mounted at all.
+PAGE = Page.AWIN_BANNER
 
 router = APIRouter()
 

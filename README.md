@@ -178,11 +178,14 @@ sudo chown "$USER" /opt/coupling-internal-tools
 git clone <repo-url> /opt/coupling-internal-tools
 cd /opt/coupling-internal-tools
 
-# 2. Basic-Auth-Datei anlegen. MUSS als Datei existieren, bevor der
-#    frontend-Container startet – sonst legt Docker an ihrer Stelle ein
-#    Verzeichnis an und nginx bricht ab. deploy.sh prüft das vorab.
-docker run --rm httpd:alpine htpasswd -nbB <benutzer> '<passwort>' > auth/.htpasswd
-#    Weitere Benutzer anhängen (>> statt >).
+# 2. .env anlegen und ausfüllen. MUSS existieren, bevor der backend-Container
+#    startet – ohne ADMIN_USERNAME/ADMIN_PASSWORD verweigert die Anwendung
+#    beim allerersten Start den Dienst, weil es sonst kein Konto gäbe, mit dem
+#    sich jemand anmelden könnte. deploy.sh prüft beides vorab.
+cp env.example .env && chmod 600 .env
+$EDITOR .env
+#    Eine Basic-Auth-Datei wird nicht mehr gebraucht: authentifiziert wird in
+#    der Anwendung. Ein vorhandenes auth/.htpasswd kann gelöscht werden.
 
 # 3. Initiales Zertifikat holen. Das muss von Hand passieren: der certbot-Service
 #    in docker-compose.yml macht nur `renew`, und `renew` braucht eine bereits
@@ -199,9 +202,36 @@ docker compose run --rm certbot certonly \
 docker compose up -d --build
 ```
 
-Eine `.env` wird **nicht** gebraucht: keiner der Services liest heute eine
-Env-Datei. Die einzige Variable der Anwendung ist `KANBAN_DB_PATH`, und deren
-Default passt im Container.
+### Erster Login
+
+Nach dem ersten Start meldet man sich mit `ADMIN_USERNAME`/`ADMIN_PASSWORD`
+aus der `.env` an. Danach:
+
+1. **Zweiten Faktor einrichten** (Profilmenü → Mein Konto). Für ASVS Level 2
+   ist er Pflicht, und er ist der wirksamste Einzelschutz — ein Login im
+   offenen Netz steht und fällt sonst mit der Passwortqualität.
+2. **Weitere Konten anlegen** (Profilmenü → Benutzer verwalten). Das
+   Startpasswort erzeugt der Server und zeigt es genau einmal an; die Person
+   muss es bei der ersten Anmeldung wechseln.
+3. Pro Konto ankreuzen, welche Seiten es öffnen darf. Administratoren sehen
+   immer alles.
+
+`ADMIN_PASSWORD` wirkt **nur beim Anlegen**. Ein späterer Neustart
+überschreibt ein in der Oberfläche geändertes Passwort nicht.
+
+**Administratorpasswort vergessen?** Es gibt keinen Reset per Mail (das System
+versendet keine). Der Notausgang läuft über die Shell:
+
+```bash
+docker compose exec backend python -m app.admin_cli reset <benutzername>
+```
+
+Das gibt ein neues Startpasswort aus, erzwingt den Wechsel bei der nächsten
+Anmeldung und beendet alle laufenden Sitzungen des Kontos.
+
+Wie die Authentifizierung im Einzelnen funktioniert — Passwortrichtlinie,
+Sperren, Sitzungsdauern und deren Begründung — steht in
+[docs/authentifizierung.md](docs/authentifizierung.md).
 
 ### Healthchecks
 
@@ -211,7 +241,7 @@ beide (je bis zu 60 s):
 | Service | Prüfung | Warum so |
 |---|---|---|
 | `backend` | Python-Einzeiler gegen `http://127.0.0.1:8000/health` | `python:3.11-slim` hat weder curl noch wget noch nc — Python ist das einzige Werkzeug im Image. `/health` fasst die Datenbank nicht an, damit ein gesperrtes SQLite nicht den Container neu startet |
-| `frontend` | `wget --spider http://127.0.0.1/healthz` | `/healthz` liegt im HTTP-Block von `nginx.conf`, also ohne Zertifikat und ohne Basic Auth erreichbar |
+| `frontend` | `wget --spider http://127.0.0.1/healthz` | `/healthz` liegt im HTTP-Block von `nginx.conf`, also ohne Zertifikat und ohne Anmeldung erreichbar |
 
 Der frontend-Check ist nicht optional: `docker compose up -d` kehrt auch
 erfolgreich zurück, wenn nginx sofort stirbt (fehlendes Zertifikat, kaputte
@@ -262,15 +292,15 @@ Backup ziehen (siehe unten).
 
 | Pfad auf dem Server | Inhalt | Ersetzbar? |
 |---|---|---|
-| `data/kanban/` | SQLite des Kanban-Boards (`kanban.db` + `-wal`/`-shm`) | **nein** — hier hängt der ganze Zustand der App |
+| `data/kanban/` | SQLite des Kanban-Boards **und der Benutzerkonten** (`kanban.db`, `auth.db`, je + `-wal`/`-shm`) | **nein** — hier hängt der ganze Zustand der App, inklusive aller Konten |
 | `certbot/conf/` | Let's-Encrypt-Zertifikate und Renewal-Konfiguration | ja, neu ausstellbar (Rate-Limits beachten) |
-| `auth/.htpasswd` | Basic-Auth-Hashes | ja, neu erzeugbar |
+| `.env` | Zugangsdaten des ersten Administrators und Betriebsparameter | ja, aber siehe „Erster Login" |
 | `certbot/www/` | ACME-Challenge-Webroot, nur transient | ja |
 
 Backup — ein Verzeichnis-Archiv genügt, der Stack darf dabei laufen:
 
 ```bash
-tar czf "kanban-$(date +%F).tar.gz" -C /opt/coupling-internal-tools data auth certbot/conf
+tar czf "kanban-$(date +%F).tar.gz" -C /opt/coupling-internal-tools data certbot/conf
 ```
 
 Zusätzlich holt der Export-Knopf im Board (`GET /api/kanban/export`) jederzeit

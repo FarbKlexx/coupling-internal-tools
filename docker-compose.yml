@@ -11,10 +11,17 @@ services:
     restart: unless-stopped
     expose:
       - "8000"
+    # Zugangsdaten und Betriebsparameter kommen aus .env neben dieser Datei.
+    # Vorlage: env.example. Ohne ADMIN_USERNAME/ADMIN_PASSWORD verweigert das
+    # Backend beim allerersten Start den Dienst - siehe README.
+    env_file:
+      - .env
     volumes:
-      # Das Kanban-Board ist der einzige persistente Zustand der App.
-      # Ohne dieses Mount liegt die SQLite-Datei im Container und ist beim
-      # naechsten Image-Rebuild verloren. Backup = dieses Verzeichnis sichern.
+      # Der persistente Zustand der App: das Kanban-Board *und* seit den
+      # Benutzerkonten auch auth.db. Ohne dieses Mount liegen beide
+      # SQLite-Dateien im Container und sind beim naechsten Image-Rebuild
+      # verloren - inklusive aller Konten.
+      # Backup = dieses Verzeichnis sichern.
       - ./data/kanban:/app/data
     healthcheck:
       # python:3.11-slim bringt weder curl noch wget noch nc mit - Python ist
@@ -44,10 +51,9 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      # Muss als Datei existieren, bevor der Container startet - sonst legt
-      # Docker ein Verzeichnis mit diesem Namen an und nginx bricht ab.
-      # Anlegen siehe README, Abschnitt Deployment.
-      - ./auth/.htpasswd:/etc/nginx/.htpasswd:ro
+      # Die Basic Auth ist mit den Benutzerkonten entfallen - authentifiziert
+      # wird jetzt in der Anwendung. Das .htpasswd-Mount ist deshalb weg; die
+      # Datei auf dem Server kann geloescht werden.
       - ./certbot/www:/var/www/certbot
       - ./certbot/conf:/etc/letsencrypt
     depends_on:

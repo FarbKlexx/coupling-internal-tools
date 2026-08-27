@@ -1,0 +1,23 @@
+# Kontextspezifische Woerter (ASVS 6.1.2, 6.2.11).
+#
+# Enthaelt ein Passwort eines dieser Woerter als Teilzeichenkette, wird es
+# abgelehnt. Der Vergleich ist case-insensitiv (casefold).
+#
+# Hier gehoert alles hinein, was jemand raten wuerde, der weiss, worum es geht:
+# Firmenname, Produktnamen, Werkzeugnamen, Domain, grosse Kunden.
+# Kommentarzeilen beginnen mit #, Leerzeilen werden ignoriert.
+
+coupling
+couplingmedia
+media
+awin
+kanban
+jeansfritz
+jeans-fritz
+internal-tools
+internaltools
+abgleich
+namensschild
+webp
+qrcode
+backoffice

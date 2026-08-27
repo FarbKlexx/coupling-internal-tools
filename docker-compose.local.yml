@@ -10,6 +10,21 @@ services:
     container_name: backend_dev
     ports:
       - "8000:8000"
+    environment:
+      # Erstes Konto fuer die lokale Entwicklung. Wird nur angelegt, solange
+      # noch gar kein Konto existiert; ein spaeter geaendertes Passwort
+      # ueberschreibt der Neustart nicht.
+      - ADMIN_USERNAME=chefin
+      - ADMIN_PASSWORD=Lokales-Entwicklungs-Kennwort
+      # Lokal laeuft alles ueber http: ein `Secure`-Cookie kaeme nie zurueck,
+      # und das `__Host-`-Praefix setzt `Secure` voraus.
+      - SESSION_COOKIE_NAME=session
+      - SESSION_COOKIE_SECURE=0
+      # Interaktive API-Doku: lokal nuetzlich, in Produktion aus.
+      - ENABLE_API_DOCS=1
+      # CORS-Liste mit den localhost-Origins. Standard ist aus; lokal wird sie
+      # ausdruecklich eingeschaltet, damit Produktion ohne Zutun sicher ist.
+      - ALLOW_DEV_ORIGINS=1
     volumes:
       - ./backend:/app
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload

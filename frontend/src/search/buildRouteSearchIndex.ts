@@ -1,4 +1,5 @@
 import type { RouteRecordRaw } from "vue-router";
+import { isVisible, type Visibility } from "@/navigation/visiblePages";
 
 export interface RouteSearchItem {
   id: string;
@@ -8,9 +9,13 @@ export interface RouteSearchItem {
   keywords?: string[];
 }
 
-export function buildRouteSearchIndex(routes: RouteRecordRaw[]): RouteSearchItem[] {
+export function buildRouteSearchIndex(
+  routes: RouteRecordRaw[],
+  visibility?: Visibility,
+): RouteSearchItem[] {
   return routes
     .filter((r) => r.meta?.searchable && typeof r.path === "string" && !r.redirect)
+    .filter((r) => isVisible(r, visibility))
     .map((r) => ({
       id: String(r.name ?? r.path),
       label: String(r.meta?.label ?? r.name),

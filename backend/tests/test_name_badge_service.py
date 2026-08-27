@@ -9,12 +9,10 @@ import logging
 from io import BytesIO
 
 import pytest
-from fastapi.testclient import TestClient
 from pypdf import PdfReader
 
 from app.core.badge_geometry import DEFAULT_FORMAT_ID, get_format
 from app.core.badge_pdf import RenderOptions
-from app.main import app
 from app.services.name_badge_service import (
     NameBadgeError,
     analyse_badge_csv,
@@ -24,8 +22,6 @@ from app.services.name_badge_service import (
 )
 
 SHEET = get_format(DEFAULT_FORMAT_ID)
-
-client = TestClient(app)
 
 
 def _csv(rows: int, header: str = "Vorname;Nachname;Funktion;Firma") -> bytes:
@@ -205,7 +201,7 @@ def test_formats_carry_the_geometry_the_frontend_draws_from():
 # ------------------------------
 
 
-def test_endpoint_returns_a_pdf_with_a_filename_and_the_sheet_count():
+def test_endpoint_returns_a_pdf_with_a_filename_and_the_sheet_count(client):
     response = client.post(
         "/name-badges",
         files={"file": ("gaeste.csv", _csv(13), "text/csv")},
@@ -220,7 +216,7 @@ def test_endpoint_returns_a_pdf_with_a_filename_and_the_sheet_count():
     assert _pages(response.content) == 2
 
 
-def test_analyse_endpoint_answers_json():
+def test_analyse_endpoint_answers_json(client):
     response = client.post(
         "/name-badges/analyse",
         files={"file": ("gaeste.csv", _csv(13), "text/csv")},
@@ -232,7 +228,7 @@ def test_analyse_endpoint_answers_json():
     assert response.json()["records"] == 13
 
 
-def test_calibration_endpoint_answers_a_single_page_pdf():
+def test_calibration_endpoint_answers_a_single_page_pdf(client):
     response = client.post(
         "/name-badges/calibration",
         json={"format": DEFAULT_FORMAT_ID, "offset_x_mm": 0.5, "offset_y_mm": -0.5},
@@ -242,7 +238,7 @@ def test_calibration_endpoint_answers_a_single_page_pdf():
     assert _pages(response.content) == 1
 
 
-def test_formats_endpoint():
+def test_formats_endpoint(client):
     response = client.get("/name-badges/formats")
 
     assert response.status_code == 200
@@ -258,14 +254,16 @@ def test_formats_endpoint():
         ({"file": ("liste.csv", b"Vorname;Nachname\n", "text/csv")}, "Kopfzeile"),
     ],
 )
-def test_broken_uploads_answer_400_with_an_actionable_message(payload, expected):
+def test_broken_uploads_answer_400_with_an_actionable_message(
+    payload, expected, client
+):
     response = client.post("/name-badges", files=payload)
 
     assert response.status_code == 400
     assert expected in response.json()["detail"]
 
 
-def test_out_of_range_offset_answers_400_not_422():
+def test_out_of_range_offset_answers_400_not_422(client):
     """Ein rohes 422 sagt dem Anwender nichts."""
     response = client.post("/name-badges/calibration", json={"offset_x_mm": 42})
 

@@ -3,7 +3,12 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 
 from app.core.pdf_utils import PdfProtectionError
+from app.schemas.access import Page
 from app.services.pdf_protect_service import protect_uploaded_pdf
+
+# Permission this router lives behind. `main.py` reads it when including
+# the router, so a feature module without it cannot be mounted at all.
+PAGE = Page.PDF_SCHUTZ
 
 router = APIRouter()
 

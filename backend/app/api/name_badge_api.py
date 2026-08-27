@@ -18,6 +18,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 
 from app.core.badge_geometry import DEFAULT_FORMAT_ID
+from app.schemas.access import Page
 from app.schemas.name_badge import (
     AnalyseResponse,
     CalibrationRequest,
@@ -32,6 +33,10 @@ from app.services.name_badge_service import (
     create_calibration_pdf,
     list_formats,
 )
+
+# Permission this router lives behind. `main.py` reads it when including
+# the router, so a feature module without it cannot be mounted at all.
+PAGE = Page.NAMENSSCHILDER
 
 router = APIRouter(prefix="/name-badges", tags=["name-badges"])
 

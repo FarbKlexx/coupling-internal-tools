@@ -4,9 +4,14 @@ from datetime import datetime
 from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.responses import StreamingResponse
 
+from app.schemas.access import Page
 from app.services.upload_service import process_upload
 
 today = datetime.today().date()
+
+# Permission this router lives behind. `main.py` reads it when including
+# the router, so a feature module without it cannot be mounted at all.
+PAGE = Page.ABGLEICHE
 
 router = APIRouter()
 

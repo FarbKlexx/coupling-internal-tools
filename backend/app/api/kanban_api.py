@@ -7,9 +7,11 @@ The handlers are plain `def`, not `async def`: SQLite is blocking, and FastAPI
 runs sync handlers in its threadpool, which is exactly what is wanted here.
 """
 
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
+from app.api.deps import CurrentUser, current_user
+from app.schemas.access import Page
 from app.schemas.kanban import (
     CardCreateRequest,
     CardLabelsRequest,
@@ -37,10 +39,11 @@ from app.services.kanban_service import (
     set_card_labels,
 )
 
-router = APIRouter(prefix="/kanban", tags=["kanban"])
+# Permission this router lives behind. `main.py` reads it when including
+# the router, so a feature module without it cannot be mounted at all.
+PAGE = Page.KANBAN
 
-# Upper bound for the author label taken from the auth header.
-_MAX_AUTHOR = 60
+router = APIRouter(prefix="/kanban", tags=["kanban"])
 
 
 def _fail(exc: KanbanError) -> HTTPException:
@@ -58,20 +61,6 @@ def _fail(exc: KanbanError) -> HTTPException:
     return HTTPException(status_code=status, detail=str(exc))
 
 
-def _author(header: str | None) -> str:
-    """Turn the basic-auth user nginx forwards into a display name.
-
-    nginx always sets `X-Remote-User` for `/api/`, so a client cannot inject
-    it, and the backend port is not published in production. Even so this is a
-    *label* and never an authorisation decision. Locally (Vite proxy, no auth)
-    the header is missing.
-    """
-    if not header:
-        return "lokal"
-
-    return header.strip()[:_MAX_AUTHOR]
-
-
 @router.get("/board", response_model=KanbanBoard)
 def read_board() -> KanbanBoard:
     """The whole board. Polled by the frontend, guarded by `revision`."""
@@ -81,10 +70,11 @@ def read_board() -> KanbanBoard:
 @router.post("/cards", response_model=KanbanBoard)
 def add_card(
     request: CardCreateRequest,
-    x_remote_user: str | None = Header(default=None),
+    user: CurrentUser = Depends(current_user),
 ) -> KanbanBoard:
+    """The author label comes from the caller, never from the request body."""
     try:
-        return create_card(request, created_by=_author(x_remote_user))
+        return create_card(request, created_by=user.username)
     except KanbanError as exc:
         raise _fail(exc) from exc
 

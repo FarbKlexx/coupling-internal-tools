@@ -4,9 +4,10 @@
  * Eintrag muss auf eine existierende Route zeigen, und jede suchbare Route
  * muss ueber die Sidebar erreichbar sein.
  */
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { router } from "@/router";
+import { signInAs, signInWithPages } from "@/test/auth";
 import SideBar from "./SideBar.vue";
 
 /** Klickt jeden Eintrag durch und sammelt, wo man landet. */
@@ -31,6 +32,10 @@ async function reachableRouteNames(): Promise<string[]> {
 }
 
 describe("SideBar", () => {
+  // Die Sidebar zeigt nur, was der angemeldete Benutzer oeffnen darf, und der
+  // Router-Guard laesst ohne Anmeldung ohnehin nichts durch.
+  beforeEach(() => signInAs());
+
   it("verweist mit jedem Eintrag auf eine existierende Route", async () => {
     const names = await reachableRouteNames();
     const known = new Set(router.getRoutes().map((route) => String(route.name)));
@@ -56,5 +61,16 @@ describe("SideBar", () => {
     const wrapper = mount(SideBar, { global: { plugins: [router] } });
 
     expect(wrapper.text()).not.toContain("Dashboard");
+  });
+
+  it("zeigt einem eingeschraenkten Konto nur dessen Seiten", async () => {
+    signInWithPages(["kanban"]);
+    await router.push("/kanban");
+
+    const wrapper = mount(SideBar, { global: { plugins: [router] } });
+
+    expect(wrapper.text()).toContain("Kanban Board");
+    expect(wrapper.text()).not.toContain("QR-Code Generator");
+    expect(wrapper.text()).not.toContain("Benutzer");
   });
 });

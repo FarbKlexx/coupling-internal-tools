@@ -10,6 +10,7 @@ from app.core.image_utils import (
     MAX_QUALITY,
     MIN_QUALITY,
 )
+from app.schemas.access import Page
 from app.schemas.image_convert import (
     EstimateResponse,
     FileEstimateResponse,
@@ -19,6 +20,10 @@ from app.services.image_convert_service import (
     convert_images_to_webp,
     estimate_image_sizes,
 )
+
+# Permission this router lives behind. `main.py` reads it when including
+# the router, so a feature module without it cannot be mounted at all.
+PAGE = Page.WEBP_KONVERTER
 
 router = APIRouter()
 

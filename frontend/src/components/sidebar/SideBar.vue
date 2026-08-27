@@ -19,7 +19,7 @@
     </span>
     <nav class="flex flex-col gap-1">
       <SidebarItem
-        v-for="item in visibleItems"
+        v-for="item in items"
         :key="item.id"
         :icon="item.icon"
         :label="item.label"
@@ -34,27 +34,33 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from "vue";
 import SidebarItem from "./SidebarItem.vue";
 import { useRoute, useRouter } from "vue-router";
+import { routes } from "@/router";
+import { buildNavItems } from "@/navigation/buildNavItems";
+import { useAuth } from "@/composables/useAuth";
 import { useSidebar } from "@/composables/useSidebar";
 
 const route = useRoute();
 const router = useRouter();
 const { collapsed } = useSidebar();
+const auth = useAuth();
 
-// `enabled: false` blendet einen Eintrag aus, ohne ihn zu entfernen.
-const items = [
-  { id: "dashboard", icon: "home", label: "Dashboard", enabled: false },
-  { id: "abgleiche", icon: "table", label: "AWIN Abgleiche" },
-  { id: "awin-banner", icon: "image", label: "AWIN Banner CSV" },
-  { id: "webp-konverter", icon: "compress", label: "WebP Konverter" },
-  { id: "qr-code", icon: "qr_code_2", label: "QR-Code Generator" },
-  { id: "pdf-schutz", icon: "lock", label: "PDF Passwortschutz" },
-  { id: "namensschilder", icon: "badge", label: "Namensschilder" },
-  { id: "kanban", icon: "view_kanban", label: "Kanban Board" },
-];
-
-const visibleItems = items.filter((item) => item.enabled !== false);
+// Abgeleitet, nicht deklariert: Label, Icon und Reihenfolge stehen in der
+// Route-Meta (`meta.sidebar`), damit es nicht zwei Listen gibt, die
+// auseinanderlaufen koennen. Einen Eintrag ausblenden heisst dort
+// `sidebar: false` – so wie beim Dashboard-Stub.
+//
+// Zusaetzlich gefiltert nach dem, was dieser Benutzer oeffnen darf. Das ist
+// Anzeige, keine Absicherung: die sitzt im Backend. Es verhindert nur, dass
+// jemand auf einen Menuepunkt klickt, der ihm ohnehin 403 liefert.
+const items = computed(() =>
+  buildNavItems(routes, {
+    mayOpen: auth.mayOpen,
+    isAdmin: auth.isAdmin.value,
+  }),
+);
 
 function selectItem(id: string) {
   router.push({ name: id });
