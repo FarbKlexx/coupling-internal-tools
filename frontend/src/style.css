@@ -309,3 +309,90 @@ textarea:disabled {
 .kanban-drag {
   opacity: 0.9;
 }
+
+/* --------------------------------------------------------------------------
+   Telefonakquise
+   -------------------------------------------------------------------------- */
+
+/* Die Ergebnisknöpfe. Die Tonlage kommt als Feld aus dem Backend mit
+   (`OutcomeInfo.tone`), damit ein sechstes Ergebnis eine Änderung an einer
+   Python-Datei bleibt und keine an dieser hier. */
+.outcome {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.625rem 0.75rem;
+  border-radius: 0.375rem;
+  background: #1e1e1e;
+  border: 1px solid #333333;
+  font-size: 0.875rem;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+}
+
+.outcome:hover:not(:disabled) {
+  border-color: #4b5563;
+  background: #252526;
+}
+
+.outcome:disabled {
+  opacity: 0.4;
+}
+
+/* Die Zusage ist das Ziel des Anrufs und darf danach aussehen. */
+.outcome--positive {
+  border-color: rgba(16, 185, 129, 0.4);
+  color: #6ee7b7;
+}
+
+.outcome--positive:hover:not(:disabled) {
+  border-color: #10b981;
+  background: rgba(16, 185, 129, 0.1);
+}
+
+/* Der Widerspruch ist endgültig — ein Fehlklick kostet hier am meisten. */
+.outcome--negative {
+  border-color: rgba(239, 68, 68, 0.4);
+  color: #fca5a5;
+}
+
+.outcome--negative:hover:not(:disabled) {
+  border-color: #ef4444;
+  background: rgba(239, 68, 68, 0.1);
+}
+
+/* Angeklickt, wartet noch auf einen Zeitpunkt. */
+.outcome--armed {
+  border-color: #3b82f6;
+  background: rgba(59, 130, 246, 0.1);
+}
+
+/* Kleine Schaltfläche für Nebensachen: Zeitspannen, Umbenennen, Ausgaben. */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.375rem 0.75rem;
+  border-radius: 9999px;
+  background: #252526;
+  border: 1px solid #333333;
+  font-size: 0.75rem;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+}
+
+.chip:hover:not(:disabled) {
+  border-color: #4b5563;
+  background: #2d2d30;
+}
+
+.chip:disabled {
+  opacity: 0.4;
+}
+
+.chip--danger {
+  border-color: rgba(239, 68, 68, 0.5);
+  color: #fca5a5;
+}

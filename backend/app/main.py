@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api import (
     auth_api,
     awin_banner_api,
+    call_list_api,
     health_api,
     image_convert_api,
     kanban_api,
@@ -17,15 +18,17 @@ from app.api import (
 )
 from app.api.deps import require_page
 from app.core.auth_db import init_schema as init_auth_schema
+from app.core.call_list_db import init_schema as init_call_schema
 from app.core.kanban_db import init_schema as init_kanban_schema
 from app.services.auth_service import ensure_admin
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    # Beide Schemata anzulegen ist idempotent und läuft bei jedem Start.
+    # Alle Schemata anzulegen ist idempotent und läuft bei jedem Start.
     init_kanban_schema()
     init_auth_schema()
+    init_call_schema()
     # Verweigert den Start, wenn noch kein Konto existiert und
     # ADMIN_USERNAME/ADMIN_PASSWORD fehlen — eine Anwendung, in die niemand
     # hineinkommt, soll im Deploy auffallen und nicht später.
@@ -99,6 +102,7 @@ FEATURE_MODULES = (
     pdf_protect_api,
     name_badge_api,
     kanban_api,
+    call_list_api,
 )
 
 for module in FEATURE_MODULES:

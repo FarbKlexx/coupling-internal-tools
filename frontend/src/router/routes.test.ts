@@ -25,6 +25,7 @@ const EXPECTED_PATHS = [
   "/pdf-schutz",
   "/namensschilder",
   "/kanban",
+  "/telefonakquise",
   "/start",
 ];
 

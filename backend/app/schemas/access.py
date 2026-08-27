@@ -36,6 +36,7 @@ class Page(str, Enum):
     PDF_SCHUTZ = "pdf-schutz"
     NAMENSSCHILDER = "namensschilder"
     KANBAN = "kanban"
+    TELEFONAKQUISE = "telefonakquise"
 
 
 class CurrentUserResponse(BaseModel):

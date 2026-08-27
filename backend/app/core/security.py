@@ -138,6 +138,15 @@ def _load_wordlist(name: str) -> frozenset[str]:
 COMMON_PASSWORDS = _load_wordlist("common_passwords.txt")
 CONTEXT_WORDS = _load_wordlist("context_words.txt")
 
+# Dieselbe Menge, aber in fester Reihenfolge: das längste Wort zuerst. Die
+# Prüfung unten nennt das erste Wort, das sie findet, und „CouplingMedia2026"
+# enthält zwei — über die Menge iteriert hing es am Hash-Seed des Prozesses,
+# ob die Meldung „coupling" oder „media" nannte. Das längste ist das
+# aussagekräftigste, und die Meldung ist damit reproduzierbar.
+_CONTEXT_WORDS_BY_SPECIFICITY = tuple(
+    sorted(CONTEXT_WORDS, key=lambda word: (-len(word), word))
+)
+
 
 class PasswordPolicyError(ValueError):
     """Das Passwort verstößt gegen die Richtlinie. Meldung ist für Anwender."""
@@ -168,7 +177,7 @@ def check_password_policy(password: str, *, username: str = "") -> None:
         )
 
     # Teilzeichenkette, nicht Gleichheit: "CouplingMedia2026!" soll fallen.
-    for word in CONTEXT_WORDS:
+    for word in _CONTEXT_WORDS_BY_SPECIFICITY:
         if word in folded:
             raise PasswordPolicyError(
                 f"Das Passwort darf „{word}“ nicht enthalten — Begriffe aus dem "

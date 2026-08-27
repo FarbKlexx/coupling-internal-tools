@@ -13,11 +13,18 @@ from app.core.badge_csv import (
     MAX_FILE_BYTES,
     MAX_ROWS,
     BadgeCsvError,
+    parse_csv,
+)
+
+# Kodierung, Trennzeichen und Spaltennormalisierung sind nicht mehr Sache
+# dieses Werkzeugs: sie stehen in `csv_import` und werden mit der Anrufliste
+# geteilt. Getestet werden sie weiter hier, weil die Teilnehmerlisten die
+# Dateien sind, an denen sie sich beweisen muessen.
+from app.core.csv_import import (
     column_key,
     decode,
     detect_delimiter,
     normalise_column,
-    parse_csv,
 )
 
 GERMAN_EXCEL = (

@@ -2,6 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.core.auth_db import init_schema as init_auth_schema
+from app.core.call_list_db import init_schema as init_call_schema
 from app.core.kanban_db import init_schema as init_kanban_schema
 
 # An einer Stelle, damit Tests dasselbe Passwort verwenden wie die Fixture.
@@ -21,6 +22,18 @@ def kanban_db(tmp_path, monkeypatch):
     monkeypatch.setenv("KANBAN_DB_PATH", str(tmp_path / "kanban.db"))
     init_kanban_schema()
     return tmp_path / "kanban.db"
+
+
+@pytest.fixture
+def call_db(tmp_path, monkeypatch):
+    """Frische Anruflisten-Datenbank fuer einen Test.
+
+    Funktioniert aus demselben Grund wie `kanban_db`: `call_list_db.db_path()`
+    liest die Umgebung bei jedem Aufruf und nicht beim Import.
+    """
+    monkeypatch.setenv("CALL_DB_PATH", str(tmp_path / "calls.db"))
+    init_call_schema()
+    return tmp_path / "calls.db"
 
 
 @pytest.fixture(autouse=True)
@@ -45,7 +58,7 @@ def auth_db(tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def anon_client(kanban_db):
+def anon_client(kanban_db, call_db):
     """Client ohne Anmeldung — für alles, was 401 liefern soll."""
     with TestClient(app_instance()) as client:
         yield client

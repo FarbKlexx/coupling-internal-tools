@@ -2,7 +2,7 @@
 
 Internes Back-Office-Werkzeug für Coupling Media: AWIN-Abgleiche, Banner-CSVs,
 WebP-Konvertierung, QR-Codes, PDF-Passwortschutz, Namensschilder für
-Veranstaltungen und ein Kanban-Board.
+Veranstaltungen, ein Kanban-Board und die Telefonakquise.
 
 Vue-3-SPA (`frontend/`) über einer FastAPI-Anwendung (`backend/`).
 
@@ -21,29 +21,89 @@ Die beiden Dateien haben getrennte Projektnamen (`coupling-internal-tools` und
 die Container der anderen nicht an. Gleichzeitig laufen können sie trotzdem
 nicht — beide wollen Port 80.
 
-## Betrieb: das Kanban-Board ist der einzige persistente Zustand
+## Betrieb: wo der persistente Zustand liegt
 
-Alle Werkzeuge außer dem Kanban-Board sind zustandslos – sie wandeln eine
-Eingabe um und geben eine Datei zurück. Das Board dagegen liegt in einer
-SQLite-Datei:
+Die meisten Werkzeuge sind zustandslos – sie wandeln eine Eingabe um und geben
+eine Datei zurück. Drei Dinge liegen dagegen in SQLite-Dateien, alle drei im
+**selben** Verzeichnis:
+
+| Datei | Inhalt | Pfad konfigurierbar über |
+|---|---|---|
+| `kanban.db` | das Kanban-Board | `KANBAN_DB_PATH` (Default: relativ `data/kanban.db`) |
+| `auth.db` | Konten, Sitzungen, Wiederherstellungscodes | `AUTH_DB_PATH` |
+| `calls.db` | Anruflisten der Telefonakquise **und das Anrufprotokoll** | `CALL_DB_PATH` |
 
 | | |
 |---|---|
-| Im Container | `/app/data/kanban.db` |
+| Im Container | `/app/data/` |
 | Auf dem Host (Produktion) | `./data/kanban/` – gemountet in `docker-compose.yml` |
-| Konfigurierbar über | `KANBAN_DB_PATH` (Default: relativ `data/kanban.db`) |
 
 **Zwei Dinge daran sind wichtig:**
 
 1. **Das Mount in `docker-compose.yml` nicht entfernen.** Ohne
-   `./data/kanban:/app/data` liegt die Datenbank im Container und ist beim
-   nächsten `docker compose up --build` verloren.
+   `./data/kanban:/app/data` liegen die Datenbanken im Container und sind beim
+   nächsten `docker compose up --build` verloren – Board, alle Konten und das
+   Protokoll der telefonischen Einwilligungen.
 2. **`./data/kanban/` ins Backup aufnehmen.** Ein Verzeichnis-Archiv genügt.
-   Zusätzlich kann sich jeder über den Export-Knopf im Board (bzw.
-   `GET /api/kanban/export`) jederzeit ein JSON des kompletten Boards ziehen.
+   Zusätzlich holt der Export-Knopf im Board (`GET /api/kanban/export`) ein
+   JSON des Boards und `GET /api/telefonakquise/export/protokoll` das
+   Anrufprotokoll als CSV.
 
-Das Board schreibt außerdem `kanban.db-wal` und `kanban.db-shm` daneben (WAL-Modus);
-die gehören zur Datenbank und werden beim Backup mitgenommen.
+Jede der drei Dateien schreibt daneben `-wal` und `-shm` (WAL-Modus); die
+gehören dazu und werden beim Backup mitgenommen.
+
+## Telefonakquise: Kaltakquise mit Nachweis
+
+Das Werkzeug (`/telefonakquise`) macht aus einer Kontaktliste eine
+Abarbeitungsstrecke: es zeigt **immer genau einen** Betrieb, mit allem, was in
+der Liste zu ihm stand, und schreibt jedes Ergebnis in ein Protokoll. Der Grund
+für das Protokoll ist nicht Statistik: eine E-Mail an einen Betrieb, mit dem
+noch keine Geschäftsbeziehung besteht, ist nur nach ausdrücklicher Zustimmung
+erlaubt, und diese Zustimmung muss belegbar sein (Art. 7 Abs. 1 DSGVO).
+
+**Die Liste hochladen** (Administrator, auf derselben Seite unter „Listen
+verwalten"): CSV, semikolongetrennt, aus Excel über „Speichern unter" als
+„CSV UTF-8" exportiert.
+
+* **Pflichtspalten:** `Betrieb` und `Telefon`. Zeilen ohne beides werden mit
+  Zeilennummer gemeldet und übersprungen.
+* **Erkannt** werden zusätzlich `E-Mail`, `Ort`, `PLZ`, `Website`, `Gewerk`,
+  `Prio` und `Befunde` – auch unter gängigen anderen Überschriften
+  („Firma", „Tel", „Mailadresse", …).
+* **Alle weiteren Spalten fahren mit** und erscheinen beim Kontakt unter
+  „Details", in der Reihenfolge der Datei. Eine Liste mit anderen Spalten
+  braucht also keine Codeänderung.
+* Vor dem Import läuft ein Trockenlauf: er zeigt die Zuordnung, die
+  übersprungenen Zeilen und die Nummern, die schon in einer aktiven Liste
+  stehen (die werden nicht doppelt importiert).
+
+**Anrufen** (jeder mit der Seitenberechtigung „Telefonakquise"): oben steht,
+wie viele Kontakte noch offen sind, darunter der Betrieb mit wählbarer Nummer.
+Fünf Ergebnisse:
+
+| Ergebnis | Wirkung |
+|---|---|
+| Zusage – E-Mail erlaubt | endgültig; der Kontakt landet im Zusagen-Export |
+| Nicht erreichbar | Wiedervorlage in 1 h / 2 h / morgen früh / zu einem eigenen Zeitpunkt; solange nicht im Zähler |
+| Rückruf vereinbart | erscheint 15 Minuten **vor** dem Termin wieder, und dann vor allen anderen |
+| Nummer falsch / Betrieb weg | raus aus der Liste, zählt aber nicht als Ablehnung |
+| Nein – ausdrücklich keine Mails | endgültig; wird nie wieder angerufen |
+
+Eine im Gespräch erfragte E-Mail-Adresse und eine Anmerkung gehen mit dem
+Ergebnis in dieselbe Protokollzeile.
+
+**Zwei Ausgaben** (Administrator):
+
+* `GET /api/telefonakquise/export/zusagen` – die Zusagen mit Adresse, Zeitpunkt
+  und Konto: die Grundlage für den Mailversand.
+* `GET /api/telefonakquise/export/protokoll` – jeder Anruf als Zeile: der
+  Nachweis.
+
+**Eine Liste beenden** heißt *archivieren*, nicht löschen: die Kontakte
+verschwinden aus dem Vorrat, das Protokoll bleibt. Löschen nimmt über
+`ON DELETE CASCADE` auch die Protokollzeilen mit und wird deshalb mit 409
+abgelehnt, solange Anrufe dokumentiert sind – erst eine ausdrückliche
+Bestätigung („trotzdem löschen") führt es aus.
 
 ## Namensschilder: drucken und kalibrieren
 
@@ -149,9 +209,11 @@ Alle sechs Kommandos sind grün — sie taugen also unmittelbar als CI-Gate.
 `npm run lint:fix` und `npm run format` beheben Verstöße, im Backend
 `ruff check --fix .` und `black .`.
 
-Der Frontend-Test `src/api/labelPalette.test.ts` liest `backend/app/schemas/kanban.py`
-und hält die Label-Farbpalette über die Sprachgrenze synchron. Er braucht deshalb
-das **vollständige** Repo, nicht nur `frontend/`.
+Drei Frontend-Tests lesen über die Sprachgrenze in `backend/` hinein und
+brauchen deshalb das **vollständige** Repo, nicht nur `frontend/`:
+`src/api/labelPalette.test.ts` (Label-Farbpalette), `src/router/pageIds.test.ts`
+(Seitenberechtigungen) und `src/api/callOutcomes.test.ts` (die Ergebnisse der
+Telefonakquise).
 
 ## Deployment
 
@@ -283,16 +345,16 @@ Action wieder auf den Branch:
 git checkout main
 ```
 
-Ein Rollback des **Codes** rollt die Kanban-Datenbank nicht zurück. Beim
-aktuellen Schema (`schema_version = 1`) ist das unkritisch, weil es nur additive
-Migrationen gibt; bei einem künftigen zerstörenden Schemawechsel vorher das
-Backup ziehen (siehe unten).
+Ein Rollback des **Codes** rollt die Datenbanken nicht zurück. Bei den
+aktuellen Schemata (alle `schema_version = 1`) ist das unkritisch, weil es nur
+additive Migrationen gibt; bei einem künftigen zerstörenden Schemawechsel
+vorher das Backup ziehen (siehe unten).
 
 ### Daten und Backup
 
 | Pfad auf dem Server | Inhalt | Ersetzbar? |
 |---|---|---|
-| `data/kanban/` | SQLite des Kanban-Boards **und der Benutzerkonten** (`kanban.db`, `auth.db`, je + `-wal`/`-shm`) | **nein** — hier hängt der ganze Zustand der App, inklusive aller Konten |
+| `data/kanban/` | SQLite des Kanban-Boards, **der Benutzerkonten und der Telefonakquise** (`kanban.db`, `auth.db`, `calls.db`, je + `-wal`/`-shm`) | **nein** — hier hängt der ganze Zustand der App: alle Konten und der Nachweis der telefonischen Einwilligungen |
 | `certbot/conf/` | Let's-Encrypt-Zertifikate und Renewal-Konfiguration | ja, neu ausstellbar (Rate-Limits beachten) |
 | `.env` | Zugangsdaten des ersten Administrators und Betriebsparameter | ja, aber siehe „Erster Login" |
 | `certbot/www/` | ACME-Challenge-Webroot, nur transient | ja |
@@ -304,7 +366,8 @@ tar czf "kanban-$(date +%F).tar.gz" -C /opt/coupling-internal-tools data certbot
 ```
 
 Zusätzlich holt der Export-Knopf im Board (`GET /api/kanban/export`) jederzeit
-ein JSON des kompletten Boards — unabhängig vom Server.
+ein JSON des kompletten Boards und `GET /api/telefonakquise/export/protokoll`
+das Anrufprotokoll als CSV — beides unabhängig vom Server.
 
 Wiederherstellen: Stack stoppen (`docker compose down`), Archiv über das
 Projektverzeichnis entpacken, `docker compose up -d`.

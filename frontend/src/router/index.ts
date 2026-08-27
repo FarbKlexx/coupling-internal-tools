@@ -11,6 +11,7 @@ import QrCodeView from "@/views/QrCodeView.vue";
 import PdfProtectView from "@/views/PdfProtectView.vue";
 import NameBadgeView from "@/views/NameBadgeView.vue";
 import KanbanView from "@/views/KanbanView.vue";
+import TelefonakquiseView from "@/views/TelefonakquiseView.vue";
 import LoginView from "@/views/LoginView.vue";
 import PasswordChangeView from "@/views/PasswordChangeView.vue";
 import AccountView from "@/views/AccountView.vue";
@@ -184,6 +185,29 @@ export const routes: RouteRecordRaw[] = [
       label: "Kanban Board",
       icon: "view_kanban",
       keywords: ["kanban", "board", "aufgaben", "todo", "tasks", "karten", "kunden"],
+    },
+  },
+  {
+    path: "/telefonakquise",
+    name: "telefonakquise",
+    component: TelefonakquiseView,
+    meta: {
+      searchable: true,
+      sidebar: true,
+      page: "telefonakquise",
+      label: "Telefonakquise",
+      icon: "phone_in_talk",
+      keywords: [
+        "telefon",
+        "anrufen",
+        "anrufliste",
+        "akquise",
+        "kaltakquise",
+        "kunden",
+        "leads",
+        "einwilligung",
+        "csv",
+      ],
     },
   },
   // Benutzerverwaltung: `adminOnly` statt `page`, siehe meta.d.ts.

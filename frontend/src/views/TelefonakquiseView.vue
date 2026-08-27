@@ -1,0 +1,86 @@
+<template>
+  <div class="flex min-w-0 flex-col gap-4">
+    <div class="space-y-1">
+      <h2 class="text-lg font-semibold">Telefonakquise</h2>
+      <p class="text-xs text-zinc-500">
+        Immer genau ein Betrieb, immer mit dem, was in der Liste steht. Jedes Ergebnis wird
+        protokolliert – erst eine Zusage am Telefon erlaubt die E-Mail.
+      </p>
+    </div>
+
+    <div
+      v-if="errorMessage"
+      class="flex items-start justify-between gap-3 rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-200"
+    >
+      <span>{{ errorMessage }}</span>
+      <button type="button" class="shrink-0" @click="errorMessage = null">
+        <span class="material-symbols-outlined" style="font-size: 16px">close</span>
+      </button>
+    </div>
+
+    <p v-if="isLoading && !state" class="light-grey-text">Arbeitsstand wird geladen …</p>
+
+    <template v-else>
+      <CallWorkbench
+        :contact="contact"
+        :counters="counters"
+        :outcomes="outcomes"
+        :next-due-at="state?.next_due_at ?? null"
+        :has-lists="activeLists.length > 0"
+        :is-saving="isSaving"
+        :is-waiting="isWaiting"
+        :is-done="isDone"
+        @answer="recordOutcome"
+      />
+
+      <!-- Die Listenpflege liegt auf derselben Seite, ist aber nur für
+           Administratoren sichtbar; durchgesetzt wird sie im Backend, das die
+           Verwaltungsendpunkte hinter `require_admin` hält. -->
+      <CallListManager
+        v-if="isAdmin"
+        :lists="lists"
+        :is-saving="isSaving"
+        :upload="uploadList"
+        :edit="editList"
+        :remove="removeList"
+      />
+    </template>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { onMounted } from "vue";
+import CallListManager from "@/components/calls/CallListManager.vue";
+import CallWorkbench from "@/components/calls/CallWorkbench.vue";
+import { useAuth } from "@/composables/useAuth";
+import { useCallList } from "@/composables/useCallList";
+
+const { isAdmin } = useAuth();
+
+const {
+  state,
+  contact,
+  counters,
+  outcomes,
+  lists,
+  activeLists,
+  isLoading,
+  isSaving,
+  isWaiting,
+  isDone,
+  errorMessage,
+  load,
+  startPolling,
+  recordOutcome,
+  uploadList,
+  editList,
+  removeList,
+} = useCallList();
+
+onMounted(async () => {
+  await load();
+  // Der Poll holt fällige Wiedervorlagen von selbst herein – ohne ihn müsste
+  // jemand die Seite neu laden, um zu sehen, dass wieder etwas zu tun ist.
+  startPolling();
+});
+</script>

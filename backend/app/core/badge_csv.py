@@ -5,60 +5,36 @@ exportieren. Der Import kommt deshalb ohne Rückfrage mit Semikolon, Komma und
 Tabulator zurecht, mit UTF-8 (mit und ohne BOM) und cp1252, mit Umlauten in den
 Spaltenüberschriften und mit angehängten Leerzeilen.
 
+Die Primitiven dahinter — Kodierung, Trennzeichen, Spaltennormalisierung —
+stehen in `csv_import.py` und werden mit der Anrufliste geteilt. Hier bleibt,
+was die Teilnehmerliste eigen hat: die Spaltensynonyme, die Obergrenzen und
+jede Meldung, die von Vor- und Nachnamen spricht.
+
 **Datenschutz:** Teilnehmerlisten sind personenbezogene Daten. Nichts hier
 schreibt Feldinhalte in ein Log, und nichts wird auf Platte geschrieben — die
 Datei existiert nur als `bytes` im Speicher dieses Requests.
 """
 
-import csv
-import io
-import re
-import unicodedata
 from dataclasses import dataclass, field
 
 from app.core.badge_layout import FIELD_NAMES, REQUIRED_FIELD
+from app.core.csv_import import (
+    CsvImportError,
+    decode,
+    delimiter_label,
+    detect_delimiter,
+    encoding_label,
+    find_header,
+    normalised_header,
+    read_rows,
+    reject_duplicate_columns,
+)
 
 # Obergrenzen. Eine Teilnehmerliste ist ein paar hundert Zeilen Text; alles
 # darüber ist entweder die falsche Datei oder ein Export, der auseinanderfällt.
 MAX_FILE_BYTES = 2 * 1024 * 1024
 MAX_ROWS = 2000
 MAX_FIELD_CHARS = 120
-
-# Reihenfolge ist entscheidend: cp1252 akzeptiert fast jedes Byte und würde
-# UTF-8-Dateien klaglos als Mojibake einlesen ("Müller"). Deshalb steht es
-# hinten und kommt nur zum Zug, wenn UTF-8 die Datei wirklich nicht dekodiert.
-ENCODINGS = ("utf-8-sig", "utf-8", "cp1252")
-
-UTF8_BOM = b"\xef\xbb\xbf"
-
-# Semikolon zuerst: deutsches Excel schreibt es, und es kommt in Namen und
-# Firmenbezeichnungen praktisch nie vor.
-DELIMITERS = (";", ",", "\t")
-
-DELIMITER_LABELS = {";": "Semikolon", ",": "Komma", "\t": "Tabulator"}
-
-ENCODING_LABELS = {
-    "utf-8-sig": "UTF-8 (mit BOM)",
-    "utf-8": "UTF-8",
-    "cp1252": "cp1252 (Windows-1252)",
-}
-
-# Excel schreibt manchen Exporten eine Zeile "sep=;" voran, damit es sie selbst
-# wieder öffnen kann. Sie ist keine Kopfzeile.
-_SEP_HINT = re.compile(r"^sep=(.)\s*$", re.IGNORECASE)
-
-# Umlaute werden **ausgeschrieben**, nicht verworfen: "Größe" und "Grose" wären
-# sonst dieselbe normalisierte Spalte, und aus zwei verschiedenen Spalten würde
-# ein Duplikat-Fehler oder — schlimmer — eine stille Zuordnung zur falschen.
-_UMLAUTS = {
-    "ä": "ae",
-    "ö": "oe",
-    "ü": "ue",
-    "ß": "ss",
-    "æ": "ae",
-    "ø": "oe",
-    "å": "aa",
-}
 
 # Erste Übereinstimmung gewinnt, deshalb steht der eindeutige Name jeweils
 # vorn: eine Datei mit "Nachname" und "Name" ordnet "Nachname" zu und lässt
@@ -105,13 +81,17 @@ COLUMN_SYNONYMS: dict[str, tuple[str, ...]] = {
 }
 
 
-class BadgeCsvError(Exception):
+class BadgeCsvError(CsvImportError):
     """Der Import kann nicht fortgesetzt werden. Meldung ist für den Anwender.
 
     Jede Meldung sagt, was zu tun ist — nicht nur, dass etwas fehlgeschlagen
     ist. Zeilenbezogene Probleme sind *kein* Fehler dieser Klasse: sie landen
     als `SkippedRow` im Ergebnis, damit der Rest der Liste trotzdem gedruckt
     werden kann.
+
+    Erbt von `CsvImportError`, weil die geteilten Primitiven jene Klasse
+    werfen; `parse_csv` übersetzt sie an der Aussengrenze, damit ein Aufrufer
+    weiter genau `BadgeCsvError` fangen kann.
     """
 
 
@@ -158,11 +138,11 @@ class CsvParseResult:
 
     @property
     def encoding_label(self) -> str:
-        return ENCODING_LABELS.get(self.encoding, self.encoding)
+        return encoding_label(self.encoding)
 
     @property
     def delimiter_label(self) -> str:
-        return DELIMITER_LABELS.get(self.delimiter, self.delimiter)
+        return delimiter_label(self.delimiter)
 
     def empty_field_counts(self) -> dict[str, int]:
         """Wie oft ein zugeordnetes Feld leer bleibt — pro Feld.
@@ -176,100 +156,26 @@ class CsvParseResult:
         }
 
 
-def normalise_column(name: str) -> str:
-    """Spaltenüberschrift auf einen Vergleichsschlüssel bringen.
-
-    "Nach­name (lt. Ausweis)" → "nachname_lt_ausweis". Umlaute werden
-    ausgeschrieben, übrige Akzente auf den Grundbuchstaben reduziert, alles
-    andere zu Unterstrichen.
-    """
-    text = name.strip().lower()
-    text = "".join(_UMLAUTS.get(character, character) for character in text)
-    # Erst nach dem Ausschreiben: sonst würde "ü" hier zu "u" und die
-    # Unterscheidung zwischen "Buero" und "Büro" ginge verloren.
-    text = unicodedata.normalize("NFKD", text)
-    text = "".join(
-        character for character in text if not unicodedata.combining(character)
-    )
-    text = re.sub(r"[^a-z0-9]+", "_", text)
-    return text.strip("_")
-
-
-def column_key(name: str) -> str:
-    """Vergleichsschlüssel einer Spalte — Normalisierung ohne Trennzeichen.
-
-    "Nach-Name!", "Nach Name" und "nachname" sind dieselbe Spalte. Genau
-    deshalb sind sie auch untereinander Duplikate: nebeneinander in einer Datei
-    ließen sie sich nicht auseinanderhalten.
-    """
-    return normalise_column(name).replace("_", "")
-
-
-def decode(data: bytes) -> tuple[str, str]:
-    """Dateiinhalt dekodieren, Ergebnis plus erkannte Kodierung.
-
-    Reihenfolge siehe `ENCODINGS`.
-    """
-    if data.startswith(UTF8_BOM):
-        candidates: tuple[str, ...] = ("utf-8-sig",)
-    else:
-        candidates = tuple(name for name in ENCODINGS if name != "utf-8-sig")
-
-    for encoding in candidates:
-        try:
-            return data.decode(encoding), encoding
-        except UnicodeDecodeError:
-            continue
-
-    raise BadgeCsvError(
-        "Die Datei ist weder UTF-8 noch Windows-1252 (cp1252). Bitte in Excel "
-        "über „Speichern unter“ als „CSV UTF-8 (durch Trennzeichen getrennt)“ "
-        "exportieren."
-    )
-
-
-def detect_delimiter(text: str) -> str:
-    """Trennzeichen aus der Kopfzeile bestimmen.
-
-    Bewusst kein `csv.Sniffer`: der wirft bei einspaltigen Dateien eine
-    Ausnahme, und genau die kommen vor (eine Spalte "Nachname"). Hier gewinnt
-    das Zeichen, das die meisten Spalten ergibt; ergibt keines mehr als eine
-    Spalte, ist die Datei einspaltig und das Trennzeichen egal.
-    """
-    header_line = _first_content_line(text)
-
-    if header_line is None:
-        return DELIMITERS[0]
-
-    hint = _SEP_HINT.match(header_line)
-    if hint and hint.group(1) in DELIMITERS:
-        return hint.group(1)
-
-    best = DELIMITERS[0]
-    best_columns = 1
-
-    for delimiter in DELIMITERS:
-        columns = len(next(csv.reader([header_line], delimiter=delimiter), []))
-        if columns > best_columns:
-            best, best_columns = delimiter, columns
-
-    return best
-
-
-def _first_content_line(text: str) -> str | None:
-    for line in text.splitlines():
-        if line.strip():
-            return line
-    return None
-
-
 def parse_csv(data: bytes) -> CsvParseResult:
     """Rohe Uploaddaten in Datensätze für die Karten umwandeln.
 
     Wirft `BadgeCsvError`, wenn die Datei als Ganzes unbrauchbar ist (leer, nur
     Kopfzeile, Nachname-Spalte fehlt, doppelte Spaltennamen, zu groß). Einzelne
     unbrauchbare Zeilen führen dagegen nur zu einem Eintrag in `skipped`.
+
+    Die Übersetzung der geteilten Ausnahme passiert hier, an einer Stelle: die
+    Primitiven in `csv_import` kennen die Teilnehmerliste nicht und werfen
+    `CsvImportError`, nach außen bleibt der Import aber eine `BadgeCsvError`.
     """
+    try:
+        return _parse_csv(data)
+    except BadgeCsvError:
+        raise
+    except CsvImportError as exc:
+        raise BadgeCsvError(str(exc)) from exc
+
+
+def _parse_csv(data: bytes) -> CsvParseResult:
     if not data:
         raise BadgeCsvError("Die Datei ist leer. Bitte die CSV mit Daten hochladen.")
 
@@ -283,10 +189,9 @@ def parse_csv(data: bytes) -> CsvParseResult:
     text, encoding = decode(data)
     delimiter = detect_delimiter(text)
 
-    rows = list(csv.reader(io.StringIO(text, newline=""), delimiter=delimiter))
-    rows = _drop_sep_hint(rows)
+    rows = read_rows(text, delimiter)
 
-    header = _find_header(rows)
+    header = find_header(rows, example="Vorname;Nachname;Funktion;Firma")
     mapping, columns, ignored = _map_columns(header)
 
     warnings: list[str] = []
@@ -326,37 +231,6 @@ def parse_csv(data: bytes) -> CsvParseResult:
     return result
 
 
-def _drop_sep_hint(rows: list[list[str]]) -> list[list[str]]:
-    """Excels "sep=;"-Vorzeile entfernen, falls vorhanden.
-
-    Sie wird mit genau dem Trennzeichen gelesen, das sie ankündigt, und
-    zerfällt dabei selbst in mehrere Zellen ("sep=" + leer). Erkannt wird sie
-    deshalb an der ersten Zelle, nicht an der Länge der Zeile.
-    """
-    if not rows:
-        return rows
-
-    first = rows[0][0].strip() if rows[0] else ""
-    rest_is_empty = all(not cell.strip() for cell in rows[0][1:])
-
-    if rest_is_empty and (first.lower() == "sep=" or _SEP_HINT.match(first)):
-        return rows[1:]
-
-    return rows
-
-
-def _find_header(rows: list[list[str]]) -> list[str]:
-    """Erste nicht-leere Zeile als Kopfzeile."""
-    for row in rows:
-        if any(cell.strip() for cell in row):
-            return row
-
-    raise BadgeCsvError(
-        "Die Datei enthält keine Kopfzeile. Erwartet wird eine erste Zeile mit "
-        "den Spaltennamen, z. B. „Vorname;Nachname;Funktion;Firma“."
-    )
-
-
 def _map_columns(
     header: list[str],
 ) -> tuple[dict[str, str], dict[str, int], list[str]]:
@@ -365,13 +239,8 @@ def _map_columns(
     Liefert (Feld → Originalüberschrift), (Feld → Spaltenindex) und die
     Überschriften, die zu keinem Kartenfeld gehören.
     """
-    normalised: list[tuple[int, str, str]] = []
-    for index, raw in enumerate(header):
-        key = column_key(raw)
-        if key:
-            normalised.append((index, raw.strip(), key))
-
-    _reject_duplicates(normalised)
+    normalised = normalised_header(header)
+    reject_duplicate_columns(normalised)
 
     mapping: dict[str, str] = {}
     columns: dict[str, int] = {}
@@ -383,19 +252,18 @@ def _map_columns(
                 (
                     entry
                     for entry in normalised
-                    if entry[2] == synonym and entry[0] not in used_indexes
+                    if entry.key == synonym and entry.index not in used_indexes
                 ),
                 None,
             )
             if match is not None:
-                index, raw, _ = match
-                mapping[field_name] = raw
-                columns[field_name] = index
-                used_indexes.add(index)
+                mapping[field_name] = match.raw
+                columns[field_name] = match.index
+                used_indexes.add(match.index)
                 break
 
     if REQUIRED_FIELD not in columns:
-        found = ", ".join(f"„{entry[1]}“" for entry in normalised) or "keine"
+        found = ", ".join(f"„{entry.raw}“" for entry in normalised) or "keine"
         expected = ", ".join(
             f"„{synonym}“" for synonym in COLUMN_SYNONYMS[REQUIRED_FIELD][:4]
         )
@@ -405,28 +273,9 @@ def _map_columns(
             f"Gefunden wurden: {found}."
         )
 
-    ignored = [entry[1] for entry in normalised if entry[0] not in used_indexes]
+    ignored = [entry.raw for entry in normalised if entry.index not in used_indexes]
 
     return mapping, columns, ignored
-
-
-def _reject_duplicates(normalised: list[tuple[int, str, str]]) -> None:
-    """Doppelte Spaltennamen sind ein Fehler, keine Warnung.
-
-    Zwei Spalten, die auf denselben Schlüssel normalisieren, lassen sich nicht
-    zuordnen, ohne zu raten — und die falsche Wahl fällt erst auf dem
-    fertigen Bogen auf.
-    """
-    seen: dict[str, str] = {}
-    for _, raw, key in normalised:
-        if key in seen:
-            raise BadgeCsvError(
-                f"Die Spalten „{seen[key]}“ und „{raw}“ sind nicht "
-                "unterscheidbar (Groß-/Kleinschreibung, Leer- und Sonderzeichen "
-                "zählen nicht). Bitte eine der beiden Spalten umbenennen oder "
-                "entfernen."
-            )
-        seen[key] = raw
 
 
 def _read_records(

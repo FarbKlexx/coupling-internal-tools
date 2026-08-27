@@ -1,0 +1,615 @@
+"""SQLite-Persistenz der Telefonakquise — das einzige Modul mit deren SQL.
+
+Die dritte Datenbankdatei der Anwendung, nach `kanban.db` und `auth.db`, und
+über denselben Trick am selben Ort: `CALL_DB_PATH` ist standardmäßig
+*relativ* (`data/calls.db`), was zu `backend/data/calls.db` auflöst, wenn
+uvicorn aus `backend/` läuft, und zu `/app/data/calls.db` im Container. In
+Produktion liegt dieses Verzeichnis auf dem Volume aus `docker-compose.yml`
+(`./data/kanban:/app/data`) — ohne diese Zeile ist die Anrufliste nach jedem
+`--build` weg, und mit ihr das Protokoll der Einwilligungen.
+
+Drei Tabellen:
+
+* `lists` — eine importierte CSV.
+* `contacts` — eine Zeile daraus, plus Zustand und Wiedervorlage.
+* `events` — das Protokoll. Wird **nur angehängt**, nie geändert; `betrieb`
+  und `telefon` stehen bewusst redundant darin, damit eine Protokollzeile für
+  sich lesbar bleibt und nicht von einer Tabelle abhängt, die sich noch ändern
+  kann. Ein Protokoll, das man erst mit einem JOIN versteht, ist als Nachweis
+  nur die Hälfte wert.
+"""
+
+import os
+import re
+import sqlite3
+import uuid
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Iterator, Sequence
+
+DEFAULT_DB_PATH = "data/calls.db"
+
+BUSY_TIMEOUT_MS = 5000
+
+SCHEMA_VERSION = "1"
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS lists (
+    id              TEXT    PRIMARY KEY,
+    name            TEXT    NOT NULL,
+    source_filename TEXT    NOT NULL DEFAULT '',
+    columns         TEXT    NOT NULL DEFAULT '[]',
+    created_at      TEXT    NOT NULL,
+    created_by      TEXT    NOT NULL DEFAULT '',
+    archived        INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS contacts (
+    id             TEXT    PRIMARY KEY,
+    list_id        TEXT    NOT NULL REFERENCES lists (id) ON DELETE CASCADE,
+    position       INTEGER NOT NULL,
+    betrieb        TEXT    NOT NULL,
+    telefon        TEXT    NOT NULL,
+    telefon_key    TEXT    NOT NULL DEFAULT '',
+    email          TEXT    NOT NULL DEFAULT '',
+    ort            TEXT    NOT NULL DEFAULT '',
+    plz            TEXT    NOT NULL DEFAULT '',
+    website        TEXT    NOT NULL DEFAULT '',
+    gewerk         TEXT    NOT NULL DEFAULT '',
+    prio           TEXT    NOT NULL DEFAULT '',
+    befunde        TEXT    NOT NULL DEFAULT '',
+    extras         TEXT    NOT NULL DEFAULT '{}',
+    state          TEXT    NOT NULL DEFAULT 'offen',
+    due_at         TEXT,
+    appointment_at TEXT,
+    attempts       INTEGER NOT NULL DEFAULT 0,
+    note           TEXT    NOT NULL DEFAULT '',
+    updated_at     TEXT    NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_contacts_pool
+    ON contacts (state, due_at, position);
+CREATE INDEX IF NOT EXISTS idx_contacts_list ON contacts (list_id, position);
+CREATE INDEX IF NOT EXISTS idx_contacts_phone ON contacts (telefon_key);
+
+CREATE TABLE IF NOT EXISTS events (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    contact_id     TEXT    NOT NULL REFERENCES contacts (id) ON DELETE CASCADE,
+    list_id        TEXT    NOT NULL DEFAULT '',
+    betrieb        TEXT    NOT NULL DEFAULT '',
+    telefon        TEXT    NOT NULL DEFAULT '',
+    occurred_at    TEXT    NOT NULL,
+    user_id        TEXT    NOT NULL DEFAULT '',
+    username       TEXT    NOT NULL DEFAULT '',
+    outcome        TEXT    NOT NULL,
+    note           TEXT    NOT NULL DEFAULT '',
+    email          TEXT    NOT NULL DEFAULT '',
+    due_at         TEXT,
+    appointment_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_events_contact ON events (contact_id, id);
+
+CREATE TABLE IF NOT EXISTS meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+"""
+
+
+def db_path() -> Path:
+    """Pfad *jetzt* auflösen, nicht beim Import — wie bei `kanban_db`.
+
+    Macht die Fixture in `conftest.py` möglich, die auf ein `tmp_path` zeigt.
+    """
+    return Path(os.getenv("CALL_DB_PATH", DEFAULT_DB_PATH))
+
+
+def now() -> str:
+    """Aktueller UTC-Zeitstempel als ISO-8601-Text.
+
+    SQLite hat keinen Datumstyp; ISO-8601-Text sortiert und vergleicht richtig,
+    solange alles in UTC steht — deshalb wird jeder Zeitpunkt aus dem Browser
+    beim Eintreffen umgerechnet und nie in Ortszeit gespeichert.
+    """
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def new_id() -> str:
+    return str(uuid.uuid4())
+
+
+def phone_key(number: str) -> str:
+    """Vergleichsschlüssel einer Telefonnummer.
+
+    Dient nur einem Zweck: denselben Betrieb nicht zweimal anrufen. Deshalb
+    wird alles außer Ziffern verworfen und die deutsche Landesvorwahl auf die
+    führende Null zurückgeführt — „+49 5224 79473", „0049 5224 79473" und
+    „05224 / 79473" sind dieselbe Nummer.
+
+    Bewusst keine vollständige Rufnummernnormalisierung: Durchwahlen und
+    Auslandsnummern bleiben so, wie sie in der Datei stehen. Ein übersehenes
+    Duplikat ist ein doppelter Anruf, ein falsch zusammengeworfenes Duplikat
+    ein Betrieb, den nie jemand anruft — das schlechtere von beidem.
+    """
+    digits = re.sub(r"\D", "", number)
+
+    if not digits:
+        return ""
+
+    if digits.startswith("0049"):
+        digits = "0" + digits[4:]
+    elif digits.startswith("49") and number.strip().startswith("+"):
+        digits = "0" + digits[2:]
+
+    return digits
+
+
+@contextmanager
+def connect() -> Iterator[sqlite3.Connection]:
+    """Eine Verbindung für die Dauer eines Requests.
+
+    Pro Aufruf statt geteilt: synchrone FastAPI-Handler laufen im Threadpool
+    und `sqlite3`-Verbindungen sind nicht threadsicher. Öffnen ist billig.
+    """
+    path = db_path()
+    if path.parent != Path(""):
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+    conn = sqlite3.connect(path, isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode = WAL")
+    # In SQLite standardmäßig aus — ohne diese Zeile ist das ON DELETE CASCADE
+    # oben Dokumentation, und gelöschte Listen hinterlassen verwaiste Kontakte.
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
+
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+@contextmanager
+def transaction(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
+    """Ein Schreibvorgang, ein atomarer Schritt.
+
+    IMMEDIATE nimmt die Schreibsperre gleich, statt sie mitten im Vorgang
+    hochzustufen — das ist der Unterschied zwischen „warten" und „database is
+    locked", wenn zwei Anrufer gleichzeitig ein Ergebnis eintragen.
+    """
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        yield conn
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    conn.execute("COMMIT")
+
+
+def init_schema() -> None:
+    """Tabellen anlegen, falls sie fehlen. Idempotent."""
+    with connect() as conn:
+        conn.executescript(_SCHEMA)
+        conn.execute(
+            "INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', ?)",
+            (SCHEMA_VERSION,),
+        )
+        conn.execute("INSERT OR IGNORE INTO meta (key, value) VALUES ('revision', '0')")
+
+
+# --------------------------------------------------------------------------
+# revision
+# --------------------------------------------------------------------------
+
+
+def revision(conn: sqlite3.Connection) -> int:
+    row = conn.execute("SELECT value FROM meta WHERE key = 'revision'").fetchone()
+    return int(row["value"]) if row else 0
+
+
+def bump_revision(conn: sqlite3.Connection) -> int:
+    """Zählt jeden Schreibvorgang. Muss in derselben Transaktion laufen."""
+    conn.execute(
+        "UPDATE meta SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)"
+        " WHERE key = 'revision'"
+    )
+    return revision(conn)
+
+
+# --------------------------------------------------------------------------
+# Listen
+# --------------------------------------------------------------------------
+
+
+def insert_list(
+    conn: sqlite3.Connection,
+    *,
+    list_id: str,
+    name: str,
+    source_filename: str,
+    columns: str,
+    created_by: str,
+) -> None:
+    conn.execute(
+        "INSERT INTO lists"
+        " (id, name, source_filename, columns, created_at, created_by, archived)"
+        " VALUES (?, ?, ?, ?, ?, ?, 0)",
+        (list_id, name, source_filename, columns, now(), created_by),
+    )
+
+
+def all_lists(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Alle Listen, neueste zuerst — auch die archivierten."""
+    return list(
+        conn.execute("SELECT * FROM lists ORDER BY created_at DESC, name").fetchall()
+    )
+
+
+def find_list(conn: sqlite3.Connection, list_id: str) -> sqlite3.Row | None:
+    return conn.execute("SELECT * FROM lists WHERE id = ?", (list_id,)).fetchone()
+
+
+def find_list_by_name(conn: sqlite3.Connection, name: str) -> sqlite3.Row | None:
+    """Namensvergleich ohne Groß-/Kleinschreibung und ohne Randleerzeichen.
+
+    Nicht `COLLATE NOCASE`: das faltet in SQLite nur ASCII A–Z, „Käufer" und
+    „käufer" wären zwei Listen. `casefold()` in Python macht es richtig, also
+    wird hier verglichen, was Python normalisiert hat.
+    """
+    key = " ".join(name.split()).casefold()
+
+    for row in conn.execute("SELECT * FROM lists"):
+        if " ".join(row["name"].split()).casefold() == key:
+            return row
+
+    return None
+
+
+def update_list(
+    conn: sqlite3.Connection,
+    list_id: str,
+    *,
+    name: str | None,
+    archived: bool | None,
+) -> None:
+    assignments: list[str] = []
+    values: list[object] = []
+
+    if name is not None:
+        assignments.append("name = ?")
+        values.append(name)
+    if archived is not None:
+        assignments.append("archived = ?")
+        values.append(1 if archived else 0)
+
+    if not assignments:
+        return
+
+    values.append(list_id)
+    conn.execute(f"UPDATE lists SET {', '.join(assignments)} WHERE id = ?", values)
+
+
+def delete_list(conn: sqlite3.Connection, list_id: str) -> None:
+    """Liste samt Kontakten und deren Protokollzeilen entfernen.
+
+    Der Service lässt das nur zu, wenn nichts protokolliert ist oder es
+    ausdrücklich bestätigt wurde — hier steht bloß das SQL dazu.
+    """
+    conn.execute("DELETE FROM lists WHERE id = ?", (list_id,))
+
+
+def documented_calls(conn: sqlite3.Connection, list_id: str) -> int:
+    """Wie viele Protokollzeilen an dieser Liste hängen."""
+    row = conn.execute(
+        "SELECT COUNT(*) AS total FROM events WHERE list_id = ?", (list_id,)
+    ).fetchone()
+    return int(row["total"])
+
+
+# --------------------------------------------------------------------------
+# Kontakte
+# --------------------------------------------------------------------------
+
+#: Spalten, die `insert_contacts` in dieser Reihenfolge erwartet.
+CONTACT_COLUMNS = (
+    "id",
+    "list_id",
+    "position",
+    "betrieb",
+    "telefon",
+    "telefon_key",
+    "email",
+    "ort",
+    "plz",
+    "website",
+    "gewerk",
+    "prio",
+    "befunde",
+    "extras",
+    "state",
+    "updated_at",
+)
+
+
+def insert_contacts(conn: sqlite3.Connection, rows: Sequence[Sequence[object]]) -> None:
+    """Alle Kontakte einer Liste in einem Rutsch.
+
+    `executemany` statt einer Schleife mit Einzeltransaktionen: 100 Kontakte
+    sind sonst 100 fsyncs.
+    """
+    placeholders = ", ".join("?" * len(CONTACT_COLUMNS))
+    conn.executemany(
+        f"INSERT INTO contacts ({', '.join(CONTACT_COLUMNS)})"
+        f" VALUES ({placeholders})",
+        rows,
+    )
+
+
+def find_contact(conn: sqlite3.Connection, contact_id: str) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT c.*, l.name AS list_name, l.archived AS list_archived"
+        " FROM contacts c JOIN lists l ON l.id = c.list_id"
+        " WHERE c.id = ?",
+        (contact_id,),
+    ).fetchone()
+
+
+# Die Vorrats-Zustände stehen hier als Text, weil dieses Modul die Schemata
+# nicht kennt (`POOL_STATES` in `schemas/call_list.py` ist dieselbe Menge, und
+# `test_call_list_service.py` hält beide zusammen). Die Rangfolge zwischen
+# ihnen steht in `next_contact`.
+_POOL_FILTER = (
+    " FROM contacts c JOIN lists l ON l.id = c.list_id"
+    " WHERE l.archived = 0 AND c.state IN ('rueckruf', 'offen', 'wiedervorlage')"
+)
+
+
+def next_contact(conn: sqlite3.Connection, moment: str) -> sqlite3.Row | None:
+    """Der nächste fällige Kontakt, oder `None`.
+
+    Die Rangfolge ist Absicht:
+
+    1. **vereinbarte Rückrufe**, früheste zuerst — dort wurde eine Zusage
+       gemacht, die eingehalten werden muss.
+    2. **noch nie angerufene** Kontakte in der Reihenfolge der Datei; ältere
+       Listen zuerst.
+    3. **Wiedervorlagen** — „nach hinten in die Liste" heißt: hinter alles,
+       was noch nie versucht wurde.
+
+    Für Gruppe 2 ist der zweite Sortierschlüssel konstant leer, damit sie über
+    Liste und Position sortiert; für 1 und 3 sortiert der fällige Zeitpunkt.
+    """
+    return conn.execute(
+        "SELECT c.*, l.name AS list_name, l.archived AS list_archived"
+        + _POOL_FILTER
+        + " AND (c.due_at IS NULL OR c.due_at <= ?)"
+        " ORDER BY CASE c.state"
+        "     WHEN 'rueckruf' THEN 0"
+        "     WHEN 'offen' THEN 1"
+        "     ELSE 2 END,"
+        "   CASE WHEN c.state = 'offen' THEN '' ELSE COALESCE(c.due_at, '') END,"
+        "   l.created_at, c.position, c.id"
+        " LIMIT 1",
+        (moment,),
+    ).fetchone()
+
+
+def next_due_at(conn: sqlite3.Connection, moment: str) -> str | None:
+    """Wann der nächste aufgeschobene Kontakt zurückkommt."""
+    row = conn.execute(
+        "SELECT MIN(c.due_at) AS due" + _POOL_FILTER + " AND c.due_at > ?",
+        (moment,),
+    ).fetchone()
+
+    return row["due"] if row and row["due"] else None
+
+
+def state_totals(
+    conn: sqlite3.Connection, moment: str, *, list_id: str | None = None
+) -> dict[str, tuple[int, int]]:
+    """Pro Zustand: (fällig, gesamt).
+
+    Eine Abfrage für alle Zähler. `due` ist nur bei den Vorrats-Zuständen
+    interessant, wird aber überall mitgerechnet — das kostet nichts und spart
+    die Sonderfälle.
+
+    Ohne `list_id` zählt die Übersicht des Anrufers und lässt archivierte
+    Listen aus; mit `list_id` zählt die Verwaltung eine einzelne Liste, auch
+    eine archivierte.
+    """
+    if list_id is None:
+        where = " FROM contacts c JOIN lists l ON l.id = c.list_id WHERE l.archived = 0"
+        params: tuple[object, ...] = (moment,)
+    else:
+        where = " FROM contacts c WHERE c.list_id = ?"
+        params = (moment, list_id)
+
+    rows = conn.execute(
+        "SELECT c.state AS state,"
+        "   SUM(CASE WHEN c.due_at IS NULL OR c.due_at <= ? THEN 1 ELSE 0 END) AS due,"
+        "   COUNT(*) AS total" + where + " GROUP BY c.state",
+        params,
+    ).fetchall()
+
+    return {row["state"]: (int(row["due"] or 0), int(row["total"])) for row in rows}
+
+
+def promised_without_email(
+    conn: sqlite3.Connection, *, list_id: str | None = None
+) -> int:
+    """Zusagen ohne Adresse — die Zusagen, aus denen keine E-Mail wird."""
+    if list_id is None:
+        row = conn.execute(
+            "SELECT COUNT(*) AS total FROM contacts c"
+            " JOIN lists l ON l.id = c.list_id"
+            " WHERE l.archived = 0 AND c.state = 'zugesagt' AND c.email = ''"
+        ).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT COUNT(*) AS total FROM contacts"
+            " WHERE list_id = ? AND state = 'zugesagt' AND email = ''",
+            (list_id,),
+        ).fetchone()
+
+    return int(row["total"])
+
+
+def existing_phone_keys(conn: sqlite3.Connection) -> set[str]:
+    """Alle Nummern, die in einer *aktiven* Liste stehen.
+
+    Grundlage der Duplikatprüfung beim Import. Archivierte Listen zählen nicht
+    mit: eine abgeschlossene Runde soll eine neue nicht blockieren.
+    """
+    return {
+        row["telefon_key"]
+        for row in conn.execute(
+            "SELECT DISTINCT c.telefon_key FROM contacts c"
+            " JOIN lists l ON l.id = c.list_id"
+            " WHERE l.archived = 0 AND c.telefon_key <> ''"
+        )
+    }
+
+
+def phone_key_owners(conn: sqlite3.Connection) -> dict[str, str]:
+    """Nummer → Name der aktiven Liste, in der sie schon steht.
+
+    Für die Meldung „steht bereits in „Handwerker Herford"" — eine
+    Duplikatmeldung ohne den Ort des Originals ist nicht handlungsfähig.
+    """
+    owners: dict[str, str] = {}
+
+    for row in conn.execute(
+        "SELECT c.telefon_key AS key, l.name AS name FROM contacts c"
+        " JOIN lists l ON l.id = c.list_id"
+        " WHERE l.archived = 0 AND c.telefon_key <> ''"
+        " ORDER BY l.created_at"
+    ):
+        owners.setdefault(row["key"], row["name"])
+
+    return owners
+
+
+def apply_outcome(
+    conn: sqlite3.Connection,
+    contact_id: str,
+    *,
+    state: str,
+    due_at: str | None,
+    appointment_at: str | None,
+    note: str,
+    email: str | None,
+    count_attempt: bool,
+) -> None:
+    """Den Kontakt auf den neuen Stand setzen.
+
+    `email is None` heißt unverändert — ein Anrufer, der das Feld nicht
+    anfasst, darf eine bekannte Adresse nicht löschen. `count_attempt` ist
+    falsch bei „Nummer falsch": das war kein Anrufversuch beim Betrieb.
+    """
+    assignments = [
+        "state = ?",
+        "due_at = ?",
+        "appointment_at = ?",
+        "note = ?",
+        "updated_at = ?",
+    ]
+    values: list[object] = [state, due_at, appointment_at, note, now()]
+
+    if email is not None:
+        assignments.append("email = ?")
+        values.append(email)
+
+    if count_attempt:
+        assignments.append("attempts = attempts + 1")
+
+    values.append(contact_id)
+    conn.execute(f"UPDATE contacts SET {', '.join(assignments)} WHERE id = ?", values)
+
+
+# --------------------------------------------------------------------------
+# Protokoll
+# --------------------------------------------------------------------------
+
+
+def insert_event(
+    conn: sqlite3.Connection,
+    *,
+    contact_id: str,
+    list_id: str,
+    betrieb: str,
+    telefon: str,
+    user_id: str,
+    username: str,
+    outcome: str,
+    note: str,
+    email: str,
+    due_at: str | None,
+    appointment_at: str | None,
+) -> None:
+    """Eine Protokollzeile anhängen. Es gibt kein UPDATE auf `events`."""
+    conn.execute(
+        "INSERT INTO events"
+        " (contact_id, list_id, betrieb, telefon, occurred_at, user_id, username,"
+        "  outcome, note, email, due_at, appointment_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            contact_id,
+            list_id,
+            betrieb,
+            telefon,
+            now(),
+            user_id,
+            username,
+            outcome,
+            note,
+            email,
+            due_at,
+            appointment_at,
+        ),
+    )
+
+
+def events_of_contact(conn: sqlite3.Connection, contact_id: str) -> list[sqlite3.Row]:
+    """Protokoll eines Kontakts, jüngste Zeile zuerst."""
+    return list(
+        conn.execute(
+            "SELECT * FROM events WHERE contact_id = ? ORDER BY id DESC",
+            (contact_id,),
+        ).fetchall()
+    )
+
+
+def all_events(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Das ganze Protokoll, älteste Zeile zuerst — für die Ausgabe."""
+    return list(
+        conn.execute(
+            "SELECT e.*, l.name AS list_name FROM events e"
+            " LEFT JOIN lists l ON l.id = e.list_id"
+            " ORDER BY e.id"
+        ).fetchall()
+    )
+
+
+def promised_contacts(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Alle Zusagen, mit dem Zeitpunkt und dem Konto der Zusage.
+
+    Grundlage der Ausgabe für den Mailversand. Der JOIN holt die *letzte*
+    Zusage aus dem Protokoll — mehr als eine gibt es nur, wenn ein Kontakt neu
+    eingelesen und erneut angerufen wurde.
+    """
+    return list(
+        conn.execute(
+            "SELECT c.*, l.name AS list_name,"
+            "   (SELECT e.occurred_at FROM events e"
+            "     WHERE e.contact_id = c.id AND e.outcome = 'zugesagt'"
+            "     ORDER BY e.id DESC LIMIT 1) AS promised_at,"
+            "   (SELECT e.username FROM events e"
+            "     WHERE e.contact_id = c.id AND e.outcome = 'zugesagt'"
+            "     ORDER BY e.id DESC LIMIT 1) AS promised_by"
+            " FROM contacts c JOIN lists l ON l.id = c.list_id"
+            " WHERE c.state = 'zugesagt'"
+            " ORDER BY l.created_at, c.position"
+        ).fetchall()
+    )
