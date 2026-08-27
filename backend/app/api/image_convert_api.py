@@ -74,9 +74,18 @@ async def convert_images(
     result = await run_in_threadpool(convert_images_to_webp, sources, quality, scale)
 
     if not result.converted:
+        # The per-file reasons are the only thing that makes this actionable —
+        # "zu groß für WebP, mit höchstens 45 % Auflösung passt es" tells the
+        # user what to change, "fehlgeschlagen" does not.
+        reasons = " ".join(
+            f"{item.filename}: {item.reason}" for item in result.skipped[:3]
+        )
         raise HTTPException(
             status_code=400,
-            detail="Keine der hochgeladenen Dateien konnte konvertiert werden.",
+            detail=(
+                "Keine der hochgeladenen Dateien konnte konvertiert werden."
+                + (f" {reasons}" if reasons else "")
+            ),
         )
 
     # Stamped per request — a module-level date would go stale in a long-running
@@ -138,6 +147,8 @@ async def estimate_image_conversion(
                 scaled_height=(
                     estimate.scaled_pixels[1] if estimate.scaled_pixels else None
                 ),
+                measurable=estimate.measurable,
+                note=estimate.note,
                 error=estimate.error,
             )
             for estimate in estimates

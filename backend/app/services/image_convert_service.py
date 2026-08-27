@@ -1,6 +1,7 @@
 """Bulk conversion of uploaded images into a downloadable WebP zip."""
 
 import logging
+import threading
 import zipfile
 from collections.abc import Iterable
 from io import BytesIO
@@ -9,6 +10,7 @@ from typing import BinaryIO
 from app.core.image_utils import (
     DEFAULT_QUALITY,
     DEFAULT_SCALE,
+    ESTIMATE_PIXEL_BUDGET,
     ESTIMATE_QUALITIES,
     ImageConversionError,
     convert_to_webp,
@@ -25,6 +27,21 @@ from app.schemas.image_convert import (
 logger = logging.getLogger(__name__)
 
 SKIP_REPORT_NAME = "_uebersprungene_dateien.txt"
+
+# Shown instead of a size curve for images that are too large to preview. The
+# file itself converts fine, so this is a note, not an error.
+# Estimating is capped per image (see `ESTIMATE_PIXEL_BUDGET`), but nothing stops
+# a second tab from asking at the same time — and the peak memory of concurrent
+# runs adds up. Two slots keep the worst case at roughly what one request costs
+# twice; anything beyond that waits instead of pushing the process into the OOM
+# killer. Blocking here is safe: estimates run in FastAPI's threadpool.
+_ESTIMATE_SLOTS = threading.BoundedSemaphore(2)
+
+NO_PREVIEW_NOTE = (
+    "Keine Größenvorschau: {pixels:.0f} Megapixel Zielauflösung liegen über dem "
+    "Vorschau-Limit von {budget:.0f} MP. Konvertieren funktioniert trotzdem — "
+    "mit einer kleineren Auflösung kommt die Vorschau zurück."
+)
 
 
 def _unique_name(name: str, taken: set[str]) -> str:
@@ -129,7 +146,8 @@ def estimate_image_sizes(
             continue
 
         try:
-            estimate = estimate_webp_sizes(data, qualities, scale)
+            with _ESTIMATE_SLOTS:
+                estimate = estimate_webp_sizes(data, qualities, scale)
         except ImageConversionError as exc:
             logger.warning("No estimate for '%s': %s", filename, exc)
             estimates.append(
@@ -141,6 +159,7 @@ def estimate_image_sizes(
             )
             continue
 
+        target_pixels = estimate.target[0] * estimate.target[1]
         estimates.append(
             ImageEstimate(
                 filename=filename,
@@ -148,6 +167,15 @@ def estimate_image_sizes(
                 samples=estimate.sizes,
                 pixels=estimate.source,
                 scaled_pixels=estimate.target,
+                measurable=estimate.measured,
+                note=(
+                    None
+                    if estimate.measured
+                    else NO_PREVIEW_NOTE.format(
+                        pixels=target_pixels / 1_000_000,
+                        budget=ESTIMATE_PIXEL_BUDGET / 1_000_000,
+                    )
+                ),
             )
         )
 

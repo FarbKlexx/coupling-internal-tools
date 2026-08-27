@@ -34,6 +34,10 @@ class ImageEstimate:
     `pixels`/`scaled_pixels` are the decoded and the downscaled resolution, so
     the UI can name the pixel size the numbers belong to; both are `None` for a
     file that could not be decoded.
+
+    `measurable` is False when the file is fine but too large to preview — it
+    converts normally, only the size curve is missing. `note` carries the German
+    explanation for that case.
     """
 
     filename: str
@@ -41,6 +45,8 @@ class ImageEstimate:
     samples: dict[int, int] = field(default_factory=dict)
     pixels: tuple[int, int] | None = None
     scaled_pixels: tuple[int, int] | None = None
+    measurable: bool = True
+    note: str | None = None
     error: str | None = None
 
     @property
@@ -62,6 +68,8 @@ class FileEstimateResponse(BaseModel):
     height: int | None = None
     scaled_width: int | None = None
     scaled_height: int | None = None
+    measurable: bool = True
+    note: str | None = None
     error: str | None = None
 
 

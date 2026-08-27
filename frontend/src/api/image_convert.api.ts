@@ -38,6 +38,12 @@ export interface FileEstimate {
   /** Auflösung nach dem Verkleinern — bei 100 % identisch zum Original. */
   scaled_width: number | null;
   scaled_height: number | null;
+  /**
+   * false = Datei ist in Ordnung, aber zu groß für eine Größenvorschau. Sie
+   * wird trotzdem konvertiert; `samples` bleibt leer, `note` erklärt es.
+   */
+  measurable: boolean;
+  note: string | null;
   error: string | null;
 }
 

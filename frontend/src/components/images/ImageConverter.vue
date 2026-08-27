@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from "vue";
 import axios from "axios";
+import { readErrorDetail } from "@/api/http";
 import {
   convertImagesToWebp,
   DEFAULT_QUALITY,
@@ -20,6 +21,15 @@ const ACCEPTED_EXTENSIONS = "image/*,.jpg,.jpeg,.jpe,.png,.webp,.gif,.bmp,.tif,.
 
 /** Parallele Schätz-Requests. Das Backend rechnet pro Bild bereits mehrkernig. */
 const ESTIMATE_CONCURRENCY = 2;
+
+/**
+ * Ab dieser Dateigröße wird nur noch eine Datei zur Zeit vermessen. Große
+ * Bilder kosten im Backend hunderte MB pro Messung; zwei davon gleichzeitig
+ * summieren sich, und der Container stirbt am Speicher statt eine Vorschau zu
+ * liefern. Die Bytezahl ist nur ein Anhaltspunkt für „viele Pixel" — die echte
+ * Grenze zieht das Backend anhand der Auflösung.
+ */
+const SEQUENTIAL_ABOVE_BYTES = 8 * 1024 * 1024;
 
 /**
  * Wartezeit, bevor eine neue Auflösung vermessen wird. Der Qualitätsregler
@@ -67,7 +77,7 @@ function estimateFor(file: File): FileEstimate | undefined {
   return estimates.value.get(cacheKey(file, scale.value));
 }
 
-type RowStatus = "ready" | "pending" | "skipped";
+type RowStatus = "ready" | "pending" | "unmeasured" | "skipped";
 
 interface FileRow {
   file: File;
@@ -79,6 +89,8 @@ interface FileRow {
   savings: number | null;
   /** Auflösung nach dem Verkleinern, z. B. "1920×1080 → 960×540". */
   resolution: string | null;
+  /** Begründung des Backends: warum keine Vorschau bzw. warum übersprungen. */
+  hint: string | null;
 }
 
 function resolutionLabel(estimate: FileEstimate): string | null {
@@ -109,22 +121,26 @@ const rows = computed<FileRow[]>(() =>
       estimated: null,
       savings: null,
       resolution: null,
+      hint: null,
     };
 
     if (!estimate) return { ...blank, status: "pending" };
-    if (!estimate.supported) return { ...blank, status: "skipped" };
+
+    const resolution = resolutionLabel(estimate);
+
+    if (!estimate.supported) {
+      return { ...blank, status: "skipped", resolution, hint: estimate.error };
+    }
+    // Zu groß für eine Vorschau, aber kein Fehler: die Datei wird konvertiert.
+    if (!estimate.measurable) {
+      return { ...blank, status: "unmeasured", resolution, hint: estimate.note };
+    }
 
     const estimated = interpolateSize(estimate.samples, quality.value);
     const savings =
       estimated === null || file.size === 0 ? null : Math.round((1 - estimated / file.size) * 100);
 
-    return {
-      ...blank,
-      status: "ready",
-      estimated,
-      savings,
-      resolution: resolutionLabel(estimate),
-    };
+    return { ...blank, status: "ready", estimated, savings, resolution };
   }),
 );
 
@@ -134,8 +150,16 @@ const estimatedTotal = computed(() =>
   rows.value.reduce((sum, row) => sum + (row.estimated ?? 0), 0),
 );
 
-/** Nur vollständig, wenn für jede Datei eine Messung vorliegt. */
-const totalIsComplete = computed(() => rows.value.every((row) => row.status !== "pending"));
+/**
+ * Nur vollständig, wenn für jede Datei eine Messung vorliegt. Dateien ohne
+ * Vorschau steuern 0 B bei, die Summe ist dann eine Untergrenze.
+ */
+const totalIsComplete = computed(() =>
+  rows.value.every((row) => row.status === "ready" || row.status === "skipped"),
+);
+
+/** Dateien, die konvertiert werden, für die es aber keine Vorschau gibt. */
+const unmeasuredRows = computed(() => rows.value.filter((row) => row.status === "unmeasured"));
 
 const totalSavings = computed(() => {
   if (originalTotal.value === 0 || estimatedTotal.value === 0) return null;
@@ -203,7 +227,12 @@ async function refreshEstimates() {
     }
   };
 
-  await Promise.all(Array.from({ length: Math.min(ESTIMATE_CONCURRENCY, missing.length) }, worker));
+  // Große Dateien nacheinander: siehe SEQUENTIAL_ABOVE_BYTES.
+  const concurrency = missing.some((file) => file.size > SEQUENTIAL_ABOVE_BYTES)
+    ? 1
+    : ESTIMATE_CONCURRENCY;
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, missing.length) }, worker));
 }
 
 /** Messung einplanen; ein bereits geplanter Lauf wird dabei verworfen. */
@@ -300,7 +329,13 @@ async function convert() {
         : "");
   } catch (e) {
     console.error(e);
-    errorMessage.value = "Konvertierung fehlgeschlagen. Bitte prüfe die ausgewählten Dateien.";
+    // Das Backend begründet die Ablehnung pro Datei ("… überschreitet die
+    // WebP-Grenze von 16383 px, mit höchstens 96 % Auflösung passt es") — nur
+    // damit weiß der Nutzer, welchen Regler er anfassen muss. Bei
+    // `responseType: "blob"` steckt das JSON in einem Blob.
+    const detail = axios.isAxiosError(e) ? await readErrorDetail(e.response?.data) : null;
+    errorMessage.value =
+      detail ?? "Konvertierung fehlgeschlagen. Bitte prüfe die ausgewählten Dateien.";
   } finally {
     isLoading.value = false;
   }
@@ -389,8 +424,19 @@ async function convert() {
               {{ row.savings > 0 ? "−" : "+" }}{{ Math.abs(row.savings) }} %
             </span>
           </template>
-          <span v-else-if="row.status === 'skipped'" class="text-xs text-amber-400">
+          <span
+            v-else-if="row.status === 'skipped'"
+            class="text-xs text-amber-400"
+            :title="row.hint ?? undefined"
+          >
             wird übersprungen
+          </span>
+          <span
+            v-else-if="row.status === 'unmeasured'"
+            class="text-xs text-zinc-500"
+            :title="row.hint ?? undefined"
+          >
+            keine Vorschau
           </span>
           <span v-else class="text-xs text-zinc-600">wird berechnet …</span>
 
@@ -423,6 +469,10 @@ async function convert() {
           </span>
         </span>
       </div>
+
+      <p v-if="unmeasuredRows.length > 0" class="text-xs text-zinc-500">
+        {{ unmeasuredRows[0]?.hint }}
+      </p>
 
       <p v-if="estimateFailed" class="text-xs text-amber-400">
         Die Größenvorschau konnte nicht für alle Dateien berechnet werden. Die Konvertierung
