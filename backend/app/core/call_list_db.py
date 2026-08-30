@@ -8,7 +8,7 @@ Produktion liegt dieses Verzeichnis auf dem Volume aus `docker-compose.yml`
 (`./data/kanban:/app/data`) — ohne diese Zeile ist die Anrufliste nach jedem
 `--build` weg, und mit ihr das Protokoll der Einwilligungen.
 
-Drei Tabellen:
+Vier Tabellen:
 
 * `lists` — eine importierte CSV.
 * `contacts` — eine Zeile daraus, plus Zustand und Wiedervorlage.
@@ -17,6 +17,12 @@ Drei Tabellen:
   sich lesbar bleibt und nicht von einer Tabelle abhängt, die sich noch ändern
   kann. Ein Protokoll, das man erst mit einem JOIN versteht, ist als Nachweis
   nur die Hälfte wert.
+* `blacklist` — jede Nummer, die je importiert wurde, plus was von Hand
+  gesperrt wurde. Sie ist der Grund, dass sich zwei Listen nicht überschneiden
+  können, und hält bewusst **keine** Fremdschlüssel: sie muss das Archivieren
+  *und* das Löschen ihrer Herkunftsliste überleben, sonst wäre sie genau in
+  dem Moment leer, in dem sie gebraucht wird. Herkunft steht deshalb redundant
+  als Text darin, wie beim Protokoll.
 """
 
 import os
@@ -32,7 +38,7 @@ DEFAULT_DB_PATH = "data/calls.db"
 
 BUSY_TIMEOUT_MS = 5000
 
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = "2"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS lists (
@@ -90,6 +96,20 @@ CREATE TABLE IF NOT EXISTS events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_contact ON events (contact_id, id);
+
+CREATE TABLE IF NOT EXISTS blacklist (
+    telefon_key TEXT    PRIMARY KEY,
+    telefon     TEXT    NOT NULL DEFAULT '',
+    betrieb     TEXT    NOT NULL DEFAULT '',
+    source      TEXT    NOT NULL DEFAULT 'import',
+    list_id     TEXT    NOT NULL DEFAULT '',
+    list_name   TEXT    NOT NULL DEFAULT '',
+    note        TEXT    NOT NULL DEFAULT '',
+    created_at  TEXT    NOT NULL,
+    created_by  TEXT    NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_blacklist_created ON blacklist (created_at DESC);
 
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
@@ -193,10 +213,50 @@ def init_schema() -> None:
     with connect() as conn:
         conn.executescript(_SCHEMA)
         conn.execute(
+            "UPDATE meta SET value = ? WHERE key = 'schema_version'",
+            (SCHEMA_VERSION,),
+        )
+        conn.execute(
             "INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', ?)",
             (SCHEMA_VERSION,),
         )
         conn.execute("INSERT OR IGNORE INTO meta (key, value) VALUES ('revision', '0')")
+        _backfill_blacklist(conn)
+
+
+def _backfill_blacklist(conn: sqlite3.Connection) -> None:
+    """Bestehende Kontakte einmalig in die Blacklist übernehmen.
+
+    Ohne das käme die Sperre erst für Listen zustande, die *nach* diesem
+    Update importiert werden — und ausgerechnet die archivierten Runden, die
+    der Anwender im Kopf hat, wenn er von Doppelanrufen spricht, wären nicht
+    dabei.
+
+    Die Marke steht in `meta` und nicht in „ist die Tabelle leer": wer alle
+    Einträge von Hand entfernt hat, hat das so gemeint und bekäme sie sonst
+    beim nächsten Start zurück.
+    """
+    done = conn.execute(
+        "SELECT value FROM meta WHERE key = 'blacklist_backfilled'"
+    ).fetchone()
+
+    if done is not None:
+        return
+
+    conn.execute(
+        "INSERT OR IGNORE INTO blacklist"
+        " (telefon_key, telefon, betrieb, source, list_id, list_name,"
+        "  note, created_at, created_by)"
+        " SELECT c.telefon_key, c.telefon, c.betrieb, 'import', c.list_id, l.name,"
+        "        '', ?, ''"
+        "   FROM contacts c JOIN lists l ON l.id = c.list_id"
+        "  WHERE c.telefon_key <> ''",
+        (now(),),
+    )
+    conn.execute(
+        "INSERT INTO meta (key, value) VALUES ('blacklist_backfilled', ?)",
+        (now(),),
+    )
 
 
 # --------------------------------------------------------------------------
@@ -613,3 +673,153 @@ def promised_contacts(conn: sqlite3.Connection) -> list[sqlite3.Row]:
             " ORDER BY l.created_at, c.position"
         ).fetchall()
     )
+
+
+# --------------------------------------------------------------------------
+# Blacklist
+# --------------------------------------------------------------------------
+
+#: Wie viele Nummern eine `IN (...)`-Abfrage auf einmal fragt. SQLite lässt
+#: heute 32766 Parameter zu, ältere Builds 999 — 500 liegt sicher unter beidem
+#: und kostet bei 5000 Zeilen zehn Abfragen.
+_LOOKUP_CHUNK = 500
+
+#: Woher ein Eintrag kommt. Nur Anzeige, aber die Meldung beim Import liest sie.
+BLACKLIST_SOURCES = ("import", "manuell")
+
+#: Spalten, die `add_to_blacklist` in dieser Reihenfolge erwartet.
+BLACKLIST_COLUMNS = (
+    "telefon_key",
+    "telefon",
+    "betrieb",
+    "source",
+    "list_id",
+    "list_name",
+    "note",
+    "created_at",
+    "created_by",
+)
+
+
+def blacklist_lookup(
+    conn: sqlite3.Connection, keys: Sequence[str]
+) -> dict[str, sqlite3.Row]:
+    """Die Blacklist-Einträge zu genau diesen Nummern.
+
+    Fragt gezielt statt die ganze Tabelle zu laden: die Blacklist wächst mit
+    jedem Import und ist die eine Tabelle hier, die keine Obergrenze hat.
+    """
+    wanted = [key for key in dict.fromkeys(keys) if key]
+    found: dict[str, sqlite3.Row] = {}
+
+    for start in range(0, len(wanted), _LOOKUP_CHUNK):
+        chunk = wanted[start : start + _LOOKUP_CHUNK]
+        placeholders = ", ".join("?" * len(chunk))
+        for row in conn.execute(
+            f"SELECT * FROM blacklist WHERE telefon_key IN ({placeholders})", chunk
+        ):
+            found[row["telefon_key"]] = row
+
+    return found
+
+
+def add_to_blacklist(conn: sqlite3.Connection, rows: Sequence[Sequence[object]]) -> int:
+    """Nummern sperren. Vorhandene bleiben, wie sie sind.
+
+    `INSERT OR IGNORE`: der *erste* Eintrag gewinnt, damit die Herkunft auf
+    die Liste zeigt, die die Nummer zuerst hatte — das ist die Angabe, die
+    eine Duplikatmeldung brauchbar macht.
+    """
+    if not rows:
+        return 0
+
+    placeholders = ", ".join("?" * len(BLACKLIST_COLUMNS))
+    cursor = conn.executemany(
+        f"INSERT OR IGNORE INTO blacklist ({', '.join(BLACKLIST_COLUMNS)})"
+        f" VALUES ({placeholders})",
+        rows,
+    )
+
+    return cursor.rowcount if cursor.rowcount and cursor.rowcount > 0 else 0
+
+
+def blacklist_total(conn: sqlite3.Connection) -> int:
+    row = conn.execute("SELECT COUNT(*) AS total FROM blacklist").fetchone()
+    return int(row["total"])
+
+
+def blacklist_page(
+    conn: sqlite3.Connection, *, query: str, limit: int, offset: int
+) -> tuple[list[sqlite3.Row], int]:
+    """Ein Ausschnitt der Blacklist, neueste zuerst, plus die Gesamtzahl.
+
+    Die Suche geht über Nummer *und* Betrieb: gesucht wird mal nach „steht die
+    05221 111 drauf", mal nach „warum kommt Zaunbau Müller nicht".
+    """
+    term = query.strip()
+
+    if term:
+        # Der Ziffernschlüssel, damit „+49 5221 111" dieselbe Nummer findet
+        # wie „05221111"; ist nichts Ziffriges dabei, bleibt er leer und die
+        # Bedingung fällt auf den Namen zurück.
+        digits = phone_key(term)
+        where = " WHERE betrieb LIKE ? OR telefon LIKE ?" + (
+            " OR telefon_key LIKE ?" if digits else ""
+        )
+        params: tuple[object, ...] = (f"%{term}%", f"%{term}%")
+        if digits:
+            params += (f"%{digits}%",)
+    else:
+        where = ""
+        params = ()
+
+    total = int(
+        conn.execute(
+            f"SELECT COUNT(*) AS total FROM blacklist{where}", params
+        ).fetchone()["total"]
+    )
+
+    rows = list(
+        conn.execute(
+            f"SELECT * FROM blacklist{where}"
+            " ORDER BY created_at DESC, betrieb, telefon_key"
+            " LIMIT ? OFFSET ?",
+            params + (limit, offset),
+        ).fetchall()
+    )
+
+    return rows, total
+
+
+def all_blacklist(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Die ganze Blacklist, älteste zuerst — für die Ausgabe."""
+    return list(
+        conn.execute(
+            "SELECT * FROM blacklist ORDER BY created_at, betrieb, telefon_key"
+        ).fetchall()
+    )
+
+
+def remove_from_blacklist(conn: sqlite3.Connection, telefon_key: str) -> bool:
+    """Eine Nummer wieder freigeben. Liefert, ob es sie gab."""
+    cursor = conn.execute("DELETE FROM blacklist WHERE telefon_key = ?", (telefon_key,))
+    return bool(cursor.rowcount)
+
+
+def drop_blacklist_of_list(conn: sqlite3.Connection, list_id: str) -> int:
+    """Die Sperren freigeben, die aus dieser Liste stammen.
+
+    Gehört zum *Löschen* einer Liste, nicht zum Archivieren: Löschen heißt in
+    diesem Werkzeug „das hat nicht stattgefunden" (es nimmt auch das Protokoll
+    mit), und dann darf dieselbe Datei erneut importierbar sein. Archivieren
+    heißt „Runde beendet" und behält beides.
+
+    Nummern, die noch in einer anderen Liste stecken, bleiben gesperrt.
+    """
+    cursor = conn.execute(
+        "DELETE FROM blacklist WHERE list_id = ? AND telefon_key NOT IN ("
+        "  SELECT c.telefon_key FROM contacts c WHERE c.list_id <> ?"
+        ")",
+        (list_id, list_id),
+    )
+    return cursor.rowcount if cursor.rowcount and cursor.rowcount > 0 else 0

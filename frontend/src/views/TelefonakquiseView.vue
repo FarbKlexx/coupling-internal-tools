@@ -38,11 +38,19 @@
            Verwaltungsendpunkte hinter `require_admin` hält. -->
       <CallListManager
         v-if="isAdmin"
+        v-model:blacklist-query="blacklistQuery"
         :lists="lists"
         :is-saving="isSaving"
         :upload="uploadList"
         :edit="editList"
         :remove="removeList"
+        :blacklist="blacklist"
+        :blacklist-count="blacklistCount"
+        :is-blacklist-loading="isBlacklistLoading"
+        :load-blacklist="loadBlacklist"
+        :add-to-blacklist="addToBlacklist"
+        :upload-blacklist="uploadBlacklist"
+        :release-number="releaseNumber"
       />
     </template>
   </div>
@@ -64,17 +72,25 @@ const {
   outcomes,
   lists,
   activeLists,
+  blacklist,
+  blacklistCount,
+  blacklistQuery,
+  isBlacklistLoading,
   isLoading,
   isSaving,
   isWaiting,
   isDone,
   errorMessage,
   load,
+  loadBlacklist,
   startPolling,
   recordOutcome,
   uploadList,
   editList,
   removeList,
+  addToBlacklist,
+  uploadBlacklist,
+  releaseNumber,
 } = useCallList();
 
 onMounted(async () => {

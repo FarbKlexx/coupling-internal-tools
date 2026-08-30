@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import axios from "axios";
-import { ref } from "vue";
+import { computed, ref } from "vue";
+import CallBlacklist from "@/components/calls/CallBlacklist.vue";
 import {
   analyseList,
   promisedExportUrl,
   protocolExportUrl,
+  type BlacklistMutation,
+  type BlacklistPage,
   type CallListInfo,
   type ListAnalyse,
   type ListImport,
@@ -21,10 +24,20 @@ import {
 const props = defineProps<{
   lists: CallListInfo[];
   isSaving: boolean;
-  upload: (file: File, name: string) => Promise<ListImport | null>;
+  upload: (file: File, name: string, prios?: string[]) => Promise<ListImport | null>;
   edit: (listId: string, payload: { name?: string; archived?: boolean }) => Promise<boolean>;
   remove: (listId: string, force?: boolean) => Promise<boolean>;
+  blacklist: BlacklistPage | null;
+  blacklistCount: number;
+  blacklistQuery: string;
+  isBlacklistLoading: boolean;
+  loadBlacklist: (options?: { offset?: number }) => Promise<void>;
+  addToBlacklist: (numbers: string, note: string) => Promise<BlacklistMutation | null>;
+  uploadBlacklist: (file: File) => Promise<BlacklistMutation | null>;
+  releaseNumber: (telefonKey: string) => Promise<boolean>;
 }>();
+
+const emit = defineEmits<{ "update:blacklistQuery": [value: string] }>();
 
 const open = ref(props.lists.length === 0);
 
@@ -36,6 +49,45 @@ const isAnalysing = ref(false);
 const result = ref<ListImport | null>(null);
 const isDragOver = ref(false);
 const fileInput = ref<HTMLInputElement | null>(null);
+
+/**
+ * Die angehakten Prio-Werte.
+ *
+ * Nach dem Trockenlauf sind alle angehakt: der Filter ist ein Angebot, keine
+ * Pflicht, und wer ihn nicht braucht, soll die Datei nicht erst freischalten
+ * müssen.
+ */
+const selectedPrios = ref<string[]>([]);
+
+/** Filtert die Auswahl wirklich, oder sind ohnehin alle Prios dabei? */
+const isPrioFiltered = computed(
+  () =>
+    analysis.value !== null &&
+    analysis.value.prio_values.length > 0 &&
+    selectedPrios.value.length < analysis.value.prio_values.length,
+);
+
+/**
+ * Wie viele Kontakte der Import brächte – aus den Zahlen des Trockenlaufs.
+ *
+ * Lokal gerechnet und nicht bei jedem Häkchen neu erfragt: das Backend liefert
+ * pro Prio schon die Zahl der *neuen* Kontakte, und die 4-MB-Datei bei jedem
+ * Klick erneut hochzuladen wäre der teuerste Weg zu derselben Zahl.
+ */
+const plannedContacts = computed(() => {
+  if (analysis.value === null) return 0;
+  if (!isPrioFiltered.value) return analysis.value.contacts;
+
+  return analysis.value.prio_values
+    .filter((entry) => selectedPrios.value.includes(entry.value))
+    .reduce((sum, entry) => sum + entry.contacts, 0);
+});
+
+function togglePrio(value: string) {
+  selectedPrios.value = selectedPrios.value.includes(value)
+    ? selectedPrios.value.filter((entry) => entry !== value)
+    : [...selectedPrios.value, value];
+}
 
 /** Umbenennen läuft direkt in der Zeile. */
 const renaming = ref<string | null>(null);
@@ -51,6 +103,7 @@ function reset() {
   analysis.value = null;
   analysisError.value = null;
   result.value = null;
+  selectedPrios.value = [];
 }
 
 async function selectFile(selected: File | null | undefined) {
@@ -68,6 +121,7 @@ async function selectFile(selected: File | null | undefined) {
     const report = await analyseList(selected);
     analysis.value = report;
     listName.value = report.name_suggestion;
+    selectedPrios.value = report.prio_values.map((entry) => entry.value);
   } catch (e) {
     console.error(e);
     analysisError.value = axios.isAxiosError(e)
@@ -94,12 +148,19 @@ function onDrop(event: DragEvent) {
 async function importNow() {
   if (!file.value || props.isSaving) return;
 
-  const imported = await props.upload(file.value, listName.value);
+  const imported = await props.upload(
+    file.value,
+    listName.value,
+    // Nur mitschicken, wenn wirklich eingeschränkt wird: ein fehlendes Feld
+    // heißt im Backend „alle Prios", und das ist genau dieser Fall.
+    isPrioFiltered.value ? selectedPrios.value : undefined,
+  );
 
   if (imported) {
     result.value = imported;
     file.value = null;
     analysis.value = null;
+    selectedPrios.value = [];
   }
 }
 
@@ -169,8 +230,9 @@ function formatDate(iso: string): string {
             CSV mit den Spalten <strong>Betrieb</strong> und <strong>Telefon</strong>; E-Mail, Ort,
             PLZ, Website, Gewerk, Prio und Befunde werden erkannt, alle weiteren Spalten fahren mit
             und erscheinen beim Kontakt unter „Details". Aus Excel über „Speichern unter" als „CSV
-            UTF-8" exportieren. Nummern, die schon in einer aktiven Liste stehen, werden
-            übersprungen.
+            UTF-8" exportieren. Nummern, die schon einmal importiert wurden oder auf der Blacklist
+            stehen, werden übersprungen. Gibt es eine Prio-Spalte, lässt sich unten auswählen,
+            welche Prio hochgeladen wird.
           </p>
         </div>
 
@@ -264,6 +326,40 @@ function formatDate(iso: string): string {
             </ul>
           </details>
 
+          <!-- Prio-Auswahl: nur, wenn die Datei überhaupt eine Prio-Spalte hat -->
+          <div v-if="analysis.prio_values.length" class="space-y-2 border-t border-zinc-800 pt-3">
+            <p class="text-xs text-zinc-500">
+              Spalte „{{ analysis.prio_column }}“ – welche Prio soll importiert werden?
+            </p>
+            <div class="flex flex-wrap gap-2">
+              <label
+                v-for="entry in analysis.prio_values"
+                :key="entry.value"
+                :class="[
+                  'flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs transition-colors cursor-pointer',
+                  selectedPrios.includes(entry.value)
+                    ? 'border-blue-500 bg-blue-500/10'
+                    : 'light-grey-stroke light-grey-background',
+                ]"
+              >
+                <input
+                  type="checkbox"
+                  :checked="selectedPrios.includes(entry.value)"
+                  @change="togglePrio(entry.value)"
+                />
+                <span class="font-medium">{{ entry.label }}</span>
+                <span class="text-zinc-500">
+                  {{ entry.rows }} Zeilen<template v-if="entry.contacts !== entry.rows">
+                    , {{ entry.contacts }} neu</template
+                  >
+                </span>
+              </label>
+            </div>
+            <p v-if="selectedPrios.length === 0" class="text-xs text-amber-400">
+              Ohne angehakte Prio gibt es nichts zu importieren.
+            </p>
+          </div>
+
           <div class="flex flex-wrap items-end gap-2">
             <div class="flex flex-col gap-1 grow">
               <label class="text-xs text-zinc-500" for="call-list-name">Name der Liste</label>
@@ -276,10 +372,10 @@ function formatDate(iso: string): string {
             </div>
             <button
               class="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium hover:bg-blue-500 disabled:opacity-40 transition-colors"
-              :disabled="isSaving || analysis.contacts === 0"
+              :disabled="isSaving || plannedContacts === 0"
               @click="importNow"
             >
-              {{ analysis.contacts }} Kontakte importieren
+              {{ plannedContacts }} Kontakte importieren
             </button>
             <button
               class="rounded-md light-grey-background light-grey-stroke px-3 py-2 text-sm"
@@ -298,6 +394,9 @@ function formatDate(iso: string): string {
           <template v-if="result.skipped_rows.length || result.duplicates.length">
             {{ result.skipped_rows.length }} Zeilen übersprungen,
             {{ result.duplicates.length }} Nummern waren schon bekannt.
+          </template>
+          <template v-if="result.prio_skipped">
+            {{ result.prio_skipped }} Zeilen hatten eine andere Prio.
           </template>
         </p>
       </div>
@@ -382,7 +481,8 @@ function formatDate(iso: string): string {
           >
             <p class="text-xs text-red-300">
               Löschen entfernt die Kontakte <strong>und</strong> ihre Protokollzeilen – damit den
-              Nachweis der Einwilligungen. Stilllegen behält beides.
+              Nachweis der Einwilligungen. Die Nummern dieser Liste werden dabei wieder freigegeben
+              und sind erneut importierbar. Stilllegen behält beides und die Sperre.
             </p>
             <div class="flex flex-wrap gap-2">
               <button class="chip" :disabled="isSaving" @click="confirmDelete(false)">
@@ -401,6 +501,19 @@ function formatDate(iso: string): string {
           </div>
         </div>
       </div>
+
+      <CallBlacklist
+        :page="blacklist"
+        :total="blacklistCount"
+        :query="blacklistQuery"
+        :is-loading="isBlacklistLoading"
+        :is-saving="isSaving"
+        :load="loadBlacklist"
+        :add="addToBlacklist"
+        :upload="uploadBlacklist"
+        :release="releaseNumber"
+        @update:query="emit('update:blacklistQuery', $event)"
+      />
 
       <!-- Ausgaben -->
       <div class="space-y-2 border-t border-zinc-800 pt-4">

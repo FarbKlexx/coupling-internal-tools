@@ -111,6 +111,8 @@ export interface CallState {
   next_due_at: string | null;
   outcomes: OutcomeInfo[];
   lists: CallListInfo[];
+  /** Wie viele Nummern gesperrt sind – die Überschrift der Blacklist. */
+  blacklist_count: number;
 }
 
 export interface OutcomePayload {
@@ -136,6 +138,23 @@ export interface ColumnMapping {
   empty_count: number;
 }
 
+/**
+ * Ein Prio-Wert, wie er in der hochgeladenen Datei vorkommt.
+ *
+ * Die Werte kommen mit der Antwort und stehen bewusst nicht hier: was „Prio"
+ * bedeutet, entscheidet die Auswertung – mal A/B/C, mal 1–5.
+ */
+export interface PrioOption {
+  /** Der Wert, der beim Import zurückgeschickt wird. */
+  value: string;
+  /** Wie er angezeigt wird („A", „(ohne Prio)"). */
+  label: string;
+  /** Zeilen mit dieser Prio in der Datei. */
+  rows: number;
+  /** Davon die, die tatsächlich importiert würden (ohne schon bekannte). */
+  contacts: number;
+}
+
 export interface ListAnalyse {
   name_suggestion: string;
   encoding: string;
@@ -147,6 +166,9 @@ export interface ListAnalyse {
   skipped_rows: SkippedRow[];
   duplicates: SkippedRow[];
   warnings: string[];
+  /** Überschrift der Prio-Spalte, oder `null` – dann gibt es keine Auswahl. */
+  prio_column: string | null;
+  prio_values: PrioOption[];
 }
 
 export interface ListImport {
@@ -156,6 +178,42 @@ export interface ListImport {
   duplicates: SkippedRow[];
   warnings: string[];
   state: CallState;
+  /** Zeilen, die wegen der Prio-Auswahl draußen blieben. */
+  prio_skipped: number;
+  /** Nummern, die dieser Import neu gesperrt hat. */
+  blacklisted: number;
+}
+
+/** Woher eine Sperre stammt. Spiegel von `BlacklistSource` im Backend. */
+export type BlacklistSource = "import" | "manuell";
+
+export interface BlacklistEntry {
+  /** Der Ziffernschlüssel – zugleich die Adresse des Eintrags. */
+  telefon_key: string;
+  telefon: string;
+  betrieb: string;
+  source: BlacklistSource;
+  source_label: string;
+  list_name: string;
+  note: string;
+  created_at: string;
+  created_by: string;
+}
+
+export interface BlacklistPage {
+  entries: BlacklistEntry[];
+  total: number;
+  /** Treffer der aktuellen Suche; ohne Suche gleich `total`. */
+  matched: number;
+  offset: number;
+  limit: number;
+}
+
+export interface BlacklistMutation {
+  added: number;
+  already_known: number;
+  skipped: SkippedRow[];
+  page: BlacklistPage;
 }
 
 /**
@@ -189,10 +247,18 @@ export async function analyseList(file: File): Promise<ListAnalyse> {
   return response.data;
 }
 
-export async function importList(file: File, name: string): Promise<ListImport> {
+/**
+ * Importiert die Liste.
+ *
+ * `prios` bleibt `undefined`, wenn nicht gefiltert wird – ein *fehlendes* Feld
+ * heißt im Backend „alle Prios", eine leere Auswahl dagegen ist eine
+ * Fehleingabe und wird abgelehnt.
+ */
+export async function importList(file: File, name: string, prios?: string[]): Promise<ListImport> {
   const form = new FormData();
   form.append("file", file);
   form.append("name", name);
+  if (prios) form.append("prios", JSON.stringify(prios));
 
   const response = await http.post<ListImport>("/telefonakquise/lists", form);
   return response.data;
@@ -227,4 +293,57 @@ export function promisedExportUrl(): string {
 /** Das vollständige Anrufprotokoll als CSV – der Nachweis zum Mitnehmen. */
 export function protocolExportUrl(): string {
   return "/api/telefonakquise/export/protokoll";
+}
+
+/** Ein Ausschnitt der Blacklist. Sie wird geblättert, nicht geladen. */
+export async function fetchBlacklist(params: {
+  q?: string;
+  offset?: number;
+  limit?: number;
+}): Promise<BlacklistPage> {
+  const response = await http.get<BlacklistPage>("/telefonakquise/blacklist", { params });
+  return response.data;
+}
+
+/** Nummern von Hand sperren – eine pro Zeile, Name wahlweise davor/dahinter. */
+export async function addBlacklistNumbers(
+  numbers: string,
+  note: string,
+): Promise<BlacklistMutation> {
+  const response = await http.post<BlacklistMutation>("/telefonakquise/blacklist", {
+    numbers,
+    note,
+  });
+  return response.data;
+}
+
+/** Eine CSV als Sperrliste einlesen. Pflicht ist allein die Telefonspalte. */
+export async function importBlacklist(file: File): Promise<BlacklistMutation> {
+  const form = new FormData();
+  form.append("file", file);
+
+  const response = await http.post<BlacklistMutation>("/telefonakquise/blacklist/import", form);
+  return response.data;
+}
+
+/**
+ * Gibt eine Nummer wieder frei.
+ *
+ * Suche und Versatz reisen mit, damit die Ansicht nach dem Entfernen dort
+ * stehen bleibt, wo sie war, statt auf die erste Seite zu springen.
+ */
+export async function removeBlacklistEntry(
+  telefonKey: string,
+  params: { q?: string; offset?: number } = {},
+): Promise<BlacklistPage> {
+  const response = await http.delete<BlacklistPage>(
+    `/telefonakquise/blacklist/${encodeURIComponent(telefonKey)}`,
+    { params },
+  );
+  return response.data;
+}
+
+/** Die Sperrliste als CSV – lässt sich hier auch wieder einlesen. */
+export function blacklistExportUrl(): string {
+  return "/api/telefonakquise/export/blacklist";
 }

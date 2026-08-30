@@ -21,6 +21,8 @@ gewollt. Der CSV-Import ist die Ausnahme, weil er die Datei aus dem Request
 lesen muss.
 """
 
+import json
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
@@ -28,6 +30,11 @@ from fastapi.responses import StreamingResponse
 from app.api.deps import CurrentUser, current_user, require_admin
 from app.schemas.access import Page
 from app.schemas.call_list import (
+    BLACKLIST_PAGE_SIZE,
+    MAX_BLACKLIST_PAGE_SIZE,
+    BlacklistAddRequest,
+    BlacklistMutationResponse,
+    BlacklistPage,
     CallState,
     ListAnalyseResponse,
     ListImportResponse,
@@ -39,13 +46,18 @@ from app.services.call_list_service import (
     CallListError,
     CallListExport,
     CallListNotFoundError,
+    add_blacklist_numbers,
     analyse_list,
     delete_list,
+    export_blacklist,
     export_promised,
     export_protocol,
+    get_blacklist,
     get_state,
+    import_blacklist,
     import_list,
     record_outcome,
+    remove_blacklist_entry,
     update_list,
 )
 
@@ -121,6 +133,32 @@ async def analyse_upload(
         raise _fail(exc) from exc
 
 
+def _parse_prios(raw: str) -> list[str] | None:
+    """Die Prio-Auswahl aus dem Formularfeld lesen.
+
+    Ein leeres Feld heißt „alle Prios" und nicht „keine": ein leerer
+    Formularwert kommt ohnehin als *fehlend* an, und eine Datei ohne
+    Prio-Spalte schickt nichts. `"[]"` dagegen ist eine ausdrücklich leere
+    Auswahl — die lehnt der Service ab, statt kommentarlos alles zu nehmen.
+    """
+    if not raw.strip():
+        return None
+
+    try:
+        values = json.loads(raw)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400, detail="Die Prio-Auswahl kam unlesbar an."
+        ) from exc
+
+    if not isinstance(values, list) or not all(
+        isinstance(value, str) for value in values
+    ):
+        raise HTTPException(status_code=400, detail="Die Prio-Auswahl kam unlesbar an.")
+
+    return values
+
+
 @router.post("/lists", response_model=ListImportResponse)
 async def create_list(
     file: UploadFile = File(...),
@@ -128,10 +166,13 @@ async def create_list(
     # *fehlend* an und ergäbe sonst ein rohes 422 statt einer Meldung. Ein
     # leerer Name wird aus dem Dateinamen abgeleitet.
     name: str = Form(default=""),
+    #: JSON-Liste der zu importierenden Prio-Werte, oder leer für „alle".
+    prios: str = Form(default=""),
     user: CurrentUser = Depends(require_admin),
 ) -> ListImportResponse:
     """Die hochgeladene Liste speichern."""
     content = await file.read()
+    selection = _parse_prios(prios)
 
     try:
         return await run_in_threadpool(
@@ -140,6 +181,7 @@ async def create_list(
             file.filename or "",
             name,
             created_by=user.username,
+            prios=selection,
         )
     except CallListError as exc:
         raise _fail(exc) from exc
@@ -172,6 +214,74 @@ def drop_list(
         return delete_list(list_id, force=force)
     except CallListError as exc:
         raise _fail(exc) from exc
+
+
+# --------------------------------------------------------------------------
+# Blacklist (nur Administratoren)
+# --------------------------------------------------------------------------
+
+
+@router.get("/blacklist", response_model=BlacklistPage)
+def read_blacklist(
+    q: str = Query(default="", max_length=200),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=BLACKLIST_PAGE_SIZE, ge=1, le=MAX_BLACKLIST_PAGE_SIZE),
+    _: CurrentUser = Depends(require_admin),
+) -> BlacklistPage:
+    """Ein Ausschnitt der Sperrliste. Sie wird geblättert, nicht geladen."""
+    return get_blacklist(query=q, offset=offset, limit=limit)
+
+
+@router.post("/blacklist", response_model=BlacklistMutationResponse)
+def add_blacklist(
+    request: BlacklistAddRequest,
+    user: CurrentUser = Depends(require_admin),
+) -> BlacklistMutationResponse:
+    """Nummern von Hand sperren — eine pro Zeile."""
+    try:
+        return add_blacklist_numbers(request, created_by=user.username)
+    except CallListError as exc:
+        raise _fail(exc) from exc
+
+
+@router.post("/blacklist/import", response_model=BlacklistMutationResponse)
+async def upload_blacklist(
+    file: UploadFile = File(...),
+    user: CurrentUser = Depends(require_admin),
+) -> BlacklistMutationResponse:
+    """Eine CSV als Sperrliste einlesen. Pflicht ist allein die Telefonspalte."""
+    content = await file.read()
+
+    try:
+        return await run_in_threadpool(
+            import_blacklist, content, created_by=user.username
+        )
+    except CallListError as exc:
+        raise _fail(exc) from exc
+
+
+@router.delete("/blacklist/{telefon_key}", response_model=BlacklistPage)
+def drop_blacklist_entry(
+    telefon_key: str,
+    q: str = Query(default="", max_length=200),
+    offset: int = Query(default=0, ge=0),
+    _: CurrentUser = Depends(require_admin),
+) -> BlacklistPage:
+    """Eine Nummer wieder freigeben.
+
+    `q` und `offset` reisen mit, damit die Ansicht nach dem Entfernen dort
+    stehen bleibt, wo sie war.
+    """
+    try:
+        return remove_blacklist_entry(telefon_key, query=q, offset=offset)
+    except CallListError as exc:
+        raise _fail(exc) from exc
+
+
+@router.get("/export/blacklist")
+def download_blacklist(_: CurrentUser = Depends(require_admin)) -> StreamingResponse:
+    """Die Sperrliste als CSV — lässt sich hier auch wieder einlesen."""
+    return _csv_response(export_blacklist())
 
 
 @router.get("/export/zusagen")

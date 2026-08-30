@@ -14,6 +14,8 @@ from app.core import call_list_db as db
 from app.schemas.call_list import (
     CALLBACK_LEAD_MINUTES,
     POOL_STATES,
+    BlacklistAddRequest,
+    BlacklistSource,
     CallOutcome,
     ContactState,
     ListUpdateRequest,
@@ -23,13 +25,18 @@ from app.services.call_list_service import (
     CallListConflictError,
     CallListError,
     CallListNotFoundError,
+    add_blacklist_numbers,
     analyse_list,
     delete_list,
+    export_blacklist,
     export_promised,
     export_protocol,
+    get_blacklist,
     get_state,
+    import_blacklist,
     import_list,
     record_outcome,
+    remove_blacklist_entry,
     update_list,
 )
 
@@ -145,10 +152,30 @@ def test_the_same_number_twice_in_one_file_is_imported_once():
     assert "Zeile 2" in result.duplicates[0].reason
 
 
-def test_a_number_already_in_an_archived_list_may_be_imported_again():
-    """Eine abgeschlossene Runde darf die nächste nicht blockieren."""
+def test_an_archived_list_still_blocks_its_numbers_via_the_blacklist():
+    """Archivieren beendet die Runde, hebt die Sperre aber nicht auf.
+
+    Genau der Fall, für den es die Blacklist gibt: zwei Auswertungen desselben
+    Gebiets überschneiden sich, und der zweite Import darf die Betriebe aus
+    dem ersten nicht noch einmal in den Vorrat legen — auch dann nicht, wenn
+    die erste Liste längst stillgelegt ist.
+    """
     first = _import()
     update_list(first.list_id, ListUpdateRequest(archived=True))
+
+    with pytest.raises(CallListError, match="schon bekannt"):
+        _import(name="Zweite Runde")
+
+
+def test_deleting_a_list_releases_its_numbers_again():
+    """Löschen heißt „hat nicht stattgefunden" — Archivieren heißt „beendet".
+
+    Ohne diesen Unterschied wäre eine versehentlich importierte Datei nicht
+    mehr zu korrigieren: die Liste ließe sich löschen, ihre Nummern blieben
+    aber für immer gesperrt.
+    """
+    first = _import()
+    delete_list(first.list_id, force=True)
 
     again = _import(name="Zweite Runde")
 
@@ -609,3 +636,283 @@ def test_the_pool_states_of_the_schema_and_the_database_module_agree():
         "rueckruf",
     }
     assert "'rueckruf', 'offen', 'wiedervorlage'" in db._POOL_FILTER
+
+
+# --------------------------------------------------------------------------
+# Prio-Auswahl beim Import
+# --------------------------------------------------------------------------
+
+PRIO_HEADER = "Betrieb;Telefon;Prio"
+
+
+def _prio_csv(*rows: str) -> bytes:
+    return ("\r\n".join([PRIO_HEADER, *rows]) + "\r\n").encode("utf-8")
+
+
+def _mixed_prios() -> bytes:
+    return _prio_csv(
+        "Alpha;05221 111;A",
+        "Beta;05221 222;B",
+        "Gamma;05221 333;a",
+        "Delta;05221 444;",
+        "Epsilon;05221 555;C",
+    )
+
+
+def test_the_dry_run_reports_the_prio_values_of_the_file():
+    """Die Werte kommen aus der Datei, nicht aus einer Aufzählung im Code."""
+    report = analyse_list(_mixed_prios(), "auswertung.csv")
+
+    assert report.prio_column == "Prio"
+    assert [
+        (option.value, option.label, option.rows) for option in report.prio_values
+    ] == [
+        ("a", "A", 2),
+        ("b", "B", 1),
+        ("__ohne__", "(ohne Prio)", 1),
+        ("c", "C", 1),
+    ]
+    # Ohne Bestand ist jede Zeile auch ein Kontakt.
+    assert [option.contacts for option in report.prio_values] == [2, 1, 1, 1]
+
+
+def test_a_file_without_a_prio_column_offers_no_selection():
+    report = analyse_list(_three(), "handwerker.csv")
+
+    assert report.prio_column is None
+    assert report.prio_values == []
+
+
+def test_only_the_selected_prios_are_imported():
+    result = import_list(
+        _mixed_prios(), "auswertung.csv", "Nur A", created_by="chefin", prios=["a"]
+    )
+
+    assert result.imported == 2
+    assert result.prio_skipped == 3
+
+    state = get_state()
+    assert state.counters.gesamt == 2
+    assert state.contact.betrieb == "Alpha"
+
+
+def test_the_prio_selection_ignores_case_and_spacing():
+    """„A" und „a" sind dieselbe Prio — sonst steht sie zweimal in der Auswahl."""
+    result = import_list(
+        _mixed_prios(), "auswertung.csv", "Nur A", created_by="chefin", prios=["  A "]
+    )
+
+    assert result.imported == 2
+
+
+def test_rows_without_a_prio_are_selectable_on_their_own():
+    result = import_list(
+        _mixed_prios(),
+        "auswertung.csv",
+        "Ohne Prio",
+        created_by="chefin",
+        prios=["__ohne__"],
+    )
+
+    assert result.imported == 1
+    assert get_state().contact.betrieb == "Delta"
+
+
+def test_an_empty_prio_selection_is_a_mistake_and_not_an_empty_list():
+    with pytest.raises(CallListError, match="keine Prio ausgewählt"):
+        import_list(
+            _mixed_prios(), "auswertung.csv", "Nichts", created_by="chefin", prios=[]
+        )
+
+
+def test_filtering_by_prio_needs_a_prio_column():
+    with pytest.raises(CallListError, match="keine Prio-Spalte"):
+        import_list(
+            _three(), "handwerker.csv", "Egal", created_by="chefin", prios=["a"]
+        )
+
+
+def test_the_prio_filter_runs_before_the_duplicate_check():
+    """Sonst zeigt eine Duplikatmeldung auf eine Zeile, die gar nicht kommt.
+
+    Zeile 2 (Prio B) und Zeile 3 (Prio A) haben dieselbe Nummer. Wird nur A
+    importiert, ist Zeile 3 kein Duplikat von Zeile 2 — Zeile 2 wird nicht
+    importiert.
+    """
+    data = _prio_csv("Alt;05221 111;B", "Neu;05221 111;A")
+
+    result = import_list(
+        data, "auswertung.csv", "Nur A", created_by="chefin", prios=["a"]
+    )
+
+    assert result.imported == 1
+    assert result.duplicates == []
+    assert get_state().contact.betrieb == "Neu"
+
+
+def test_the_preview_count_per_prio_subtracts_what_is_already_known():
+    _import(_prio_csv("Alpha;05221 111;A"), name="Erste Runde")
+
+    report = analyse_list(_mixed_prios(), "auswertung.csv")
+    by_value = {option.value: option for option in report.prio_values}
+
+    assert by_value["a"].rows == 2
+    # Alpha ist schon bekannt, Gamma nicht.
+    assert by_value["a"].contacts == 1
+
+
+# --------------------------------------------------------------------------
+# Blacklist
+# --------------------------------------------------------------------------
+
+
+def test_every_imported_number_lands_on_the_blacklist():
+    result = _import()
+
+    assert result.blacklisted == 3
+
+    page = get_blacklist()
+    assert page.total == 3
+    assert {entry.betrieb for entry in page.entries} == {
+        "Erster Betrieb",
+        "Zweiter Betrieb",
+        "Dritter Betrieb",
+    }
+    assert all(entry.source is BlacklistSource.IMPORT for entry in page.entries)
+    assert all(entry.list_name == "Handwerker Herford" for entry in page.entries)
+
+
+def test_two_overlapping_lists_import_only_the_difference():
+    """Der Fall, um den es geht: zwei Auswertungen mit gemeinsamen Betrieben."""
+    _import()
+
+    second = _import(
+        _csv(
+            "Erster Betrieb;05221 111;Herford;;doppelt",
+            "Vierter Betrieb;05221 444;Löhne;;neu",
+        ),
+        name="Zweite Runde",
+    )
+
+    assert second.imported == 1
+    assert len(second.duplicates) == 1
+    assert "Erster Betrieb" in second.duplicates[0].reason
+
+
+def test_the_duplicate_reason_names_the_blacklist_when_the_list_is_gone():
+    """Eine Duplikatmeldung ohne den Ort des Originals ist nicht handlungsfähig."""
+    first = _import()
+    update_list(first.list_id, ListUpdateRequest(archived=True))
+
+    report = analyse_list(
+        _csv("Erster Betrieb;05221 111;Herford;;egal"), "zweite-runde.csv"
+    )
+
+    assert len(report.duplicates) == 1
+    assert "Handwerker Herford" in report.duplicates[0].reason
+
+
+def test_a_number_blocked_by_hand_never_enters_a_list():
+    add_blacklist_numbers(
+        BlacklistAddRequest(numbers="05221 222", note="Bestandskunde"),
+        created_by="chefin",
+    )
+
+    result = _import()
+
+    assert result.imported == 2
+    assert "von Hand gesperrt" in result.duplicates[0].reason
+    assert "Bestandskunde" in result.duplicates[0].reason
+
+
+def test_pasted_lines_may_carry_the_name_on_either_side():
+    """Eingefügt wird, was zur Hand ist — nicht eine feste Spaltenreihenfolge."""
+    result = add_blacklist_numbers(
+        BlacklistAddRequest(
+            numbers="05221 111\nZaunbau Müller;05221 222\n05221 333;Dachdecker Klein",
+            note="",
+        ),
+        created_by="chefin",
+    )
+
+    assert result.added == 3
+    by_key = {entry.telefon_key: entry.betrieb for entry in result.page.entries}
+    assert by_key["05221222"] == "Zaunbau Müller"
+    assert by_key["05221333"] == "Dachdecker Klein"
+    assert by_key["05221111"] == ""
+
+
+def test_pasted_lines_without_a_number_are_reported_not_swallowed():
+    result = add_blacklist_numbers(
+        BlacklistAddRequest(numbers="05221 111\nkeine Nummer", note=""),
+        created_by="chefin",
+    )
+
+    assert result.added == 1
+    assert len(result.skipped) == 1
+    assert result.skipped[0].line == 2
+
+
+def test_adding_a_number_twice_says_so_instead_of_counting_it():
+    add_blacklist_numbers(BlacklistAddRequest(numbers="05221 111"), created_by="chefin")
+
+    again = add_blacklist_numbers(
+        BlacklistAddRequest(numbers="+49 5221 111"), created_by="chefin"
+    )
+
+    assert again.added == 0
+    assert again.already_known == 1
+    assert again.page.total == 1
+
+
+def test_a_blacklist_csv_needs_only_the_phone_column():
+    result = import_blacklist(
+        "Telefon\r\n05221 111\r\n05221 222\r\n".encode("utf-8"),
+        created_by="chefin",
+    )
+
+    assert result.added == 2
+    assert get_blacklist().total == 2
+
+
+def test_a_blacklist_csv_without_a_phone_column_is_rejected():
+    with pytest.raises(CallListError, match="Telefonnummern"):
+        import_blacklist(
+            "Betrieb;Ort\r\nAlpha;Herford\r\n".encode("utf-8"), created_by="chefin"
+        )
+
+
+def test_releasing_a_number_lets_it_in_again():
+    first = _import()
+    update_list(first.list_id, ListUpdateRequest(archived=True))
+
+    remove_blacklist_entry(db.phone_key("05221 111"))
+
+    again = _import(_csv("Erster Betrieb;05221 111;Herford;;wieder"), name="Neu")
+    assert again.imported == 1
+
+
+def test_releasing_a_number_that_is_not_blocked_is_a_404():
+    with pytest.raises(CallListNotFoundError):
+        remove_blacklist_entry("05221999")
+
+
+def test_the_blacklist_search_finds_a_number_in_any_spelling():
+    _import()
+
+    assert get_blacklist(query="+49 5221 111").matched == 1
+    assert get_blacklist(query="Zweiter").matched == 1
+    assert get_blacklist(query="gibtsnicht").matched == 0
+    # `total` bleibt die Gesamtzahl, damit die Ansicht „3 von 3" zeigen kann.
+    assert get_blacklist(query="gibtsnicht").total == 3
+
+
+def test_the_blacklist_export_can_be_read_back_in():
+    _import()
+    exported = export_blacklist().buffer.getvalue()
+
+    delete_list(get_state().lists[0].id, force=True)
+    assert get_blacklist().total == 0
+
+    result = import_blacklist(exported, created_by="chefin")
+    assert result.added == 3

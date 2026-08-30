@@ -1,11 +1,17 @@
 import { computed, onScopeDispose, ref, shallowRef } from "vue";
 import axios from "axios";
 import {
+  addBlacklistNumbers,
   deleteList,
+  fetchBlacklist,
   fetchState,
+  importBlacklist,
   importList,
+  removeBlacklistEntry,
   submitOutcome,
   updateList,
+  type BlacklistMutation,
+  type BlacklistPage,
   type CallState,
   type OutcomePayload,
 } from "@/api/call_list.api";
@@ -51,6 +57,7 @@ export function useCallList() {
   const counters = computed(() => state.value?.counters ?? null);
   const outcomes = computed(() => state.value?.outcomes ?? []);
   const lists = computed(() => state.value?.lists ?? []);
+  const blacklistCount = computed(() => state.value?.blacklist_count ?? 0);
   const activeLists = computed(() => lists.value.filter((entry) => !entry.archived));
 
   /** Nichts fällig, aber etwas kommt zurück – der Unterschied zu „fertig". */
@@ -121,6 +128,68 @@ export function useCallList() {
 
   onScopeDispose(stopPolling);
 
+  /**
+   * Die Blacklist lebt neben dem Arbeitsstand, nicht darin.
+   *
+   * Sie kann zehntausende Nummern enthalten und wird geblättert – sie in
+   * `CallState` mitzuschicken hieße, sie bei jedem Poll erneut zu übertragen.
+   * Aus dem Stand kommt nur ihre Größe (`blacklistCount`).
+   */
+  const blacklist = ref<BlacklistPage | null>(null);
+  const blacklistQuery = ref("");
+  const isBlacklistLoading = ref(false);
+
+  /**
+   * Übernimmt eine Blacklist-Antwort und hält den Zähler im Stand nach.
+   *
+   * Ohne das zweite Stück zeigte die Überschrift bis zum nächsten Poll die
+   * alte Zahl – direkt neben der Liste, in der die Nummer schon fehlt.
+   */
+  function applyBlacklist(page: BlacklistPage) {
+    blacklist.value = page;
+    if (state.value) state.value = { ...state.value, blacklist_count: page.total };
+  }
+
+  async function loadBlacklist(options: { offset?: number } = {}) {
+    isBlacklistLoading.value = true;
+    try {
+      applyBlacklist(
+        await fetchBlacklist({
+          q: blacklistQuery.value.trim(),
+          offset: options.offset ?? 0,
+        }),
+      );
+    } catch (e) {
+      console.error(e);
+      errorMessage.value = readDetail(e, "Die Blacklist konnte nicht geladen werden.");
+    } finally {
+      isBlacklistLoading.value = false;
+    }
+  }
+
+  /** Sperren – von Hand oder per CSV. Beide liefern dieselbe Auskunft zurück. */
+  async function blockNumbers(
+    action: () => Promise<BlacklistMutation>,
+  ): Promise<BlacklistMutation | null> {
+    isSaving.value = true;
+    errorMessage.value = null;
+    try {
+      const result = await action();
+      // Die Antwort bringt die erste Seite mit; eine laufende Suche wird
+      // dabei zurückgesetzt, weil die neuen Einträge sonst nicht sichtbar
+      // wären.
+      blacklistQuery.value = "";
+      applyBlacklist(result.page);
+      return result;
+    } catch (e) {
+      console.error(e);
+      errorMessage.value = readDetail(e, "Die Nummern wurden nicht gesperrt.");
+      return null;
+    } finally {
+      isSaving.value = false;
+    }
+  }
+
   /** Führt eine Mutation aus und übernimmt den zurückgegebenen Stand. */
   async function mutate(
     action: () => Promise<CallState>,
@@ -147,6 +216,10 @@ export function useCallList() {
     outcomes,
     lists,
     activeLists,
+    blacklist,
+    blacklistCount,
+    blacklistQuery,
+    isBlacklistLoading,
     isLoading,
     isSaving,
     isWaiting,
@@ -154,8 +227,34 @@ export function useCallList() {
     errorMessage,
 
     load,
+    loadBlacklist,
     startPolling,
     stopPolling,
+
+    addToBlacklist: (numbers: string, note: string) =>
+      blockNumbers(() => addBlacklistNumbers(numbers, note)),
+
+    uploadBlacklist: (file: File) => blockNumbers(() => importBlacklist(file)),
+
+    async releaseNumber(telefonKey: string) {
+      isSaving.value = true;
+      errorMessage.value = null;
+      try {
+        applyBlacklist(
+          await removeBlacklistEntry(telefonKey, {
+            q: blacklistQuery.value.trim(),
+            offset: blacklist.value?.offset ?? 0,
+          }),
+        );
+        return true;
+      } catch (e) {
+        console.error(e);
+        errorMessage.value = readDetail(e, "Die Nummer wurde nicht freigegeben.");
+        return false;
+      } finally {
+        isSaving.value = false;
+      }
+    },
 
     recordOutcome: (contactId: string, payload: OutcomePayload) =>
       mutate(() => submitOutcome(contactId, payload), "Das Ergebnis wurde nicht gespeichert."),
@@ -164,11 +263,11 @@ export function useCallList() {
      * Import läuft nicht über `mutate`: der Aufrufer braucht die
      * übersprungenen Zeilen aus der Antwort und nicht nur den neuen Stand.
      */
-    async uploadList(file: File, name: string) {
+    async uploadList(file: File, name: string, prios?: string[]) {
       isSaving.value = true;
       errorMessage.value = null;
       try {
-        const result = await importList(file, name);
+        const result = await importList(file, name, prios);
         state.value = result.state;
         return result;
       } catch (e) {

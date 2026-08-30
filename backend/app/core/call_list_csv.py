@@ -490,3 +490,161 @@ def _too_long(values: dict[str, str]) -> str | None:
             )
 
     return None
+
+
+# --------------------------------------------------------------------------
+# Blacklist-Import
+# --------------------------------------------------------------------------
+
+#: Für die Blacklist reicht die Nummer. „Betrieb" wird mitgenommen, wenn die
+#: Datei ihn hat, denn eine Sperrliste aus reinen Ziffern kann später niemand
+#: mehr einordnen — Pflicht ist er aber nicht: die typische Quelle ist ein
+#: Auszug aus dem CRM mit einer einzigen Spalte.
+BLACKLIST_REQUIRED_FIELDS = ("telefon",)
+
+BLACKLIST_HEADER_EXAMPLE = "Telefon;Betrieb"
+
+#: Eine Sperrliste darf deutlich länger sein als eine Anrufliste: sie wird nie
+#: abtelefoniert, sondern nur nachgeschlagen.
+MAX_BLACKLIST_ROWS = 50_000
+
+
+@dataclass(frozen=True)
+class BlacklistRecord:
+    """Eine zu sperrende Nummer aus einer Datei."""
+
+    line: int
+    telefon: str
+    betrieb: str
+
+
+@dataclass
+class BlacklistCsvResult:
+    encoding: str
+    delimiter: str
+    records: list[BlacklistRecord]
+    skipped: list[SkippedRow] = field(default_factory=list)
+    data_rows: int = 0
+
+    @property
+    def encoding_label(self) -> str:
+        return encoding_label(self.encoding)
+
+    @property
+    def delimiter_label(self) -> str:
+        return delimiter_label(self.delimiter)
+
+
+def parse_blacklist_csv(data: bytes) -> BlacklistCsvResult:
+    """Eine Sperrliste einlesen — dieselben Primitiven, weniger Pflichtspalten.
+
+    Bewusst nicht `parse_csv` mit einer Ausnahme: dort ist „Betrieb" Pflicht,
+    weil ein Kontakt ohne Namen für den Anrufer wertlos ist. Für eine Sperre
+    ist er es nicht.
+    """
+    try:
+        return _parse_blacklist_csv(data)
+    except CallCsvError:
+        raise
+    except CsvImportError as exc:
+        raise CallCsvError(str(exc)) from exc
+
+
+def _parse_blacklist_csv(data: bytes) -> BlacklistCsvResult:
+    if not data:
+        raise CallCsvError("Die Datei ist leer. Bitte die CSV mit Daten hochladen.")
+
+    if len(data) > MAX_FILE_BYTES:
+        raise CallCsvError(
+            f"Die Datei ist größer als {MAX_FILE_BYTES // (1024 * 1024)} MB."
+        )
+
+    text, encoding = decode(data)
+    delimiter = detect_delimiter(text)
+
+    rows = read_rows(text, delimiter)
+    header = find_header(rows, example=BLACKLIST_HEADER_EXAMPLE)
+    normalised = normalised_header(header)
+    reject_duplicate_columns(normalised)
+
+    columns: dict[str, int] = {}
+    used: set[int] = set()
+
+    for field_name in ("telefon", "betrieb"):
+        for synonym in COLUMN_SYNONYMS[field_name]:
+            match = next(
+                (
+                    entry
+                    for entry in normalised
+                    if entry.key == synonym and entry.index not in used
+                ),
+                None,
+            )
+            if match is not None:
+                columns[field_name] = match.index
+                used.add(match.index)
+                break
+
+    if "telefon" not in columns:
+        found = ", ".join(f"„{entry.raw}“" for entry in normalised) or "keine"
+        raise CallCsvError(
+            "In der Datei fehlt die Spalte mit den Telefonnummern (z. B. "
+            f"„Telefon“, „Telefonnummer“, „Nummer“). Gefunden wurden: {found}."
+        )
+
+    records: list[BlacklistRecord] = []
+    skipped: list[SkippedRow] = []
+    data_rows = 0
+
+    for offset, row in enumerate(rows[1:]):
+        line = offset + 2
+
+        if not any(cell.strip() for cell in row):
+            continue
+
+        data_rows += 1
+
+        if data_rows > MAX_BLACKLIST_ROWS:
+            raise CallCsvError(
+                f"Die Datei enthält mehr als {MAX_BLACKLIST_ROWS} Zeilen."
+            )
+
+        telefon = _cell(row, columns["telefon"]).strip()[:MAX_NAME_CHARS]
+        betrieb = (
+            _cell(row, columns["betrieb"]).strip()[:MAX_NAME_CHARS]
+            if "betrieb" in columns
+            else ""
+        )
+
+        if not any(character.isdigit() for character in telefon):
+            skipped.append(
+                SkippedRow(
+                    line=line,
+                    reason=(
+                        f"„{telefon}“ enthält keine Ziffern und ist keine "
+                        "Telefonnummer."
+                        if telefon
+                        else "Keine Telefonnummer in dieser Zeile."
+                    ),
+                )
+            )
+            continue
+
+        records.append(BlacklistRecord(line=line, telefon=telefon, betrieb=betrieb))
+
+    if data_rows == 0:
+        raise CallCsvError("Die Datei enthält nur die Kopfzeile und keine Nummern.")
+
+    if not records:
+        raise CallCsvError(
+            "Keine einzige Zeile enthält eine Telefonnummer. Bitte prüfen, ob "
+            "die richtige Spalte gefüllt ist."
+        )
+
+    return BlacklistCsvResult(
+        encoding=encoding,
+        delimiter=delimiter,
+        records=records,
+        skipped=skipped,
+        data_rows=data_rows,
+    )
