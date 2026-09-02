@@ -9,6 +9,7 @@ export type ContactState =
   | "wiedervorlage"
   | "rueckruf"
   | "zugesagt"
+  | "kein_bedarf"
   | "abgelehnt"
   | "ungueltig";
 
@@ -25,6 +26,7 @@ export const CALL_OUTCOMES = [
   "zugesagt",
   "nicht_erreichbar",
   "rueckruf",
+  "kein_bedarf",
   "abgelehnt",
   "nummer_falsch",
 ] as const;
@@ -88,6 +90,8 @@ export interface CallCounters {
   offen: number;
   wiedervorlage: number;
   zugesagt: number;
+  /** Eigene Einschätzung „kein Bedarf" – kein Widerspruch des Betriebs. */
+  kein_bedarf: number;
   abgelehnt: number;
   ungueltig: number;
   zugesagt_ohne_email: number;

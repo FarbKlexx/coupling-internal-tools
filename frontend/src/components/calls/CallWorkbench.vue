@@ -94,6 +94,13 @@ function answer(choice: OutcomeChoice) {
         <p class="text-xl font-semibold leading-tight">{{ counters.abgelehnt }}</p>
       </div>
       <div
+        v-if="counters.kein_bedarf"
+        class="rounded-xl border light-grey-background light-grey-stroke px-4 py-3"
+      >
+        <p class="eyebrow">Kein Bedarf</p>
+        <p class="text-xl font-semibold leading-tight">{{ counters.kein_bedarf }}</p>
+      </div>
+      <div
         v-if="counters.ungueltig"
         class="rounded-xl border light-grey-background light-grey-stroke px-4 py-3"
       >

@@ -469,6 +469,9 @@ function formatDate(iso: string): string {
               {{ list.counters.wiedervorlage }} Wiedervorlage
             </span>
             <span class="text-emerald-400">{{ list.counters.zugesagt }} Zusagen</span>
+            <span v-if="list.counters.kein_bedarf">
+              {{ list.counters.kein_bedarf }} kein Bedarf
+            </span>
             <span v-if="list.counters.abgelehnt">{{ list.counters.abgelehnt }} abgelehnt</span>
             <span v-if="list.counters.ungueltig">
               {{ list.counters.ungueltig }} Nummer falsch

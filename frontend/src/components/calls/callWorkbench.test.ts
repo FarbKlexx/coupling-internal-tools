@@ -17,6 +17,7 @@ const counters: CallCounters = {
   offen: 3,
   wiedervorlage: 0,
   zugesagt: 0,
+  kein_bedarf: 0,
   abgelehnt: 0,
   ungueltig: 0,
   zugesagt_ohne_email: 0,

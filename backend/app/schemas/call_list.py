@@ -10,7 +10,7 @@ wird als eigene Zeile festgeschrieben, mit Zeitpunkt und Konto.
 Zwei Dinge fahren bewusst als *Daten* an das Frontend mit, nicht als Code:
 
 * `OUTCOMES` — die Knöpfe, die der Anrufer sieht, samt Beschriftung, Tonlage
-  und der Frage, ob ein Zeitpunkt dazugehört. Ein sechstes Ergebnis ist damit
+  und der Frage, ob ein Zeitpunkt dazugehört. Ein weiteres Ergebnis ist damit
   eine Änderung an dieser Datei, nicht an der Oberfläche.
 * die Zusatzspalten eines Kontakts (`extras`) — die Liste bringt mit, was in
   der CSV stand, in der Reihenfolge der Datei. Eine andere Liste braucht keinen
@@ -60,15 +60,22 @@ class ContactState(str, Enum):
     """Wo ein Kontakt steht. Gespeichert wird der Slug.
 
     `offen` und die beiden Wiedervorlage-Zustände sind der Vorrat, aus dem der
-    nächste Anruf kommt; die drei anderen sind endgültig — nicht technisch
+    nächste Anruf kommt; die übrigen sind endgültig — nicht technisch
     (ein Administrator kann eine Liste neu einlesen), sondern fachlich: bei
     `abgelehnt` darf niemand mehr anrufen oder schreiben.
+
+    `kein_bedarf` steht bewusst neben `abgelehnt` und nicht darin: es ist
+    unsere eigene Einschätzung (Blick auf die Webseite, Bestandskunde), kein
+    Widerspruch des Betriebs. Wer die beiden zusammenwirft, liest später einen
+    Widerspruch aus einer Zeile, in der niemand widersprochen hat — und genau
+    das soll das Protokoll nicht können.
     """
 
     OFFEN = "offen"
     WIEDERVORLAGE = "wiedervorlage"
     RUECKRUF = "rueckruf"
     ZUGESAGT = "zugesagt"
+    KEIN_BEDARF = "kein_bedarf"
     ABGELEHNT = "abgelehnt"
     UNGUELTIG = "ungueltig"
 
@@ -85,6 +92,7 @@ STATE_LABELS: dict[ContactState, str] = {
     ContactState.WIEDERVORLAGE: "Wiedervorlage",
     ContactState.RUECKRUF: "Rückruf vereinbart",
     ContactState.ZUGESAGT: "Zusage",
+    ContactState.KEIN_BEDARF: "kein Bedarf (eingeschätzt)",
     ContactState.ABGELEHNT: "abgelehnt",
     ContactState.UNGUELTIG: "Nummer unbrauchbar",
 }
@@ -96,6 +104,7 @@ class CallOutcome(str, Enum):
     ZUGESAGT = "zugesagt"
     NICHT_ERREICHBAR = "nicht_erreichbar"
     RUECKRUF = "rueckruf"
+    KEIN_BEDARF = "kein_bedarf"
     ABGELEHNT = "abgelehnt"
     NUMMER_FALSCH = "nummer_falsch"
 
@@ -106,9 +115,20 @@ OUTCOME_STATES: dict[CallOutcome, ContactState] = {
     CallOutcome.ZUGESAGT: ContactState.ZUGESAGT,
     CallOutcome.NICHT_ERREICHBAR: ContactState.WIEDERVORLAGE,
     CallOutcome.RUECKRUF: ContactState.RUECKRUF,
+    CallOutcome.KEIN_BEDARF: ContactState.KEIN_BEDARF,
     CallOutcome.ABGELEHNT: ContactState.ABGELEHNT,
     CallOutcome.NUMMER_FALSCH: ContactState.UNGUELTIG,
 }
+
+
+#: Ergebnisse, die den Anrufzähler des Kontakts *nicht* erhöhen. „Nummer
+#: falsch" ist ein Fund über die Liste, „kein Bedarf" eine Einschätzung, die
+#: meistens ohne Gespräch getroffen wird (Webseite, Bestandskunde) — beides
+#: sind keine Anrufversuche beim Betrieb, und `attempts` soll die Frage „wie
+#: oft habe ich es dort schon versucht?" beantworten.
+ATTEMPT_FREE_OUTCOMES: frozenset[CallOutcome] = frozenset(
+    {CallOutcome.NUMMER_FALSCH, CallOutcome.KEIN_BEDARF}
+)
 
 
 class OutcomeTone(str, Enum):
@@ -183,6 +203,18 @@ OUTCOMES: tuple[OutcomeInfo, ...] = (
         tone=OutcomeTone.NEUTRAL,
         time_input=TimeInput.NONE,
         resulting_state=ContactState.UNGUELTIG,
+    ),
+    OutcomeInfo(
+        id=CallOutcome.KEIN_BEDARF,
+        label="Kein Bedarf – eigene Einschätzung",
+        description=(
+            "Eigene Einschätzung des Anrufers, ohne Aussage des Betriebs – "
+            "etwa nach einem Blick auf die Webseite oder weil der Betrieb "
+            "schon Kunde ist. Der Grund gehört in die Anmerkung."
+        ),
+        tone=OutcomeTone.NEUTRAL,
+        time_input=TimeInput.NONE,
+        resulting_state=ContactState.KEIN_BEDARF,
     ),
     OutcomeInfo(
         id=CallOutcome.ABGELEHNT,
@@ -260,6 +292,9 @@ class CallCounters(BaseModel):
     offen: int
     wiedervorlage: int
     zugesagt: int
+    #: Von uns selbst als „kein Bedarf" eingeschätzt — bewusst getrennt von
+    #: `abgelehnt`, das ein Widerspruch des Betriebs ist.
+    kein_bedarf: int
     abgelehnt: int
     ungueltig: int
     #: Zusagen, zu denen keine Adresse bekannt ist. Genau die Zusagen, aus

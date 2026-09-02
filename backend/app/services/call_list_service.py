@@ -50,6 +50,7 @@ from app.core.call_list_csv import parse_blacklist_csv as parse_blacklist
 from app.core.call_list_csv import parse_csv as parse_call_csv
 from app.core.csv_utils import csv_rows_to_str
 from app.schemas.call_list import (
+    ATTEMPT_FREE_OUTCOMES,
     BLACKLIST_PAGE_SIZE,
     BLACKLIST_SOURCE_LABELS,
     CALLBACK_LEAD_MINUTES,
@@ -140,6 +141,7 @@ def _counters(
         offen=sum(due(state) for state in pool),
         wiedervorlage=sum(total(state) - due(state) for state in pool),
         zugesagt=total(ContactState.ZUGESAGT),
+        kein_bedarf=total(ContactState.KEIN_BEDARF),
         abgelehnt=total(ContactState.ABGELEHNT),
         ungueltig=total(ContactState.UNGUELTIG),
         zugesagt_ohne_email=db.promised_without_email(conn, list_id=list_id),
@@ -378,11 +380,10 @@ def _write_outcome(
         appointment_at=appointment_at,
         note=note,
         email=email,
-        # „Nummer falsch“ war kein Anrufversuch beim Betrieb, sondern ein Fund
-        # über die Liste.
+        # Nicht jedes Ergebnis ist ein Anrufversuch: siehe
+        # `ATTEMPT_FREE_OUTCOMES`.
         count_attempt=(
-            corrects_event_id is None
-            and request.outcome is not CallOutcome.NUMMER_FALSCH
+            corrects_event_id is None and request.outcome not in ATTEMPT_FREE_OUTCOMES
         ),
     )
 

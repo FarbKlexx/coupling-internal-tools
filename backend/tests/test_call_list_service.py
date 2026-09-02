@@ -13,6 +13,7 @@ import pytest
 from app.core import call_list_db as db
 from app.schemas.call_list import (
     CALLBACK_LEAD_MINUTES,
+    OUTCOMES,
     POOL_STATES,
     BlacklistAddRequest,
     BlacklistSource,
@@ -325,6 +326,49 @@ def test_a_wrong_number_does_not_count_as_an_attempt():
 
     assert row["attempts"] == 0
     assert row["state"] == ContactState.UNGUELTIG.value
+
+
+def test_no_demand_is_our_own_assessment_and_stays_out_of_the_refusals():
+    """„Kein Bedarf" ist eine Einschätzung, kein Widerspruch des Betriebs.
+
+    Beides in einen Zustand zu werfen hieße, später einen Widerspruch aus
+    einer Zeile zu lesen, in der niemand widersprochen hat. Und weil die
+    Einschätzung meistens ohne Gespräch fällt (Webseite, Bestandskunde), ist
+    sie auch kein Anrufversuch.
+    """
+    state = _import().state
+    contact_id = state.contact.id
+
+    after = _answer(
+        contact_id, CallOutcome.KEIN_BEDARF, note="hat schon eine neue Seite"
+    )
+
+    assert after.counters.kein_bedarf == 1
+    assert after.counters.abgelehnt == 0
+    assert after.counters.offen == 2
+    # Der Kontakt ist aus dem Vorrat, aber nicht als „abgelehnt" gebucht.
+    assert after.contact.id != contact_id
+
+    with db.connect() as conn:
+        row = db.find_contact(conn, contact_id)
+
+    assert row["state"] == ContactState.KEIN_BEDARF.value
+    assert row["attempts"] == 0
+
+    # Und die Einschätzung samt Grund steht im Protokoll.
+    entry = _latest_decision()
+    assert entry.outcome is CallOutcome.KEIN_BEDARF
+    assert entry.note == "hat schon eine neue Seite"
+
+
+def test_a_contact_without_demand_is_not_in_the_promised_export():
+    """Kein Bedarf heißt: es geht keine E-Mail hinaus."""
+    state = _import().state
+    _answer(state.contact.id, CallOutcome.KEIN_BEDARF)
+
+    text = export_promised().buffer.getvalue().decode("utf-8-sig")
+
+    assert "Erster Betrieb" not in text
 
 
 def test_an_unreachable_contact_leaves_the_counter_and_comes_back_later():
@@ -791,7 +835,7 @@ def test_without_any_list_there_is_nothing_to_do_and_that_is_not_an_error():
     assert state.counters.offen == 0
     assert state.next_due_at is None
     # Die Knöpfe kommen trotzdem mit — das Frontend baut seine Oberfläche daraus.
-    assert len(state.outcomes) == 5
+    assert len(state.outcomes) == len(OUTCOMES)
 
 
 def test_when_everything_is_deferred_the_state_says_when_it_comes_back():

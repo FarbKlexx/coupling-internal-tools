@@ -49,6 +49,7 @@ const ICONS: Record<CallOutcome, string> = {
   zugesagt: "mark_email_read",
   nicht_erreichbar: "phone_missed",
   rueckruf: "event",
+  kein_bedarf: "do_not_disturb_on",
   abgelehnt: "block",
   nummer_falsch: "wrong_location",
 };
