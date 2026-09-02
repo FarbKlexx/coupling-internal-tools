@@ -36,6 +36,12 @@ CALLBACK_LEAD_MINUTES = 15
 MIN_SNOOZE_MINUTES = 5
 MAX_SNOOZE_MINUTES = 90 * 24 * 60
 
+#: Seitengröße der Entscheidungsliste unter dem Arbeitsplatz. Absichtlich
+#: klein: darin wird der eigene Fehlklick von eben gesucht, nicht der Anruf von
+#: vorletzter Woche — dafür gibt es den Protokoll-Export.
+DECISION_PAGE_SIZE = 20
+MAX_DECISION_PAGE_SIZE = 100
+
 # Seitengröße der Blacklist-Ansicht. Sie kann zehntausende Nummern enthalten,
 # also wird geblättert statt alles zu schicken.
 BLACKLIST_PAGE_SIZE = 50
@@ -409,6 +415,57 @@ class ListImportResponse(BaseModel):
     prio_skipped: int = 0
     #: Nummern, die dieser Import neu gesperrt hat.
     blacklisted: int = 0
+
+
+# --------------------------------------------------------------------------
+# Entscheidungen nachträglich richtigstellen
+# --------------------------------------------------------------------------
+
+
+class CallDecision(BaseModel):
+    """Eine getroffene Entscheidung, wie sie in der Liste unter dem
+    Arbeitsplatz steht.
+
+    Dieselbe Zeile wie im Protokoll, nur um das ergänzt, was die Oberfläche
+    braucht, um zu entscheiden, ob sich daran noch etwas ändern lässt — sonst
+    müsste sie pro Zeile nachfragen.
+    """
+
+    event_id: int
+    contact_id: str
+    occurred_at: str
+    username: str
+    outcome: CallOutcome
+    outcome_label: str
+    betrieb: str
+    telefon: str
+    list_name: str
+    note: str
+    email: str
+    due_at: str | None
+    appointment_at: str | None
+    #: Zustand, in dem der Kontakt *jetzt* steht.
+    state: ContactState
+    state_label: str
+    #: Diese Zeile stellt eine frühere richtig.
+    corrects_event_id: int | None
+    #: Diese Zeile wurde später selbst richtiggestellt — sie bleibt sichtbar,
+    #: aber durchgestrichen. Ein stillschweigend verschwundener Eintrag wäre
+    #: genau die Sorte Protokoll, die als Nachweis nichts taugt.
+    corrected: bool
+    #: Ob sich hier noch etwas ändern lässt.
+    correctable: bool
+    #: Warum nicht — leer, solange `correctable` wahr ist.
+    locked_reason: str = ""
+
+
+class CallDecisionPage(BaseModel):
+    """Ein Ausschnitt der Entscheidungsliste, jüngste zuerst."""
+
+    entries: list[CallDecision]
+    total: int
+    offset: int
+    limit: int
 
 
 # --------------------------------------------------------------------------

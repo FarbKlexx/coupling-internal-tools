@@ -2,9 +2,14 @@
 
 Zwei Gruppen von Endpunkten an einem Router:
 
-* **Anrufen** — `GET /telefonakquise/state` und
-  `POST /telefonakquise/contacts/{id}/outcome`. Beide antworten mit dem ganzen
-  Arbeitsstand, so wie das Kanban-Board mit dem ganzen Board antwortet.
+* **Anrufen** — `GET /telefonakquise/state`,
+  `POST /telefonakquise/contacts/{id}/outcome` sowie die Entscheidungsliste
+  (`GET /telefonakquise/decisions`) und ihre Richtigstellung
+  (`POST /telefonakquise/decisions/{event_id}/correct`). Alle drei
+  schreibenden Wege antworten mit dem ganzen Arbeitsstand, so wie das
+  Kanban-Board mit dem ganzen Board antwortet. Die Richtigstellung hängt
+  bewusst **nicht** an `require_admin`: der Fehlklick passiert dem, der
+  telefoniert.
 * **Verwalten** — Import, Übersicht, Archivieren, Löschen, Ausgaben. Diese
   Endpunkte tragen zusätzlich `Depends(require_admin)`.
 
@@ -31,10 +36,13 @@ from app.api.deps import CurrentUser, current_user, require_admin
 from app.schemas.access import Page
 from app.schemas.call_list import (
     BLACKLIST_PAGE_SIZE,
+    DECISION_PAGE_SIZE,
     MAX_BLACKLIST_PAGE_SIZE,
+    MAX_DECISION_PAGE_SIZE,
     BlacklistAddRequest,
     BlacklistMutationResponse,
     BlacklistPage,
+    CallDecisionPage,
     CallState,
     ListAnalyseResponse,
     ListImportResponse,
@@ -48,11 +56,13 @@ from app.services.call_list_service import (
     CallListNotFoundError,
     add_blacklist_numbers,
     analyse_list,
+    correct_outcome,
     delete_list,
     export_blacklist,
     export_promised,
     export_protocol,
     get_blacklist,
+    get_decisions,
     get_state,
     import_blacklist,
     import_list,
@@ -109,6 +119,45 @@ def submit_outcome(
     try:
         return record_outcome(
             contact_id, request, user_id=user.id, username=user.username
+        )
+    except CallListError as exc:
+        raise _fail(exc) from exc
+
+
+@router.get("/decisions", response_model=CallDecisionPage)
+def read_decisions(
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=DECISION_PAGE_SIZE, ge=1, le=MAX_DECISION_PAGE_SIZE),
+    _: CurrentUser = Depends(current_user),
+) -> CallDecisionPage:
+    """Die zuletzt eingetragenen Entscheidungen, jüngste zuerst.
+
+    Geblättert und deshalb nicht Teil von `CallState`: der Arbeitsstand wird
+    alle 30 Sekunden geholt.
+    """
+    return get_decisions(offset=offset, limit=limit)
+
+
+@router.post("/decisions/{event_id}/correct", response_model=CallState)
+def correct_decision(
+    event_id: int,
+    request: OutcomeRequest,
+    user: CurrentUser = Depends(current_user),
+) -> CallState:
+    """Eine eingetragene Entscheidung richtigstellen.
+
+    Kein `require_admin`: wer anrufen darf, darf seinen Fehlklick auch wieder
+    geradeziehen. Überschrieben wird dabei nichts — die Korrektur ist eine
+    neue Protokollzeile, und wer sie eingetragen hat, kommt wie beim Anruf
+    selbst aus der Sitzung.
+
+    Antwortet mit dem ganzen Arbeitsstand, nicht mit der Entscheidungsliste:
+    eine Korrektur kann den Betrieb zurück in den Vorrat holen, und *das* ist
+    das Ergebnis, das sofort stimmen muss.
+    """
+    try:
+        return correct_outcome(
+            event_id, request, user_id=user.id, username=user.username
         )
     except CallListError as exc:
         raise _fail(exc) from exc

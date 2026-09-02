@@ -184,6 +184,48 @@ export interface ListImport {
   blacklisted: number;
 }
 
+/**
+ * Eine bereits eingetragene Entscheidung, wie sie in der Liste unter dem
+ * Arbeitsplatz steht.
+ *
+ * Ob sich daran noch etwas ändern lässt, entscheidet das Backend und kommt als
+ * `correctable` mit – dieselbe Prüfung, die die Korrektur gleich noch einmal
+ * macht. Die Oberfläche darf sie nicht selbst nachbauen, sonst zeigt sie
+ * irgendwann einen Knopf, der 400 antwortet.
+ */
+export interface CallDecision {
+  event_id: number;
+  contact_id: string;
+  occurred_at: string;
+  username: string;
+  outcome: CallOutcome;
+  outcome_label: string;
+  betrieb: string;
+  telefon: string;
+  list_name: string;
+  note: string;
+  email: string;
+  due_at: string | null;
+  appointment_at: string | null;
+  /** Zustand, in dem der Betrieb *jetzt* steht. */
+  state: ContactState;
+  state_label: string;
+  /** Diese Zeile stellt eine frühere richtig. */
+  corrects_event_id: number | null;
+  /** Diese Zeile wurde später selbst richtiggestellt – sie bleibt sichtbar. */
+  corrected: boolean;
+  correctable: boolean;
+  /** Warum nicht – leer, solange `correctable` wahr ist. */
+  locked_reason: string;
+}
+
+export interface CallDecisionPage {
+  entries: CallDecision[];
+  total: number;
+  offset: number;
+  limit: number;
+}
+
 /** Woher eine Sperre stammt. Spiegel von `BlacklistSource` im Backend. */
 export type BlacklistSource = "import" | "manuell";
 
@@ -233,6 +275,38 @@ export async function submitOutcome(
 ): Promise<CallState> {
   const response = await http.post<CallState>(
     `/telefonakquise/contacts/${contactId}/outcome`,
+    payload,
+  );
+  return response.data;
+}
+
+/**
+ * Die zuletzt eingetragenen Entscheidungen, jüngste zuerst.
+ *
+ * Eigener Aufruf und nicht Teil von `CallState`: die Liste wird geblättert,
+ * und der Arbeitsstand wird alle 30 Sekunden geholt.
+ */
+export async function fetchDecisions(params: {
+  offset?: number;
+  limit?: number;
+}): Promise<CallDecisionPage> {
+  const response = await http.get<CallDecisionPage>("/telefonakquise/decisions", { params });
+  return response.data;
+}
+
+/**
+ * Stellt eine eingetragene Entscheidung richtig.
+ *
+ * Überschreibt nichts: das Backend hängt eine neue Protokollzeile an, die auf
+ * die falsche zeigt. Antwortet deshalb mit dem ganzen Arbeitsstand – eine
+ * Korrektur kann den Betrieb zurück in den Vorrat holen.
+ */
+export async function correctDecision(
+  eventId: number,
+  payload: OutcomePayload,
+): Promise<CallState> {
+  const response = await http.post<CallState>(
+    `/telefonakquise/decisions/${eventId}/correct`,
     payload,
   );
   return response.data;

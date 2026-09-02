@@ -27,11 +27,13 @@ from app.services.call_list_service import (
     CallListNotFoundError,
     add_blacklist_numbers,
     analyse_list,
+    correct_outcome,
     delete_list,
     export_blacklist,
     export_promised,
     export_protocol,
     get_blacklist,
+    get_decisions,
     get_state,
     import_blacklist,
     import_list,
@@ -73,6 +75,20 @@ def _answer(contact_id: str, outcome: CallOutcome, **kwargs):
         user_id="u1",
         username="anruferin",
     )
+
+
+def _correct(event_id: int, outcome: CallOutcome, **kwargs):
+    return correct_outcome(
+        event_id,
+        OutcomeRequest(outcome=outcome, **kwargs),
+        user_id="u1",
+        username="anruferin",
+    )
+
+
+def _latest_decision():
+    """Die zuletzt eingetragene Entscheidung — die, die man gerade verklickt hat."""
+    return get_decisions().entries[0]
 
 
 def _in(minutes: int) -> str:
@@ -464,6 +480,181 @@ def test_an_unknown_contact_is_a_404():
 
     with pytest.raises(CallListNotFoundError):
         _answer("gibt-es-nicht", CallOutcome.ZUGESAGT)
+
+
+# ------------------------------
+# Richtigstellen
+# ------------------------------
+
+
+def test_a_misclick_can_be_corrected_afterwards():
+    """Der Fall, für den es das gibt: falscher Knopf, richtige Antwort."""
+    state = _import().state
+    _answer(state.contact.id, CallOutcome.ABGELEHNT)
+
+    assert get_state().counters.abgelehnt == 1
+
+    after = _correct(_latest_decision().event_id, CallOutcome.ZUGESAGT, email="a@b.de")
+
+    assert after.counters.abgelehnt == 0
+    assert after.counters.zugesagt == 1
+    assert after.counters.zugesagt_ohne_email == 0
+
+
+def test_a_correction_leaves_the_wrong_entry_standing():
+    """Richtiggestellt wird durch Anhängen, nie durch Überschreiben.
+
+    Das Protokoll ist der Nachweis der Einwilligung; eines, das sich
+    nachträglich glattziehen lässt, belegt nichts.
+    """
+    state = _import().state
+    contact_id = state.contact.id
+    _answer(contact_id, CallOutcome.ZUGESAGT, note="klang begeistert")
+
+    _correct(
+        _latest_decision().event_id, CallOutcome.ABGELEHNT, note="war der falsche Knopf"
+    )
+
+    with db.connect() as conn:
+        events = db.events_of_contact(conn, contact_id)
+
+    assert [event["outcome"] for event in events] == ["abgelehnt", "zugesagt"]
+    # Die alte Zeile steht unverändert da …
+    assert events[1]["note"] == "klang begeistert"
+    assert events[1]["corrects_event_id"] is None
+    # … und die neue zeigt auf sie.
+    assert events[0]["corrects_event_id"] == events[1]["id"]
+
+    protocol = export_protocol().buffer.getvalue().decode("utf-8-sig")
+    assert "klang begeistert" in protocol
+    assert "war der falsche Knopf" in protocol
+    assert "Richtigstellung von" in protocol
+
+
+def test_a_correction_does_not_count_as_a_second_call():
+    """Dieselbe Anwahl, anders eingeordnet — kein zweiter Versuch."""
+    state = _import().state
+    contact_id = state.contact.id
+    _answer(contact_id, CallOutcome.ZUGESAGT)
+
+    _correct(_latest_decision().event_id, CallOutcome.ABGELEHNT)
+
+    with db.connect() as conn:
+        assert db.find_contact(conn, contact_id)["attempts"] == 1
+
+
+def test_a_correction_can_put_a_contact_back_into_the_pool():
+    """Aus „abgelehnt" wieder „muss ich nochmal anrufen"."""
+    state = _import(_csv("Einziger;05221 111;Herford;;egal")).state
+    contact_id = state.contact.id
+
+    after = _answer(contact_id, CallOutcome.ABGELEHNT)
+    assert after.contact is None
+
+    back = _correct(
+        _latest_decision().event_id, CallOutcome.NICHT_ERREICHBAR, due_at=_in(-1)
+    )
+
+    assert back.contact is not None
+    assert back.contact.id == contact_id
+    assert back.counters.abgelehnt == 0
+
+
+def test_a_correction_is_itself_correctable():
+    """Auch der zweite Klick kann danebengehen."""
+    state = _import().state
+    _answer(state.contact.id, CallOutcome.ZUGESAGT)
+
+    _correct(_latest_decision().event_id, CallOutcome.ABGELEHNT)
+    _correct(_latest_decision().event_id, CallOutcome.NUMMER_FALSCH)
+
+    assert get_state().counters.ungueltig == 1
+    assert _latest_decision().outcome is CallOutcome.NUMMER_FALSCH
+
+
+def test_only_the_latest_entry_of_a_contact_can_be_corrected():
+    """Eine ältere Zeile richtigzustellen wäre eine Frage ohne Antwort.
+
+    Gilt danach die Korrektur oder das, was zwischenzeitlich eingetragen
+    wurde? Deshalb gar nicht erst zulassen.
+    """
+    state = _import(_csv("Einziger;05221 111;Herford;;egal")).state
+    contact_id = state.contact.id
+
+    _answer(contact_id, CallOutcome.NICHT_ERREICHBAR, due_at=_in(-5))
+    older_id = _latest_decision().event_id
+    _answer(contact_id, CallOutcome.ZUGESAGT)
+
+    older = next(
+        entry for entry in get_decisions().entries if entry.event_id == older_id
+    )
+    assert older.correctable is False
+    assert "neuere Eintragung" in older.locked_reason
+
+    with pytest.raises(CallListError, match="jüngste"):
+        _correct(older_id, CallOutcome.ABGELEHNT)
+
+
+def test_an_unknown_entry_is_a_404():
+    _import()
+
+    with pytest.raises(CallListNotFoundError):
+        _correct(9999, CallOutcome.ZUGESAGT)
+
+
+def test_a_correction_on_an_archived_list_is_refused_with_a_way_out():
+    state = _import().state
+    _answer(state.contact.id, CallOutcome.ZUGESAGT)
+    event_id = _latest_decision().event_id
+
+    update_list(get_state().lists[0].id, ListUpdateRequest(archived=True))
+
+    decision = get_decisions().entries[0]
+    assert decision.correctable is False
+    assert "archiviert" in decision.locked_reason
+
+    with pytest.raises(CallListError, match="wieder aktiv schalten"):
+        _correct(event_id, CallOutcome.ABGELEHNT)
+
+
+def test_the_decision_list_is_newest_first_and_marks_what_was_corrected():
+    state = _import().state
+    first = state.contact.id
+    _answer(first, CallOutcome.ZUGESAGT)
+    second = get_state().contact.id
+    _answer(second, CallOutcome.ABGELEHNT)
+
+    _correct(
+        _latest_decision().event_id, CallOutcome.NICHT_ERREICHBAR, snooze_minutes=60
+    )
+
+    page = get_decisions()
+
+    assert page.total == 3
+    assert [entry.outcome.value for entry in page.entries] == [
+        "nicht_erreichbar",
+        "abgelehnt",
+        "zugesagt",
+    ]
+    # Die richtiggestellte Zeile verschwindet nicht, sie wird markiert.
+    assert page.entries[1].corrected is True
+    assert page.entries[1].correctable is False
+    assert page.entries[0].corrects_event_id == page.entries[1].event_id
+    # Die Zeile eines anderen Betriebs bleibt änderbar.
+    assert page.entries[2].correctable is True
+    assert page.entries[2].betrieb == "Erster Betrieb"
+
+
+def test_the_decision_list_pages():
+    state = _import().state
+    _answer(state.contact.id, CallOutcome.ZUGESAGT)
+    _answer(get_state().contact.id, CallOutcome.ZUGESAGT)
+
+    page = get_decisions(offset=1, limit=1)
+
+    assert page.total == 2
+    assert len(page.entries) == 1
+    assert page.entries[0].betrieb == "Erster Betrieb"
 
 
 # ------------------------------
@@ -916,3 +1107,50 @@ def test_the_blacklist_export_can_be_read_back_in():
 
     result = import_blacklist(exported, created_by="chefin")
     assert result.added == 3
+
+
+# ------------------------------
+# Schema
+# ------------------------------
+
+
+def test_a_database_from_before_the_corrections_gets_the_new_column():
+    """`CREATE TABLE IF NOT EXISTS` fasst eine vorhandene Tabelle nicht an.
+
+    In Produktion liegt `calls.db` auf einem Volume und überlebt jeden Build —
+    ohne das Nachziehen der Spalte liefe die Anwendung dort gegen ein Schema
+    von gestern, und zwar genau bei der Tabelle, die den Nachweis trägt.
+    """
+    with db.connect() as conn:
+        conn.executescript(
+            "DROP TABLE events;"
+            "CREATE TABLE events ("
+            "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "  contact_id TEXT NOT NULL,"
+            "  list_id TEXT NOT NULL DEFAULT '',"
+            "  betrieb TEXT NOT NULL DEFAULT '',"
+            "  telefon TEXT NOT NULL DEFAULT '',"
+            "  occurred_at TEXT NOT NULL,"
+            "  user_id TEXT NOT NULL DEFAULT '',"
+            "  username TEXT NOT NULL DEFAULT '',"
+            "  outcome TEXT NOT NULL,"
+            "  note TEXT NOT NULL DEFAULT '',"
+            "  email TEXT NOT NULL DEFAULT '',"
+            "  due_at TEXT,"
+            "  appointment_at TEXT"
+            ");"
+            "INSERT INTO events (contact_id, occurred_at, outcome, note)"
+            " VALUES ('k1', '2026-01-01T09:00:00Z', 'zugesagt', 'alter Eintrag');"
+        )
+
+    db.init_schema()
+
+    with db.connect() as conn:
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(events)")}
+        row = conn.execute("SELECT * FROM events").fetchone()
+
+    assert "corrects_event_id" in columns
+    # Der alte Eintrag steht noch da — eine Migration, die das Protokoll
+    # kostet, wäre teurer als die fehlende Spalte.
+    assert row["note"] == "alter Eintrag"
+    assert row["corrects_event_id"] is None

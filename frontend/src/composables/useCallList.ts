@@ -2,8 +2,10 @@ import { computed, onScopeDispose, ref, shallowRef } from "vue";
 import axios from "axios";
 import {
   addBlacklistNumbers,
+  correctDecision,
   deleteList,
   fetchBlacklist,
+  fetchDecisions,
   fetchState,
   importBlacklist,
   importList,
@@ -12,6 +14,7 @@ import {
   updateList,
   type BlacklistMutation,
   type BlacklistPage,
+  type CallDecisionPage,
   type CallState,
   type OutcomePayload,
 } from "@/api/call_list.api";
@@ -25,6 +28,15 @@ import {
  * dabei ohne Bedeutung.
  */
 const POLL_INTERVAL_MS = 30_000;
+
+/**
+ * Wie viele Entscheidungen die Liste unter dem Arbeitsplatz zeigt, und wie
+ * weit „weitere anzeigen" sie höchstens aufzieht. Spiegel von
+ * `DECISION_PAGE_SIZE`/`MAX_DECISION_PAGE_SIZE` im Backend – darüber hinaus
+ * ist der Protokoll-Export das richtige Werkzeug.
+ */
+const DECISION_PAGE_SIZE = 20;
+const MAX_DECISIONS = 100;
 
 /** Fehlermeldung aus einer JSON-Fehlerantwort des Backends lesen. */
 function readDetail(error: unknown, fallback: string): string {
@@ -98,7 +110,12 @@ export function useCallList() {
 
     try {
       const next = await fetchState();
-      if (next.revision !== state.value?.revision) state.value = next;
+      if (next.revision !== state.value?.revision) {
+        state.value = next;
+        // Jemand anders hat etwas eingetragen – dann stimmt auch die Liste
+        // darunter nicht mehr.
+        void loadDecisions();
+      }
     } catch (e) {
       // Ein fehlgeschlagener Poll ist kein Fehler, den der Nutzer sehen muss –
       // der nächste Tick versucht es erneut.
@@ -190,6 +207,36 @@ export function useCallList() {
     }
   }
 
+  /**
+   * Die zuletzt eingetragenen Entscheidungen.
+   *
+   * Wie die Blacklist neben dem Arbeitsstand und nicht darin: sie wird
+   * geblättert, und der Stand wird alle 30 Sekunden geholt. „Weitere anzeigen"
+   * vergrößert bewusst das Fenster statt zu blättern – gesucht wird darin der
+   * eigene Fehlklick von vorhin, und der steht selten auf Seite 2.
+   */
+  const decisions = shallowRef<CallDecisionPage | null>(null);
+  const isDecisionsLoading = ref(false);
+  const decisionLimit = ref(DECISION_PAGE_SIZE);
+
+  async function loadDecisions() {
+    isDecisionsLoading.value = true;
+    try {
+      decisions.value = await fetchDecisions({ limit: decisionLimit.value });
+    } catch (e) {
+      // Kein Fehler, den der Anrufer sehen muss: die Liste ist eine Zugabe,
+      // der Arbeitsplatz darüber funktioniert ohne sie.
+      console.debug("Entscheidungsliste konnte nicht geladen werden", e);
+    } finally {
+      isDecisionsLoading.value = false;
+    }
+  }
+
+  function loadMoreDecisions() {
+    decisionLimit.value = Math.min(decisionLimit.value + DECISION_PAGE_SIZE, MAX_DECISIONS);
+    void loadDecisions();
+  }
+
   /** Führt eine Mutation aus und übernimmt den zurückgegebenen Stand. */
   async function mutate(
     action: () => Promise<CallState>,
@@ -199,6 +246,10 @@ export function useCallList() {
     errorMessage.value = null;
     try {
       state.value = await action();
+      // Jede Eintragung erscheint sofort in der Liste darunter – sonst müsste
+      // man auf den nächsten Poll warten, um den Fehlklick zu finden, den man
+      // gerade gemacht hat.
+      void loadDecisions();
       return true;
     } catch (e) {
       console.error(e);
@@ -220,6 +271,8 @@ export function useCallList() {
     blacklistCount,
     blacklistQuery,
     isBlacklistLoading,
+    decisions,
+    isDecisionsLoading,
     isLoading,
     isSaving,
     isWaiting,
@@ -228,6 +281,8 @@ export function useCallList() {
 
     load,
     loadBlacklist,
+    loadDecisions,
+    loadMoreDecisions,
     startPolling,
     stopPolling,
 
@@ -258,6 +313,16 @@ export function useCallList() {
 
     recordOutcome: (contactId: string, payload: OutcomePayload) =>
       mutate(() => submitOutcome(contactId, payload), "Das Ergebnis wurde nicht gespeichert."),
+
+    /**
+     * Stellt eine bereits eingetragene Entscheidung richtig.
+     *
+     * Läuft über denselben Weg wie ein Anruf, weil das Backend auch hier mit
+     * dem ganzen Arbeitsstand antwortet: eine Korrektur kann den Betrieb
+     * zurück in den Vorrat holen, und dann steht er sofort wieder oben.
+     */
+    correctDecision: (eventId: number, payload: OutcomePayload) =>
+      mutate(() => correctDecision(eventId, payload), "Die Änderung wurde nicht gespeichert."),
 
     /**
      * Import läuft nicht über `mutate`: der Aufrufer braucht die

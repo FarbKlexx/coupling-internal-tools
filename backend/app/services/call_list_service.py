@@ -9,6 +9,13 @@ Zwei Rollen treffen hier aufeinander:
 * **Wer die Liste pflegt** (Administrator) lädt die CSV hoch, sieht die Zahlen
   pro Liste, legt Listen still und holt die Zusagen als Datei heraus.
 
+Beide dürfen eine bereits eingetragene Entscheidung richtigstellen — ein
+Fehlklick ist am Telefon der Normalfall, und wer ihn nicht beheben kann,
+schreibt ihn in einen Nachweis hinein. Richtiggestellt wird dabei nie durch
+Überschreiben: die Korrektur ist eine eigene Protokollzeile, die auf die
+falsche zeigt (`corrects_event_id`), und der Kontakt bekommt den Zustand der
+neuen Zeile.
+
 Wie beim Kanban-Board antwortet jeder schreibende Aufruf mit dem **ganzen**
 Arbeitsstand (`CallState`). Das sind ein paar Kilobyte und erspart die
 Buchhaltung darüber, ob der Zähler im Browser noch zu dem in der Datenbank
@@ -46,7 +53,9 @@ from app.schemas.call_list import (
     BLACKLIST_PAGE_SIZE,
     BLACKLIST_SOURCE_LABELS,
     CALLBACK_LEAD_MINUTES,
+    DECISION_PAGE_SIZE,
     MAX_BLACKLIST_PAGE_SIZE,
+    MAX_DECISION_PAGE_SIZE,
     MAX_EMAIL,
     MAX_LIST_NAME,
     MAX_PASTED_NUMBERS,
@@ -63,6 +72,8 @@ from app.schemas.call_list import (
     BlacklistSource,
     CallContact,
     CallCounters,
+    CallDecision,
+    CallDecisionPage,
     CallEventInfo,
     CallListInfo,
     CallOutcome,
@@ -334,6 +345,68 @@ def _validated_email(raw: str | None) -> str | None:
     return email
 
 
+def _write_outcome(
+    conn: sqlite3.Connection,
+    row: sqlite3.Row,
+    request: OutcomeRequest,
+    *,
+    user_id: str,
+    username: str,
+    corrects_event_id: int | None = None,
+) -> None:
+    """Zustand und Protokollzeile in einem Zug schreiben.
+
+    Beides zusammen oder gar nicht — ein Zustand ohne Protokollzeile wäre eine
+    Zusage, die niemand belegen kann. Muss innerhalb einer Transaktion laufen.
+
+    Dieselbe Stelle bedient den Anruf und seine Richtigstellung; `row` ist
+    beide Male der **Kontakt**. Der einzige Unterschied ist
+    `corrects_event_id`: es benennt die Zeile, die falsch war, und unterdrückt
+    den Anrufzähler — eine Korrektur ist kein zweiter Anruf, sondern derselbe,
+    anders eingeordnet.
+    """
+    email = _validated_email(request.email)
+    note = request.note.strip()
+    due_at, appointment_at = _resolve_times(request.outcome, request)
+    state = OUTCOME_STATES[request.outcome]
+
+    db.apply_outcome(
+        conn,
+        row["id"],
+        state=state.value,
+        due_at=due_at,
+        appointment_at=appointment_at,
+        note=note,
+        email=email,
+        # „Nummer falsch“ war kein Anrufversuch beim Betrieb, sondern ein Fund
+        # über die Liste.
+        count_attempt=(
+            corrects_event_id is None
+            and request.outcome is not CallOutcome.NUMMER_FALSCH
+        ),
+    )
+
+    db.insert_event(
+        conn,
+        contact_id=row["id"],
+        list_id=row["list_id"],
+        betrieb=row["betrieb"],
+        telefon=row["telefon"],
+        user_id=user_id,
+        username=username,
+        outcome=request.outcome.value,
+        note=note,
+        # Die Adresse, wie sie *nach* diesem Anruf gilt — das ist der Nachweis,
+        # für welche Adresse die Zustimmung erteilt wurde.
+        email=email if email is not None else row["email"],
+        due_at=due_at,
+        appointment_at=appointment_at,
+        corrects_event_id=corrects_event_id,
+    )
+
+    db.bump_revision(conn)
+
+
 def record_outcome(
     contact_id: str,
     request: OutcomeRequest,
@@ -341,18 +414,7 @@ def record_outcome(
     user_id: str,
     username: str,
 ) -> CallState:
-    """Ergebnis eines Anrufs festschreiben und den nächsten Kontakt liefern.
-
-    Zwei Schreibvorgänge in einer Transaktion: der Kontakt bekommt seinen neuen
-    Zustand, und das Protokoll bekommt seine Zeile. Beides zusammen oder gar
-    nicht — ein Zustand ohne Protokollzeile wäre eine Zusage, die niemand
-    belegen kann.
-    """
-    email = _validated_email(request.email)
-    note = request.note.strip()
-    due_at, appointment_at = _resolve_times(request.outcome, request)
-    state = OUTCOME_STATES[request.outcome]
-
+    """Ergebnis eines Anrufs festschreiben und den nächsten Kontakt liefern."""
     with db.connect() as conn:
         with db.transaction(conn):
             row = db.find_contact(conn, contact_id)
@@ -366,37 +428,150 @@ def record_outcome(
                     "neu laden."
                 )
 
-            db.apply_outcome(
-                conn,
-                contact_id,
-                state=state.value,
-                due_at=due_at,
-                appointment_at=appointment_at,
-                note=note,
-                email=email,
-                # „Nummer falsch“ war kein Anrufversuch beim Betrieb, sondern
-                # ein Fund über die Liste.
-                count_attempt=request.outcome is not CallOutcome.NUMMER_FALSCH,
-            )
+            _write_outcome(conn, row, request, user_id=user_id, username=username)
 
-            db.insert_event(
+        return _build_state(conn)
+
+
+# --------------------------------------------------------------------------
+# Entscheidungen nachträglich richtigstellen
+# --------------------------------------------------------------------------
+
+
+def _decision(row: sqlite3.Row) -> CallDecision:
+    """Eine Protokollzeile für die Liste unter dem Arbeitsplatz aufbereiten.
+
+    Ob sich daran noch etwas ändern lässt, entscheidet hier das Backend und
+    nicht die Oberfläche: es ist dieselbe Prüfung, die `correct_outcome`
+    gleich noch einmal macht — nur eben rechtzeitig, damit der Knopf gar nicht
+    erst erscheint.
+    """
+    outcome = CallOutcome(row["outcome"])
+    state = ContactState(row["contact_state"] or ContactState.OFFEN.value)
+    superseded = row["latest_event_id"] != row["id"]
+
+    if superseded:
+        reason = (
+            "Zu diesem Betrieb gibt es eine neuere Eintragung. Ändern lässt "
+            "sich immer nur die jüngste."
+        )
+    elif row["list_archived"]:
+        reason = "Die Liste ist archiviert."
+    else:
+        reason = ""
+
+    return CallDecision(
+        event_id=row["id"],
+        contact_id=row["contact_id"],
+        occurred_at=row["occurred_at"],
+        username=row["username"],
+        outcome=outcome,
+        outcome_label=next(info.label for info in OUTCOMES if info.id == outcome),
+        betrieb=row["betrieb"],
+        telefon=row["telefon"],
+        list_name=row["list_name"] or "",
+        note=row["note"],
+        email=row["email"],
+        due_at=row["due_at"],
+        appointment_at=row["appointment_at"],
+        state=state,
+        state_label=STATE_LABELS[state],
+        corrects_event_id=row["corrects_event_id"],
+        corrected=bool(row["correction_count"]),
+        correctable=not reason,
+        locked_reason=reason,
+    )
+
+
+def _decision_page(
+    conn: sqlite3.Connection, *, offset: int, limit: int
+) -> CallDecisionPage:
+    return CallDecisionPage(
+        entries=[
+            _decision(row) for row in db.recent_events(conn, limit=limit, offset=offset)
+        ],
+        total=db.events_total(conn),
+        offset=offset,
+        limit=limit,
+    )
+
+
+def get_decisions(
+    *, offset: int = 0, limit: int = DECISION_PAGE_SIZE
+) -> CallDecisionPage:
+    """Die zuletzt eingetragenen Entscheidungen.
+
+    Steht bewusst *neben* `CallState` und nicht darin: die Liste wird
+    geblättert, und der Arbeitsstand wird alle 30 Sekunden geholt — sie bei
+    jedem Poll mitzuschicken hieße, den Nachweis für ein Stück Anzeige immer
+    wieder zu übertragen. Grenzen werden geklemmt statt abgelehnt, wie bei der
+    Blacklist: das ist eine URL, keine Eingabe des Anwenders.
+    """
+    limit = max(1, min(limit, MAX_DECISION_PAGE_SIZE))
+    offset = max(0, offset)
+
+    with db.connect() as conn:
+        return _decision_page(conn, offset=offset, limit=limit)
+
+
+def correct_outcome(
+    event_id: int,
+    request: OutcomeRequest,
+    *,
+    user_id: str,
+    username: str,
+) -> CallState:
+    """Eine bereits eingetragene Entscheidung richtigstellen.
+
+    Absichtlich für **jeden**, der die Seite sehen darf, und nicht nur für
+    Administratoren: der Fehlklick passiert dem, der telefoniert, und er merkt
+    ihn in der Sekunde danach. Ihn dafür auf jemanden warten zu lassen heißt,
+    dass die falsche Angabe im Nachweis stehen bleibt — und ein Protokoll, das
+    bekannt Falsches enthält, ist als Nachweis weniger wert, nicht mehr.
+
+    Geändert wird trotzdem nichts: die alte Zeile bleibt Wort für Wort stehen,
+    die Korrektur kommt als neue Zeile daneben und nennt ihren Urheber. Wer
+    später prüft, sieht beides und wer wann was daraus gemacht hat.
+
+    Nur die **jüngste** Eintragung eines Betriebs lässt sich ändern. Sie allein
+    bestimmt seinen Zustand; eine ältere richtigzustellen würde eine Frage
+    aufwerfen, die niemand beantworten kann — gilt jetzt die Korrektur oder
+    das, was danach kam.
+    """
+    with db.connect() as conn:
+        with db.transaction(conn):
+            event = db.find_event(conn, event_id)
+
+            if event is None:
+                raise CallListNotFoundError("Diese Eintragung existiert nicht (mehr).")
+
+            if event["latest_event_id"] != event["id"]:
+                raise CallListError(
+                    f"Zu „{event['betrieb']}“ gibt es inzwischen eine neuere "
+                    "Eintragung. Ändern lässt sich immer nur die jüngste."
+                )
+
+            contact = db.find_contact(conn, event["contact_id"])
+
+            if contact is None:
+                raise CallListNotFoundError(
+                    "Der Betrieb zu dieser Eintragung existiert nicht mehr."
+                )
+
+            if contact["list_archived"]:
+                raise CallListError(
+                    f"Die Liste „{contact['list_name']}“ ist archiviert. Ein "
+                    "Administrator kann sie dafür wieder aktiv schalten."
+                )
+
+            _write_outcome(
                 conn,
-                contact_id=contact_id,
-                list_id=row["list_id"],
-                betrieb=row["betrieb"],
-                telefon=row["telefon"],
+                contact,
+                request,
                 user_id=user_id,
                 username=username,
-                outcome=request.outcome.value,
-                note=note,
-                # Die Adresse, wie sie *nach* diesem Anruf gilt — das ist der
-                # Nachweis, für welche Adresse die Zustimmung erteilt wurde.
-                email=email if email is not None else row["email"],
-                due_at=due_at,
-                appointment_at=appointment_at,
+                corrects_event_id=event["id"],
             )
-
-            db.bump_revision(conn)
 
         return _build_state(conn)
 
@@ -1134,6 +1309,11 @@ def export_protocol() -> CallListExport:
 
     Der Nachweis zum Mitnehmen: jede Zeile ein Anruf, mit Zeitpunkt, Konto und
     Ergebnis. Wird nur gelesen, nie zurückgespielt.
+
+    Richtigstellungen stehen als eigene Zeilen darin und nennen in der letzten
+    Spalte, welche Eintragung sie ersetzen. Die ersetzte bleibt stehen: eine
+    Korrektur, die ihre Vorgeschichte tilgt, wäre kein Nachweis mehr, sondern
+    eine Behauptung.
     """
     header = [
         "Zeitpunkt (UTC)",
@@ -1146,9 +1326,18 @@ def export_protocol() -> CallListExport:
         "Wiedervorlage",
         "Termin",
         "Anmerkung",
+        "Richtigstellung von",
     ]
 
     labels = {info.id.value: info.label for info in OUTCOMES}
+
+    def corrects(row: sqlite3.Row) -> str:
+        if not row["corrects_event_id"] or not row["corrects_occurred_at"]:
+            return ""
+
+        old = labels.get(row["corrects_outcome"], row["corrects_outcome"] or "")
+
+        return f"{row['corrects_occurred_at']} ({old})"
 
     with db.connect() as conn:
         rows = [
@@ -1163,6 +1352,7 @@ def export_protocol() -> CallListExport:
                 row["due_at"] or "",
                 row["appointment_at"] or "",
                 row["note"],
+                corrects(row),
             ]
             for row in db.all_events(conn)
         ]
@@ -1214,11 +1404,13 @@ __all__ = [
     "CallListNotFoundError",
     "add_blacklist_numbers",
     "analyse_list",
+    "correct_outcome",
     "delete_list",
     "export_blacklist",
     "export_promised",
     "export_protocol",
     "get_blacklist",
+    "get_decisions",
     "get_state",
     "import_blacklist",
     "import_list",

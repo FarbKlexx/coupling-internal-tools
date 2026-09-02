@@ -33,6 +33,19 @@
         @answer="recordOutcome"
       />
 
+      <!-- Steht bewusst *nicht* hinter `isAdmin`: der Fehlklick passiert dem,
+           der telefoniert, und ihn dafür auf einen Administrator warten zu
+           lassen hieße, dass die falsche Angabe so lange im Nachweis steht.
+           Das Backend hält den Endpunkt entsprechend nur hinter der Sitzung. -->
+      <CallDecisionLog
+        :page="decisions"
+        :outcomes="outcomes"
+        :is-loading="isDecisionsLoading"
+        :is-saving="isSaving"
+        :load-more="loadMoreDecisions"
+        @correct="correctDecision"
+      />
+
       <!-- Die Listenpflege liegt auf derselben Seite, ist aber nur für
            Administratoren sichtbar; durchgesetzt wird sie im Backend, das die
            Verwaltungsendpunkte hinter `require_admin` hält. -->
@@ -58,6 +71,7 @@
 
 <script setup lang="ts">
 import { onMounted } from "vue";
+import CallDecisionLog from "@/components/calls/CallDecisionLog.vue";
 import CallListManager from "@/components/calls/CallListManager.vue";
 import CallWorkbench from "@/components/calls/CallWorkbench.vue";
 import { useAuth } from "@/composables/useAuth";
@@ -76,6 +90,8 @@ const {
   blacklistCount,
   blacklistQuery,
   isBlacklistLoading,
+  decisions,
+  isDecisionsLoading,
   isLoading,
   isSaving,
   isWaiting,
@@ -83,8 +99,11 @@ const {
   errorMessage,
   load,
   loadBlacklist,
+  loadDecisions,
+  loadMoreDecisions,
   startPolling,
   recordOutcome,
+  correctDecision,
   uploadList,
   editList,
   removeList,
@@ -94,7 +113,9 @@ const {
 } = useCallList();
 
 onMounted(async () => {
-  await load();
+  // Nebeneinander: die Entscheidungsliste ist eine Zugabe und darf den
+  // Arbeitsplatz nicht aufhalten.
+  await Promise.all([load(), loadDecisions()]);
   // Der Poll holt fällige Wiedervorlagen von selbst herein – ohne ihn müsste
   // jemand die Seite neu laden, um zu sehen, dass wieder etwas zu tun ist.
   startPolling();

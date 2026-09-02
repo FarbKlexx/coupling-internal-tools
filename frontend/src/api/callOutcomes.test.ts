@@ -50,12 +50,12 @@ function backendOutcomes(): string[] {
   );
 }
 
-/** Die IDs, für die `CallWorkbench.vue` ein Symbol kennt. */
+/** Die IDs, für die `OutcomeChooser.vue` ein Symbol kennt. */
 function iconIds(): string[] {
-  const source = read("../components/calls/CallWorkbench.vue");
+  const source = read("../components/calls/OutcomeChooser.vue");
   const block = source.match(/const ICONS: Record<CallOutcome, string> = \{([\s\S]*?)\};/)?.[1];
 
-  expect(block, "ICONS-Zuordnung in CallWorkbench.vue nicht gefunden").toBeTruthy();
+  expect(block, "ICONS-Zuordnung in OutcomeChooser.vue nicht gefunden").toBeTruthy();
 
   return [...(block ?? "").matchAll(/^\s+([a-z_]+):\s*"/gm)].flatMap((match) =>
     match[1] ? [match[1]] : [],

@@ -87,6 +87,104 @@ def test_a_caller_may_record_an_outcome(client, make_user):
     assert body["contact"]["betrieb"] == "Zweiter Betrieb"
 
 
+def test_a_caller_may_correct_their_own_misclick_without_an_administrator(
+    client, make_user
+):
+    """Der Grund für die ganze Funktion: der Fehlklick passiert dem Anrufer.
+
+    Ihn dafür auf einen Administrator warten zu lassen hieße, dass die falsche
+    Angabe so lange im Nachweis steht.
+    """
+    _upload(client)
+    user_client, _ = make_user("anruferin", pages=[Page.TELEFONAKQUISE])
+
+    contact = user_client.get("/telefonakquise/state").json()["contact"]
+    user_client.post(
+        f"/telefonakquise/contacts/{contact['id']}/outcome",
+        json={"outcome": "abgelehnt"},
+    )
+
+    decisions = user_client.get("/telefonakquise/decisions")
+    assert decisions.status_code == 200
+    entry = decisions.json()["entries"][0]
+    assert entry["correctable"] is True
+
+    response = user_client.post(
+        f"/telefonakquise/decisions/{entry['event_id']}/correct",
+        json={"outcome": "zugesagt", "note": "war der falsche Knopf"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["counters"]["zugesagt"] == 1
+    assert response.json()["counters"]["abgelehnt"] == 0
+
+    # Die falsche Zeile bleibt im Nachweis stehen, mit dem Konto daneben.
+    protocol = client.get("/telefonakquise/export/protokoll").text
+    assert protocol.count("anruferin") == 2
+    assert "war der falsche Knopf" in protocol
+
+
+def test_correcting_an_entry_of_someone_else_is_allowed_but_named(client, make_user):
+    """Wer korrigiert, steht in der neuen Zeile — das ist die Sicherung.
+
+    Nicht: „nur die eigenen Eintragungen". Wer die Liste abtelefoniert,
+    wechselt, und ein Fehlklick, den nur der Urlauber beheben darf, bleibt
+    stehen.
+    """
+    _upload(client)
+    anna, _ = make_user("anna", pages=[Page.TELEFONAKQUISE])
+    bea, _ = make_user("bea", pages=[Page.TELEFONAKQUISE])
+
+    contact = anna.get("/telefonakquise/state").json()["contact"]
+    anna.post(
+        f"/telefonakquise/contacts/{contact['id']}/outcome",
+        json={"outcome": "abgelehnt"},
+    )
+
+    entry = bea.get("/telefonakquise/decisions").json()["entries"][0]
+    assert entry["username"] == "anna"
+
+    response = bea.post(
+        f"/telefonakquise/decisions/{entry['event_id']}/correct",
+        json={"outcome": "nummer_falsch"},
+    )
+
+    assert response.status_code == 200
+    assert (
+        bea.get("/telefonakquise/decisions").json()["entries"][0]["username"] == "bea"
+    )
+
+
+def test_correcting_an_entry_that_is_no_longer_the_latest_is_a_400(client):
+    _upload(client)
+    contact = client.get("/telefonakquise/state").json()["contact"]
+
+    for outcome in ("nicht_erreichbar", "zugesagt"):
+        client.post(
+            f"/telefonakquise/contacts/{contact['id']}/outcome",
+            json={"outcome": outcome, "snooze_minutes": 5},
+        )
+
+    entries = client.get("/telefonakquise/decisions").json()["entries"]
+    older = entries[1]
+
+    response = client.post(
+        f"/telefonakquise/decisions/{older['event_id']}/correct",
+        json={"outcome": "abgelehnt"},
+    )
+
+    assert response.status_code == 400
+    assert "jüngste" in response.json()["detail"]
+
+
+def test_correcting_an_unknown_entry_is_a_404(client):
+    response = client.post(
+        "/telefonakquise/decisions/9999/correct", json={"outcome": "zugesagt"}
+    )
+
+    assert response.status_code == 404
+
+
 def test_the_protocol_names_the_session_user_and_not_a_claim_in_the_request(
     client, make_user
 ):

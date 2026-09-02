@@ -1,12 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import type {
-  CallContact,
-  CallCounters,
-  CallOutcome,
-  OutcomeInfo,
-  OutcomePayload,
-} from "@/api/call_list.api";
+import type { CallContact, CallCounters, OutcomeInfo, OutcomePayload } from "@/api/call_list.api";
+import OutcomeChooser, { type OutcomeChoice } from "./OutcomeChooser.vue";
+import { formatClock, formatMoment } from "./callTime";
 
 const props = defineProps<{
   contact: CallContact | null;
@@ -23,25 +19,9 @@ const emit = defineEmits<{
   (event: "answer", contactId: string, payload: OutcomePayload): void;
 }>();
 
-/**
- * Symbol pro Ergebnis. Beschriftung und Beschreibung kommen aus der Antwort
- * des Backends – hier steht nur, was reine Darstellung ist.
- */
-const ICONS: Record<CallOutcome, string> = {
-  zugesagt: "mark_email_read",
-  nicht_erreichbar: "phone_missed",
-  rueckruf: "event",
-  abgelehnt: "block",
-  nummer_falsch: "wrong_location",
-};
-
 /** Eingaben des Anrufers zum laufenden Gespräch. */
 const email = ref("");
 const note = ref("");
-
-/** Welches Ergebnis wartet gerade auf einen Zeitpunkt? */
-const pending = ref<OutcomeInfo | null>(null);
-const customTime = ref("");
 
 const details = ref(false);
 const history = ref(false);
@@ -57,8 +37,6 @@ watch(
   () => {
     email.value = props.contact?.email ?? "";
     note.value = "";
-    pending.value = null;
-    customTime.value = "";
     details.value = false;
     history.value = false;
   },
@@ -66,53 +44,6 @@ watch(
 );
 
 const emailChanged = computed(() => email.value.trim() !== (props.contact?.email ?? ""));
-
-/** Datum und Uhrzeit für die Anzeige – die Zeitzone kennt der Browser. */
-function formatMoment(iso: string | null): string {
-  if (!iso) return "";
-
-  const stamp = new Date(iso);
-  if (Number.isNaN(stamp.getTime())) return iso;
-
-  return stamp.toLocaleString("de-DE", {
-    day: "2-digit",
-    month: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function formatClock(iso: string | null): string {
-  if (!iso) return "";
-
-  const stamp = new Date(iso);
-  if (Number.isNaN(stamp.getTime())) return iso;
-
-  return stamp.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
-}
-
-/** Wert für ein `datetime-local`-Feld – lokale Zeit, ohne Zeitzone. */
-function toLocalInput(stamp: Date): string {
-  const pad = (value: number) => String(value).padStart(2, "0");
-
-  return (
-    `${stamp.getFullYear()}-${pad(stamp.getMonth() + 1)}-${pad(stamp.getDate())}` +
-    `T${pad(stamp.getHours())}:${pad(stamp.getMinutes())}`
-  );
-}
-
-/**
- * Morgen früh um 8 – das häufigste „später" bei Handwerksbetrieben.
- *
- * Wird lokal gerechnet und als ISO-Zeitstempel *mit* Zeitzone geschickt: das
- * Backend hat keine Zeitzonendatenbank und soll auch keine brauchen.
- */
-function tomorrowMorning(): Date {
-  const stamp = new Date();
-  stamp.setDate(stamp.getDate() + 1);
-  stamp.setHours(8, 0, 0, 0);
-  return stamp;
-}
 
 /** Was bei jedem Ergebnis mitgeschickt wird. */
 function basePayload(): Pick<OutcomePayload, "note" | "email"> {
@@ -124,62 +55,15 @@ function basePayload(): Pick<OutcomePayload, "note" | "email"> {
   };
 }
 
-function pick(outcome: OutcomeInfo) {
+/**
+ * Der Wähler liefert Ergebnis und Zeitpunkt, hier kommen Adresse und
+ * Anmerkung dazu – beides gehört in dieselbe Protokollzeile wie die Zusage
+ * selbst.
+ */
+function answer(choice: OutcomeChoice) {
   if (!props.contact || props.isSaving) return;
 
-  if (outcome.time_input === "none") {
-    emit("answer", props.contact.id, { outcome: outcome.id, ...basePayload() });
-    return;
-  }
-
-  // Es fehlt noch ein Zeitpunkt – die Auswahl klappt darunter auf.
-  pending.value = outcome;
-  customTime.value = toLocalInput(
-    outcome.time_input === "appointment"
-      ? new Date(Date.now() + 60 * 60 * 1000)
-      : tomorrowMorning(),
-  );
-}
-
-function submitSnooze(minutes: number) {
-  if (!props.contact) return;
-
-  emit("answer", props.contact.id, {
-    outcome: "nicht_erreichbar",
-    snooze_minutes: minutes,
-    ...basePayload(),
-  });
-}
-
-function submitMoment(stamp: Date) {
-  if (!props.contact || !pending.value) return;
-
-  const payload: OutcomePayload = { outcome: pending.value.id, ...basePayload() };
-
-  // Beim Rückruf ist der Zeitpunkt der *Termin*; das Backend zieht davon den
-  // Vorlauf ab. Bei der Wiedervorlage ist er direkt der Zeitpunkt der Rückkehr.
-  if (pending.value.time_input === "appointment") {
-    payload.appointment_at = stamp.toISOString();
-  } else {
-    payload.due_at = stamp.toISOString();
-  }
-
-  emit("answer", props.contact.id, payload);
-}
-
-function submitCustom() {
-  if (!customTime.value) return;
-
-  const stamp = new Date(customTime.value);
-  if (Number.isNaN(stamp.getTime())) return;
-
-  submitMoment(stamp);
-}
-
-function toneClass(tone: OutcomeInfo["tone"]): string {
-  if (tone === "positive") return "outcome outcome--positive";
-  if (tone === "negative") return "outcome outcome--negative";
-  return "outcome";
+  emit("answer", props.contact.id, { ...choice, ...basePayload() });
 }
 </script>
 
@@ -379,67 +263,14 @@ function toneClass(tone: OutcomeInfo["tone"]): string {
       <!-- Ergebnis -->
       <div class="space-y-2">
         <p class="eyebrow">Ergebnis des Anrufs</p>
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          <button
-            v-for="outcome in outcomes"
-            :key="outcome.id"
-            :class="[toneClass(outcome.tone), pending?.id === outcome.id ? 'outcome--armed' : '']"
-            :disabled="isSaving"
-            :title="outcome.description"
-            @click="pick(outcome)"
-          >
-            <span class="material-symbols-outlined">{{ ICONS[outcome.id] }}</span>
-            <span class="text-left">{{ outcome.label }}</span>
-          </button>
-        </div>
-      </div>
-
-      <!-- Zeitpunkt, wenn das Ergebnis einen braucht -->
-      <div v-if="pending" class="rounded-md grey-background light-grey-stroke p-3 space-y-3">
-        <p class="text-sm font-medium">
-          {{
-            pending.time_input === "appointment"
-              ? "Wann ist der Rückruf verabredet?"
-              : "Wann erneut anrufen?"
-          }}
-        </p>
-        <p class="text-xs text-zinc-500">{{ pending.description }}</p>
-
-        <div v-if="pending.time_input === 'snooze'" class="flex flex-wrap gap-2">
-          <button class="chip" :disabled="isSaving" @click="submitSnooze(60)">in 1 Stunde</button>
-          <button class="chip" :disabled="isSaving" @click="submitSnooze(120)">in 2 Stunden</button>
-          <button class="chip" :disabled="isSaving" @click="submitMoment(tomorrowMorning())">
-            morgen früh
-          </button>
-        </div>
-
-        <div class="flex flex-wrap items-end gap-2">
-          <div class="flex flex-col gap-1">
-            <label class="text-xs text-zinc-500" for="call-custom-time">
-              {{ pending.time_input === "appointment" ? "Termin" : "eigener Zeitpunkt" }}
-            </label>
-            <input
-              id="call-custom-time"
-              v-model="customTime"
-              type="datetime-local"
-              class="rounded-md light-grey-background light-grey-stroke px-3 py-2 text-sm outline-none focus:border-blue-500 transition-colors"
-            />
-          </div>
-          <button
-            class="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium hover:bg-blue-500 disabled:opacity-40 transition-colors"
-            :disabled="isSaving || !customTime"
-            @click="submitCustom"
-          >
-            Übernehmen
-          </button>
-          <button
-            class="rounded-md light-grey-background light-grey-stroke px-3 py-2 text-sm hover:text-white transition-colors"
-            :disabled="isSaving"
-            @click="pending = null"
-          >
-            Abbrechen
-          </button>
-        </div>
+        <!-- `:key` setzt den Wähler beim Wechsel des Betriebs zurück: eine
+             halb aufgeklappte Zeitauswahl gehörte zum vorigen Gespräch. -->
+        <OutcomeChooser
+          :key="contact.id"
+          :outcomes="outcomes"
+          :disabled="isSaving"
+          @submit="answer"
+        />
       </div>
     </div>
   </div>

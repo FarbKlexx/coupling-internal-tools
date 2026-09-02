@@ -16,7 +16,9 @@ Vier Tabellen:
   und `telefon` stehen bewusst redundant darin, damit eine Protokollzeile für
   sich lesbar bleibt und nicht von einer Tabelle abhängt, die sich noch ändern
   kann. Ein Protokoll, das man erst mit einem JOIN versteht, ist als Nachweis
-  nur die Hälfte wert.
+  nur die Hälfte wert. Auch eine *Korrektur* ist nur eine weitere Zeile, die
+  über `corrects_event_id` auf die falsche zeigt — ein UPDATE gibt es hier
+  nicht, sonst wäre der Nachweis nachträglich formbar.
 * `blacklist` — jede Nummer, die je importiert wurde, plus was von Hand
   gesperrt wurde. Sie ist der Grund, dass sich zwei Listen nicht überschneiden
   können, und hält bewusst **keine** Fremdschlüssel: sie muss das Archivieren
@@ -38,7 +40,7 @@ DEFAULT_DB_PATH = "data/calls.db"
 
 BUSY_TIMEOUT_MS = 5000
 
-SCHEMA_VERSION = "2"
+SCHEMA_VERSION = "3"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS lists (
@@ -92,10 +94,17 @@ CREATE TABLE IF NOT EXISTS events (
     note           TEXT    NOT NULL DEFAULT '',
     email          TEXT    NOT NULL DEFAULT '',
     due_at         TEXT,
-    appointment_at TEXT
+    appointment_at TEXT,
+    -- Gesetzt, wenn diese Zeile eine frühere richtigstellt. Eine Korrektur
+    -- überschreibt nichts: sie ist selbst eine Protokollzeile und zeigt auf
+    -- die, die falsch war. Beide bleiben lesbar — das ist der Unterschied
+    -- zwischen „berichtigt" und „nie passiert".
+    corrects_event_id INTEGER REFERENCES events (id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_contact ON events (contact_id, id);
+CREATE INDEX IF NOT EXISTS idx_events_recent ON events (id DESC);
+CREATE INDEX IF NOT EXISTS idx_events_corrects ON events (corrects_event_id);
 
 CREATE TABLE IF NOT EXISTS blacklist (
     telefon_key TEXT    PRIMARY KEY,
@@ -211,6 +220,11 @@ def transaction(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
 def init_schema() -> None:
     """Tabellen anlegen, falls sie fehlen. Idempotent."""
     with connect() as conn:
+        # Vor `executescript`, nicht danach: `_SCHEMA` legt auch einen Index
+        # über die neue Spalte an, und der scheitert an einer Tabelle, die sie
+        # noch nicht hat. Auf einer frischen Datenbank ist der Aufruf ein
+        # No-op, weil es die Tabellen dort noch gar nicht gibt.
+        _add_missing_columns(conn)
         conn.executescript(_SCHEMA)
         conn.execute(
             "UPDATE meta SET value = ? WHERE key = 'schema_version'",
@@ -222,6 +236,46 @@ def init_schema() -> None:
         )
         conn.execute("INSERT OR IGNORE INTO meta (key, value) VALUES ('revision', '0')")
         _backfill_blacklist(conn)
+
+
+#: Spalten, die nach dem ersten Ausliefern dazugekommen sind, je Tabelle als
+#: (Name, vollständige Definition). `CREATE TABLE IF NOT EXISTS` fasst eine
+#: vorhandene Tabelle nicht mehr an — ohne diese Liste bekäme nur eine frisch
+#: angelegte Datenbank die neue Spalte, und in Produktion (wo die Datei auf dem
+#: Volume liegt und jeden Build überlebt) liefe die Anwendung gegen ein Schema
+#: von gestern.
+_ADDED_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {
+    "events": (
+        (
+            "corrects_event_id",
+            "corrects_event_id INTEGER REFERENCES events (id) ON DELETE SET NULL",
+        ),
+    ),
+}
+
+
+def _add_missing_columns(conn: sqlite3.Connection) -> None:
+    """Nachträglich hinzugekommene Spalten ergänzen. Idempotent.
+
+    Bewusst kein Migrationswerkzeug: es geht um einzelne, immer
+    NULL-vorbelegte Spalten. Ein `ALTER TABLE ADD COLUMN` mit
+    NULL-Vorbelegung ist in SQLite auch mit eingeschalteten Fremdschlüsseln
+    erlaubt — mit einer anderen Vorbelegung wäre es das nicht.
+    """
+    for table, columns in _ADDED_COLUMNS.items():
+        present = {
+            row["name"]
+            for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+
+        # Leer heißt: die Tabelle gibt es noch nicht. Dann legt `_SCHEMA` sie
+        # gleich vollständig an.
+        if not present:
+            continue
+
+        for name, definition in columns:
+            if name not in present:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {definition}")
 
 
 def _backfill_blacklist(conn: sqlite3.Connection) -> None:
@@ -607,13 +661,19 @@ def insert_event(
     email: str,
     due_at: str | None,
     appointment_at: str | None,
-) -> None:
-    """Eine Protokollzeile anhängen. Es gibt kein UPDATE auf `events`."""
-    conn.execute(
+    corrects_event_id: int | None = None,
+) -> int:
+    """Eine Protokollzeile anhängen. Es gibt kein UPDATE auf `events`.
+
+    Eine Richtigstellung ist deshalb ebenfalls ein Anhang: sie trägt in
+    `corrects_event_id` die Zeile, die falsch war, und lässt sie stehen.
+    Liefert die ID der neuen Zeile — die Korrektur einer Korrektur braucht sie.
+    """
+    cursor = conn.execute(
         "INSERT INTO events"
         " (contact_id, list_id, betrieb, telefon, occurred_at, user_id, username,"
-        "  outcome, note, email, due_at, appointment_at)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "  outcome, note, email, due_at, appointment_at, corrects_event_id)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             contact_id,
             list_id,
@@ -627,8 +687,11 @@ def insert_event(
             email,
             due_at,
             appointment_at,
+            corrects_event_id,
         ),
     )
+
+    return int(cursor.lastrowid or 0)
 
 
 def events_of_contact(conn: sqlite3.Connection, contact_id: str) -> list[sqlite3.Row]:
@@ -641,12 +704,67 @@ def events_of_contact(conn: sqlite3.Connection, contact_id: str) -> list[sqlite3
     )
 
 
+#: Was `recent_events` an jede Protokollzeile hängt, damit die Oberfläche
+#: nicht pro Zeile nachfragen muss:
+#:
+#: * `latest_event_id` — die jüngste Zeile *desselben* Kontakts. Nur sie
+#:   bestimmt seinen Zustand und darf deshalb geändert werden.
+#: * `correction_count` — ob diese Zeile bereits richtiggestellt wurde.
+#: * `contact_state` / `list_archived` — der Stand, auf den eine Korrektur
+#:   trifft.
+_EVENT_CONTEXT = (
+    " e.*, l.name AS list_name, l.archived AS list_archived,"
+    " c.state AS contact_state,"
+    " (SELECT MAX(later.id) FROM events later"
+    "   WHERE later.contact_id = e.contact_id) AS latest_event_id,"
+    " (SELECT COUNT(*) FROM events fix"
+    "   WHERE fix.corrects_event_id = e.id) AS correction_count"
+    " FROM events e"
+    " LEFT JOIN lists l ON l.id = e.list_id"
+    " LEFT JOIN contacts c ON c.id = e.contact_id"
+)
+
+
+def recent_events(
+    conn: sqlite3.Connection, *, limit: int, offset: int
+) -> list[sqlite3.Row]:
+    """Die zuletzt eingetragenen Entscheidungen, jüngste zuerst.
+
+    Über die AUTOINCREMENT-ID sortiert und nicht über `occurred_at`: zwei
+    Einträge derselben Sekunde hätten denselben Zeitstempel, und eine
+    Korrektur würde dann womöglich *über* der Zeile stehen, die sie
+    richtigstellt.
+    """
+    return list(
+        conn.execute(
+            "SELECT" + _EVENT_CONTEXT + " ORDER BY e.id DESC LIMIT ? OFFSET ?",
+            (limit, offset),
+        ).fetchall()
+    )
+
+
+def events_total(conn: sqlite3.Connection) -> int:
+    row = conn.execute("SELECT COUNT(*) AS total FROM events").fetchone()
+    return int(row["total"])
+
+
+def find_event(conn: sqlite3.Connection, event_id: int) -> sqlite3.Row | None:
+    """Eine Protokollzeile samt ihrem Umfeld — die Vorlage einer Korrektur."""
+    return conn.execute(
+        "SELECT" + _EVENT_CONTEXT + " WHERE e.id = ?", (event_id,)
+    ).fetchone()
+
+
 def all_events(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     """Das ganze Protokoll, älteste Zeile zuerst — für die Ausgabe."""
     return list(
         conn.execute(
-            "SELECT e.*, l.name AS list_name FROM events e"
+            "SELECT e.*, l.name AS list_name,"
+            "   fixed.occurred_at AS corrects_occurred_at,"
+            "   fixed.outcome AS corrects_outcome"
+            " FROM events e"
             " LEFT JOIN lists l ON l.id = e.list_id"
+            " LEFT JOIN events fixed ON fixed.id = e.corrects_event_id"
             " ORDER BY e.id"
         ).fetchall()
     )
