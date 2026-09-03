@@ -191,6 +191,58 @@ describe("CallWorkbench", () => {
     expect((wrapper.get("input[type='email']").element as HTMLInputElement).value).toBe("");
   });
 
+  it("weist ungefragt darauf hin, dass hier schon angerufen wurde", () => {
+    const wrapper = mountWorkbench({
+      state: "wiedervorlage",
+      attempts: 2,
+      history: [
+        {
+          occurred_at: "2026-09-01T08:15:00Z",
+          username: "auhe",
+          outcome: "nicht_erreichbar",
+          outcome_label: "Nicht erreichbar",
+          note: "Chef ist auf der Baustelle, ab 16 Uhr da",
+          email: "",
+          appointment_at: null,
+          due_at: "2026-09-01T14:00:00Z",
+        },
+      ],
+    });
+
+    // Ohne Aufklappen sichtbar — sonst meldet sich der Anrufer beim dritten
+    // Versuch so, als sei es der erste.
+    const text = wrapper.text();
+    expect(text).toContain("schon 2 Mal angerufen");
+    expect(text).toContain("Nicht erreichbar");
+    expect(text).toContain("Chef ist auf der Baustelle");
+  });
+
+  it("nennt beim Rückruf den verabredeten Termin", () => {
+    const wrapper = mountWorkbench({
+      state: "rueckruf",
+      attempts: 1,
+      appointment_at: "2026-09-01T12:00:00Z",
+      history: [
+        {
+          occurred_at: "2026-08-31T09:00:00Z",
+          username: "auhe",
+          outcome: "rueckruf",
+          outcome_label: "Rückruf vereinbart",
+          note: "",
+          email: "",
+          appointment_at: "2026-09-01T12:00:00Z",
+          due_at: "2026-09-01T11:45:00Z",
+        },
+      ],
+    });
+
+    expect(wrapper.text()).toContain("Rückruf vereinbart für 01.09.");
+  });
+
+  it("zeigt beim ersten Anruf keinen Hinweis", () => {
+    expect(mountWorkbench().text()).not.toContain("angerufen");
+  });
+
   it("unterscheidet „keine Liste“ von „alles auf Wiedervorlage“", () => {
     const withoutLists = mount(CallWorkbench, {
       props: {

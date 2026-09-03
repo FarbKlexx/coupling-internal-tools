@@ -45,6 +45,43 @@ watch(
 
 const emailChanged = computed(() => email.value.trim() !== (props.contact?.email ?? ""));
 
+/**
+ * Der Hinweis, dass dieser Betrieb kein neuer ist.
+ *
+ * Die Vorgeschichte stand bisher nur eingeklappt unter der Nummer – wer den
+ * Knopf nicht aufklappt, meldet sich beim dritten Versuch so, als sei es der
+ * erste. Deshalb steht die letzte Eintragung *über* der Nummer und
+ * ungefragt: sie ist der Unterschied zwischen „guten Tag, Coupling Media" und
+ * „Sie hatten gesagt, ich soll heute noch mal anrufen".
+ *
+ * `history` und nicht `attempts` ist die Bedingung, weil „kein Bedarf" und
+ * „Nummer falsch" den Zähler bewusst nicht erhöhen – auch eine
+ * richtiggestellte Entscheidung ist Vorgeschichte.
+ */
+const revisit = computed(() => {
+  const contact = props.contact;
+  const last = contact?.history[0];
+  if (!contact || !last) return null;
+
+  const callback = contact.state === "rueckruf";
+  const attempts = contact.attempts;
+
+  return {
+    callback,
+    icon: callback ? "event_available" : "history",
+    title: callback
+      ? contact.appointment_at
+        ? `Rückruf vereinbart für ${formatMoment(contact.appointment_at)}`
+        : "Rückruf vereinbart"
+      : attempts > 1
+        ? `Wiederanruf – hier wurde schon ${attempts} Mal angerufen`
+        : attempts === 1
+          ? "Wiederanruf – hier wurde schon einmal angerufen"
+          : "Dieser Betrieb war schon einmal dran",
+    last,
+  };
+});
+
 /** Was bei jedem Ergebnis mitgeschickt wird. */
 function basePayload(): Pick<OutcomePayload, "note" | "email"> {
   return {
@@ -161,6 +198,34 @@ function answer(choice: OutcomeChoice) {
         <span v-if="contact.prio" class="badge shrink-0">{{ contact.prio }}</span>
       </div>
 
+      <!-- Vorgeschichte: ungefragt und vor der Nummer, nicht eingeklappt darunter -->
+      <div
+        v-if="revisit"
+        class="rounded-md border px-4 py-3 space-y-1"
+        :class="
+          revisit.callback
+            ? 'border-blue-500/40 bg-blue-500/10'
+            : 'border-amber-500/40 bg-amber-500/10'
+        "
+      >
+        <p
+          class="flex items-center gap-2 text-sm font-semibold"
+          :class="revisit.callback ? 'text-blue-300' : 'text-amber-300'"
+        >
+          <span class="material-symbols-outlined text-[18px] leading-none">
+            {{ revisit.icon }}
+          </span>
+          {{ revisit.title }}
+        </p>
+        <p class="text-xs light-grey-text">
+          Zuletzt {{ formatMoment(revisit.last.occurred_at) }} · {{ revisit.last.outcome_label }} ·
+          {{ revisit.last.username }}
+        </p>
+        <p v-if="revisit.last.note" class="text-xs light-grey-text whitespace-pre-line">
+          „{{ revisit.last.note }}“
+        </p>
+      </div>
+
       <!-- Die Nummer, groß: sie ist der Zweck dieser Seite -->
       <div class="flex flex-wrap items-center gap-4">
         <a
@@ -193,9 +258,6 @@ function answer(choice: OutcomeChoice) {
           </span>
           {{ contact.history.length }} bisherige
           {{ contact.history.length === 1 ? "Eintragung" : "Eintragungen" }}
-          <template v-if="contact.appointment_at">
-            · Termin {{ formatMoment(contact.appointment_at) }}
-          </template>
         </button>
         <ul v-if="history" class="space-y-1 text-xs light-grey-text">
           <li
