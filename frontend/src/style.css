@@ -135,6 +135,19 @@ a {
   border: 1px solid #333333;
 }
 
+/* Trennt die Gruppen der Sidebar und den Fussbereich ab. Eine Klasse statt
+   zweier Tailwind-Arbitraries, damit die Farbe an einer Stelle steht. */
+.sidebar-rule {
+  border-top: 1px solid #333333;
+}
+
+/* Ueberschrift einer Sidebar-Gruppe. Bewusst ohne die Rahmen eines
+   Nav-Eintrags: sie ist keine Zielseite, sondern nur ein Schalter. */
+.sidebar-group:hover .grey-text,
+.sidebar-group:hover .nav-icon {
+  color: #ffffff;
+}
+
 /* Icon-Button in der Topbar (Burger). Gleiche Optik wie ein Nav-Eintrag,
    aber ohne dessen Semantik. */
 .icon-button {

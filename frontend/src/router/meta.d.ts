@@ -6,6 +6,19 @@ declare module "vue-router" {
     searchable?: boolean;
     /** Taucht in der Sidebar auf – siehe `navigation/buildNavItems.ts`. */
     sidebar?: boolean;
+    /**
+     * Unter welcher einklappbaren Ueberschrift der Eintrag in der Sidebar
+     * steht. Die Beschriftungen stehen in `navigation/navGroups.ts`, die
+     * Reihenfolge der Gruppen ergibt sich aus der Reihenfolge der Routen.
+     * Ohne Gruppe steht der Eintrag ueber allen Gruppen, ohne Ueberschrift.
+     */
+    navGroup?: string;
+    /**
+     * Verankert den Eintrag am unteren Rand der Sidebar, abgesetzt von den
+     * Gruppen. Fuer die Verwaltung gedacht, die zwar erreichbar sein soll,
+     * aber nicht zwischen den Werkzeugen des Tagesgeschaefts steht.
+     */
+    navFooter?: boolean;
     label?: string;
     icon?: string;
     keywords?: string[];

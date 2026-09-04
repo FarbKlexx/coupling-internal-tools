@@ -8,7 +8,8 @@
  */
 import { beforeEach, describe, expect, it } from "vitest";
 import { router, routes } from "@/router";
-import { buildNavItems } from "@/navigation/buildNavItems";
+import { buildNavItems, buildNavSections } from "@/navigation/buildNavItems";
+import { NAV_GROUP_LABELS } from "@/navigation/navGroups";
 import { buildRouteSearchIndex } from "@/search/buildRouteSearchIndex";
 import { signInAs, signInWithPages, signOut } from "@/test/auth";
 
@@ -230,5 +231,50 @@ describe("Sidebar-Eintraege", () => {
 
     expect(buildNavItems(routes, asUser).map((i) => i.id)).not.toContain("benutzer");
     expect(buildNavItems(routes, asAdmin).map((i) => i.id)).toContain("benutzer");
+  });
+});
+
+describe("Sidebar-Gruppen", () => {
+  it("gibt jeder benutzten Gruppe eine Beschriftung", () => {
+    for (const route of routes.filter((r) => r.meta?.navGroup)) {
+      expect(
+        NAV_GROUP_LABELS[String(route.meta?.navGroup)],
+        `Gruppe ohne Beschriftung: ${String(route.meta?.navGroup)}`,
+      ).toBeTruthy();
+    }
+  });
+
+  it("buendelt die Eintraege in Deklarationsreihenfolge", () => {
+    const { groups } = buildNavSections(routes);
+
+    expect(groups.map((group) => group.label)).toEqual(["AWIN", "Tools", "Management"]);
+    expect(groups[0]?.items.map((item) => item.id)).toEqual(["abgleiche", "awin-banner"]);
+  });
+
+  it("laesst keinen Eintrag unter den Tisch fallen", () => {
+    const { groups, footer } = buildNavSections(routes);
+    const grouped = [...groups.flatMap((group) => group.items), ...footer];
+
+    expect(grouped.map((item) => item.id).sort()).toEqual(
+      buildNavItems(routes)
+        .map((item) => item.id)
+        .sort(),
+    );
+  });
+
+  it("stellt die Benutzerverwaltung in den Fussbereich", () => {
+    const { groups, footer } = buildNavSections(routes, { mayOpen: () => true, isAdmin: true });
+
+    expect(footer.map((item) => item.id)).toEqual(["benutzer"]);
+    expect(groups.flatMap((group) => group.items).map((item) => item.id)).not.toContain("benutzer");
+  });
+
+  it("erzeugt keine Gruppe, von der nichts sichtbar ist", () => {
+    const { groups } = buildNavSections(routes, {
+      mayOpen: (page?: string) => page === "kanban",
+      isAdmin: false,
+    });
+
+    expect(groups.map((group) => group.label)).toEqual(["Management"]);
   });
 });

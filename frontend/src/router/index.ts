@@ -81,6 +81,7 @@ export const routes: RouteRecordRaw[] = [
     name: "abgleiche",
     component: AbgleicheView,
     meta: {
+      navGroup: "awin",
       searchable: true,
       sidebar: true,
       page: "abgleiche",
@@ -94,6 +95,7 @@ export const routes: RouteRecordRaw[] = [
     name: "awin-banner",
     component: AwinBannerView,
     meta: {
+      navGroup: "awin",
       searchable: true,
       sidebar: true,
       page: "awin-banner",
@@ -107,6 +109,7 @@ export const routes: RouteRecordRaw[] = [
     name: "webp-konverter",
     component: WebpConverterView,
     meta: {
+      navGroup: "tools",
       searchable: true,
       sidebar: true,
       page: "webp-konverter",
@@ -130,6 +133,7 @@ export const routes: RouteRecordRaw[] = [
     name: "qr-code",
     component: QrCodeView,
     meta: {
+      navGroup: "tools",
       searchable: true,
       sidebar: true,
       page: "qr-code",
@@ -143,6 +147,7 @@ export const routes: RouteRecordRaw[] = [
     name: "pdf-schutz",
     component: PdfProtectView,
     meta: {
+      navGroup: "tools",
       searchable: true,
       sidebar: true,
       page: "pdf-schutz",
@@ -156,6 +161,7 @@ export const routes: RouteRecordRaw[] = [
     name: "namensschilder",
     component: NameBadgeView,
     meta: {
+      navGroup: "tools",
       searchable: true,
       sidebar: true,
       page: "namensschilder",
@@ -180,6 +186,7 @@ export const routes: RouteRecordRaw[] = [
     name: "kanban",
     component: KanbanView,
     meta: {
+      navGroup: "management",
       searchable: true,
       sidebar: true,
       page: "kanban",
@@ -193,6 +200,7 @@ export const routes: RouteRecordRaw[] = [
     name: "telefonakquise",
     component: TelefonakquiseView,
     meta: {
+      navGroup: "management",
       searchable: true,
       sidebar: true,
       page: "telefonakquise",
@@ -219,6 +227,7 @@ export const routes: RouteRecordRaw[] = [
     name: "mailversand",
     component: MailversandView,
     meta: {
+      navGroup: "management",
       searchable: true,
       sidebar: true,
       page: "mailversand",
@@ -247,6 +256,7 @@ export const routes: RouteRecordRaw[] = [
     name: "benutzer",
     component: UserAdminView,
     meta: {
+      navFooter: true,
       searchable: true,
       sidebar: true,
       adminOnly: true,
