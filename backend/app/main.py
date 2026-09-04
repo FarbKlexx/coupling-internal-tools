@@ -11,6 +11,7 @@ from app.api import (
     health_api,
     image_convert_api,
     kanban_api,
+    mail_followup_api,
     name_badge_api,
     pdf_protect_api,
     qr_code_api,
@@ -103,6 +104,7 @@ FEATURE_MODULES = (
     name_badge_api,
     kanban_api,
     call_list_api,
+    mail_followup_api,
 )
 
 for module in FEATURE_MODULES:

@@ -2,7 +2,8 @@
 
 Internes Back-Office-Werkzeug für Coupling Media: AWIN-Abgleiche, Banner-CSVs,
 WebP-Konvertierung, QR-Codes, PDF-Passwortschutz, Namensschilder für
-Veranstaltungen, ein Kanban-Board und die Telefonakquise.
+Veranstaltungen, ein Kanban-Board, die Telefonakquise und den Mailversand
+danach.
 
 Vue-3-SPA (`frontend/`) über einer FastAPI-Anwendung (`backend/`).
 
@@ -31,7 +32,7 @@ eine Datei zurück. Drei Dinge liegen dagegen in SQLite-Dateien, alle drei im
 |---|---|---|
 | `kanban.db` | das Kanban-Board | `KANBAN_DB_PATH` (Default: relativ `data/kanban.db`) |
 | `auth.db` | Konten, Sitzungen, Wiederherstellungscodes | `AUTH_DB_PATH` |
-| `calls.db` | Anruflisten der Telefonakquise **und das Anrufprotokoll** | `CALL_DB_PATH` |
+| `calls.db` | Anruflisten der Telefonakquise, das Anrufprotokoll **und der Stand des Mailversands** | `CALL_DB_PATH` |
 
 | | |
 |---|---|
@@ -99,11 +100,52 @@ Ergebnis in dieselbe Protokollzeile.
 * `GET /api/telefonakquise/export/protokoll` – jeder Anruf als Zeile: der
   Nachweis.
 
+Was aus den Zusagen wird, steht auf der eigenen Seite **Mailversand** (siehe
+unten).
+
 **Eine Liste beenden** heißt *archivieren*, nicht löschen: die Kontakte
 verschwinden aus dem Vorrat, das Protokoll bleibt. Löschen nimmt über
 `ON DELETE CASCADE` auch die Protokollzeilen mit und wird deshalb mit 409
 abgelehnt, solange Anrufe dokumentiert sind – erst eine ausdrückliche
 Bestätigung („trotzdem löschen") führt es aus.
+
+## Mailversand: was aus einer Zusage wurde
+
+Die Telefonakquise beantwortet „dürfen wir schreiben?". Das Werkzeug
+(`/mailversand`) beantwortet die andere Hälfte: *haben* wir geschrieben, und
+was kam zurück.
+
+Es hat **keine eigenen Kontakte**. Seine Zeilen sind die Kontakte der
+Telefonakquise im Zustand „Zusage" – wird eine Zusage drüben richtiggestellt,
+verschwindet die Zeile hier von selbst. Zusagen **ohne** E-Mail-Adresse stehen
+bewusst mit in der Liste (ohne Versand-Knopf und als solche markiert): sie sind
+die Nacharbeit, die sonst niemand sieht.
+
+| Zustand | Wie er entsteht |
+|---|---|
+| Mail noch nicht versendet | Ausgangszustand jeder Zusage |
+| Mail versendet – wartet auf Antwort | Knopf „Mail versendet"; setzt zugleich die Frist neu (auch beim Nachfassen) |
+| Antwort positiv | Knopf |
+| Angebot abgelehnt | Knopf – das betrifft das *Angebot*; der Widerspruch gegen Werbung gehört in die Telefonakquise |
+| keine Antwort | **automatisch 30 Tage nach dem Versand**, oder von Hand vorher |
+
+Die 30 Tage werden **gerechnet, nicht geschrieben**: die Zeile wird aus ihrem
+Versanddatum abgeleitet, sobald jemand die Liste öffnet. Es gibt in dieser
+Anwendung keinen Hintergrundjob, der nachts etwas umsetzt — und deshalb auch
+nichts, was hängen bleiben kann. Eine Antwort, die am 31. Tag doch noch kommt,
+lässt sich normal eintragen; die Zeile ist nicht zugemauert. Die Frist steht in
+`MAIL_TIMEOUT_DAYS` (`backend/app/schemas/mail_followup.py`).
+
+Welche Knöpfe eine Zeile zeigt, entscheidet die Übergangstabelle
+`MAIL_TRANSITIONS` in derselben Datei — dieselbe, gegen die das Backend beim
+Schreiben prüft. Die Oberfläche kann also keinen Übergang anbieten, den der
+Server ablehnt.
+
+Die Zähler über der Liste sind zugleich der Filter; dazu kommen Suche
+(Betrieb, Adresse, Nummer) und `GET /api/mailversand/export` als CSV.
+
+**Berechtigung:** eine eigene (`mailversand`), getrennt von der Telefonakquise.
+Wer telefoniert, muss deshalb nicht versenden dürfen – und umgekehrt.
 
 ## Namensschilder: drucken und kalibrieren
 
@@ -209,11 +251,12 @@ Alle sechs Kommandos sind grün — sie taugen also unmittelbar als CI-Gate.
 `npm run lint:fix` und `npm run format` beheben Verstöße, im Backend
 `ruff check --fix .` und `black .`.
 
-Drei Frontend-Tests lesen über die Sprachgrenze in `backend/` hinein und
+Vier Frontend-Tests lesen über die Sprachgrenze in `backend/` hinein und
 brauchen deshalb das **vollständige** Repo, nicht nur `frontend/`:
 `src/api/labelPalette.test.ts` (Label-Farbpalette), `src/router/pageIds.test.ts`
-(Seitenberechtigungen) und `src/api/callOutcomes.test.ts` (die Ergebnisse der
-Telefonakquise).
+(Seitenberechtigungen), `src/api/callOutcomes.test.ts` (die Ergebnisse der
+Telefonakquise) und `src/api/mailStates.test.ts` (die Zustände des
+Mailversands).
 
 ## Deployment
 

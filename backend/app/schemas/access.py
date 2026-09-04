@@ -37,6 +37,7 @@ class Page(str, Enum):
     NAMENSSCHILDER = "namensschilder"
     KANBAN = "kanban"
     TELEFONAKQUISE = "telefonakquise"
+    MAILVERSAND = "mailversand"
 
 
 class CurrentUserResponse(BaseModel):

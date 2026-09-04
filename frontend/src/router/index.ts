@@ -12,6 +12,7 @@ import PdfProtectView from "@/views/PdfProtectView.vue";
 import NameBadgeView from "@/views/NameBadgeView.vue";
 import KanbanView from "@/views/KanbanView.vue";
 import TelefonakquiseView from "@/views/TelefonakquiseView.vue";
+import MailversandView from "@/views/MailversandView.vue";
 import LoginView from "@/views/LoginView.vue";
 import PasswordChangeView from "@/views/PasswordChangeView.vue";
 import AccountView from "@/views/AccountView.vue";
@@ -207,6 +208,32 @@ export const routes: RouteRecordRaw[] = [
         "leads",
         "einwilligung",
         "csv",
+      ],
+    },
+  },
+  // Der Mailversand steht *hinter* der Telefonakquise, weil er dort anfaengt:
+  // seine Zeilen sind deren Zusagen. Eigene Berechtigung trotzdem – wer
+  // telefoniert, muss deshalb nicht versenden duerfen und umgekehrt.
+  {
+    path: "/mailversand",
+    name: "mailversand",
+    component: MailversandView,
+    meta: {
+      searchable: true,
+      sidebar: true,
+      page: "mailversand",
+      label: "Mailversand",
+      icon: "forward_to_inbox",
+      keywords: [
+        "mail",
+        "mails",
+        "e-mail",
+        "versand",
+        "mailversand",
+        "zusagen",
+        "antwort",
+        "nachfassen",
+        "akquise",
       ],
     },
   },

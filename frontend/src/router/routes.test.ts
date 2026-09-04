@@ -26,6 +26,7 @@ const EXPECTED_PATHS = [
   "/namensschilder",
   "/kanban",
   "/telefonakquise",
+  "/mailversand",
   "/start",
 ];
 

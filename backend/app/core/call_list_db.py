@@ -8,7 +8,7 @@ Produktion liegt dieses Verzeichnis auf dem Volume aus `docker-compose.yml`
 (`./data/kanban:/app/data`) — ohne diese Zeile ist die Anrufliste nach jedem
 `--build` weg, und mit ihr das Protokoll der Einwilligungen.
 
-Vier Tabellen:
+Fünf Tabellen:
 
 * `lists` — eine importierte CSV.
 * `contacts` — eine Zeile daraus, plus Zustand und Wiedervorlage.
@@ -25,6 +25,16 @@ Vier Tabellen:
   *und* das Löschen ihrer Herkunftsliste überleben, sonst wäre sie genau in
   dem Moment leer, in dem sie gebraucht wird. Herkunft steht deshalb redundant
   als Text darin, wie beim Protokoll.
+* `mail_status` — was aus einer Zusage geworden ist (Mailversand). Hängt am
+  Kontakt und fährt dessen `ON DELETE CASCADE` mit: anders als das Protokoll
+  ist das kein Nachweis, sondern Arbeitsstand. Eine Zusage ohne Zeile hier
+  steht auf `offen` — der Ausgangszustand braucht keinen Datensatz.
+
+Der Mailversand ist ein eigenes Werkzeug mit eigener Seitenberechtigung, aber
+**keiner eigenen Datenbank**: seine Zeilen *sind* die Kontakte im Zustand
+`zugesagt`. Deshalb steht sein SQL hier und nicht in einem zweiten Modul —
+eine Datei, zwei Module mit SQL darauf wäre die Sorte Aufteilung, bei der
+niemand mehr weiß, wo eine Abfrage hingehört.
 """
 
 import os
@@ -40,7 +50,7 @@ DEFAULT_DB_PATH = "data/calls.db"
 
 BUSY_TIMEOUT_MS = 5000
 
-SCHEMA_VERSION = "3"
+SCHEMA_VERSION = "4"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS lists (
@@ -119,6 +129,24 @@ CREATE TABLE IF NOT EXISTS blacklist (
 );
 
 CREATE INDEX IF NOT EXISTS idx_blacklist_created ON blacklist (created_at DESC);
+
+-- Mailversand: was aus einer Zusage geworden ist.
+--
+-- Eine Zeile entsteht erst mit dem ersten Klick; wer keine hat, steht auf
+-- `offen`. Der Zustand `keine_antwort` wird hier nie gespeichert, wenn er aus
+-- der Frist folgt — er wird beim Lesen aus `sent_at` gerechnet, siehe
+-- `_MAIL_STATE`.
+CREATE TABLE IF NOT EXISTS mail_status (
+    contact_id  TEXT    PRIMARY KEY REFERENCES contacts (id) ON DELETE CASCADE,
+    state       TEXT    NOT NULL DEFAULT 'offen',
+    sent_at     TEXT,
+    answered_at TEXT,
+    note        TEXT    NOT NULL DEFAULT '',
+    updated_at  TEXT    NOT NULL,
+    updated_by  TEXT    NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_mail_status_state ON mail_status (state, sent_at);
 
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
@@ -941,3 +969,228 @@ def drop_blacklist_of_list(conn: sqlite3.Connection, list_id: str) -> int:
         (list_id, list_id),
     )
     return cursor.rowcount if cursor.rowcount and cursor.rowcount > 0 else 0
+
+
+# --------------------------------------------------------------------------
+# Mailversand
+# --------------------------------------------------------------------------
+
+#: Der Zustand einer Zusage im Mailversand, wie ihn jede Abfrage berechnet.
+#:
+#: Zwei Dinge stecken darin. Erstens: eine Zusage ohne Zeile in `mail_status`
+#: steht auf `offen` — der Ausgangszustand braucht keinen Datensatz, sonst
+#: müsste jeder Import Zeilen anlegen, die niemand angeklickt hat. Zweitens:
+#: eine versendete Mail, auf die seit der Frist nichts kam, *ist* „keine
+#: Antwort" — das steht nirgends geschrieben, sondern folgt aus `sent_at`.
+#:
+#: Gerechnet statt gespeichert, weil es in dieser Anwendung keinen
+#: Hintergrundjob gibt: ein Feld, das erst beim nächsten Schreibzugriff
+#: nachgezogen würde, wäre bis dahin falsch — und zwar genau in der Ansicht,
+#: die es beantworten soll. Der Preis ist ein `?` (der Stichtag) in jeder
+#: Abfrage, die diesen Ausdruck verwendet.
+_MAIL_STATE = (
+    "CASE WHEN COALESCE(m.state, 'offen') = 'versendet'"
+    "       AND m.sent_at IS NOT NULL AND m.sent_at <= ?"
+    "     THEN 'keine_antwort'"
+    "     ELSE COALESCE(m.state, 'offen') END"
+)
+
+#: Die Zusagen und sonst nichts. Archivierte Listen zählen mit: eine Zusage
+#: gilt weiter, auch wenn die Anrufrunde beendet ist, und die Mail muss
+#: trotzdem heraus.
+_MAIL_FROM = (
+    " FROM contacts c"
+    " JOIN lists l ON l.id = c.list_id"
+    " LEFT JOIN mail_status m ON m.contact_id = c.id"
+    " WHERE c.state = 'zugesagt'"
+)
+
+#: Spalten einer Zeile der Versandliste. `promised_at`/`promised_by` kommen
+#: aus dem Protokoll — es ist der Nachweis, auf den sich der Versand stützt,
+#: und gehört deshalb neben die Adresse und nicht in eine zweite Abfrage.
+_MAIL_SELECT = (
+    " c.id AS contact_id, c.betrieb, c.telefon, c.email, c.ort, c.plz,"
+    " c.website, c.gewerk, c.note, c.list_id, l.name AS list_name,"
+    " l.archived AS list_archived,"
+    " m.state AS stored_state, m.sent_at, m.answered_at,"
+    " m.note AS mail_note, m.updated_at AS mail_updated_at,"
+    " m.updated_by AS mail_updated_by,"
+    " (SELECT e.occurred_at FROM events e"
+    "   WHERE e.contact_id = c.id AND e.outcome = 'zugesagt'"
+    "   ORDER BY e.id DESC LIMIT 1) AS promised_at,"
+    " (SELECT e.username FROM events e"
+    "   WHERE e.contact_id = c.id AND e.outcome = 'zugesagt'"
+    "   ORDER BY e.id DESC LIMIT 1) AS promised_by,"
+    f" {_MAIL_STATE} AS mail_state"
+)
+
+#: Reihenfolge der Liste: erst was zu tun ist, dann was wartet, dann was
+#: erledigt ist. Innerhalb einer Gruppe die Reihenfolge der Datei (ältere
+#: Listen zuerst) — dieselbe, in der auch angerufen wurde.
+_MAIL_ORDER = (
+    " ORDER BY CASE mail_state"
+    "     WHEN 'offen' THEN 0"
+    "     WHEN 'keine_antwort' THEN 1"
+    "     WHEN 'versendet' THEN 2"
+    "     WHEN 'positiv' THEN 3"
+    "     ELSE 4 END,"
+    "   l.created_at, c.position, c.id"
+)
+
+
+def _mail_filter(query: str, state: str | None) -> tuple[str, list[object]]:
+    """Suche und Zustandsfilter als SQL-Fragment plus Parameter.
+
+    Die Suche geht über Betrieb, Adresse und Nummer: gesucht wird mal nach dem
+    Betrieb, von dem gerade eine Antwort kam, mal nach der Adresse aus dem
+    Postfach.
+    """
+    where = ""
+    params: list[object] = []
+    term = query.strip()
+
+    if term:
+        digits = phone_key(term)
+        conditions = ["c.betrieb LIKE ?", "c.email LIKE ?", "c.telefon LIKE ?"]
+        params += [f"%{term}%", f"%{term}%", f"%{term}%"]
+        if digits:
+            conditions.append("c.telefon_key LIKE ?")
+            params.append(f"%{digits}%")
+        where += " AND (" + " OR ".join(conditions) + ")"
+
+    if state:
+        # Der Stichtag ein zweites Mal: gefiltert wird über den *gerechneten*
+        # Zustand, sonst zeigte der Filter „keine Antwort" nur die von Hand
+        # abgeschlossenen Zeilen.
+        where += f" AND {_MAIL_STATE} = ?"
+
+    return where, params
+
+
+def mail_page(
+    conn: sqlite3.Connection,
+    *,
+    cutoff: str,
+    query: str = "",
+    state: str | None = None,
+    limit: int,
+    offset: int,
+) -> tuple[list[sqlite3.Row], int, int]:
+    """Ein Ausschnitt der Versandliste, plus Treffer und Gesamtzahl.
+
+    `cutoff` ist der Zeitpunkt, vor dem ein Versand als unbeantwortet gilt
+    (jetzt minus Frist). Er wird durchgereicht statt hier gerechnet, damit
+    Liste, Zähler und Schreibpfad einer Anfrage denselben Stichtag benutzen —
+    sonst könnte eine Zeile zwischen zwei Abfragen derselben Antwort die
+    Gruppe wechseln.
+    """
+    where, filter_params = _mail_filter(query, state)
+    state_params: list[object] = [cutoff] if state else []
+
+    total = int(
+        conn.execute("SELECT COUNT(*) AS total" + _MAIL_FROM, ()).fetchone()["total"]
+    )
+
+    matched = int(
+        conn.execute(
+            "SELECT COUNT(*) AS total" + _MAIL_FROM + where,
+            filter_params + state_params + ([state] if state else []),
+        ).fetchone()["total"]
+    )
+
+    rows = list(
+        conn.execute(
+            "SELECT"
+            + _MAIL_SELECT
+            + _MAIL_FROM
+            + where
+            + _MAIL_ORDER
+            + " LIMIT ? OFFSET ?",
+            [cutoff]
+            + filter_params
+            + state_params
+            + ([state] if state else [])
+            + [limit, offset],
+        ).fetchall()
+    )
+
+    return rows, matched, total
+
+
+def mail_totals(conn: sqlite3.Connection, cutoff: str) -> dict[str, tuple[int, int]]:
+    """Pro Versandzustand: (Anzahl, davon ohne E-Mail-Adresse).
+
+    Eine Abfrage für alle Zähler — und sie zählt über *alle* Zusagen, nicht
+    über die gefilterte Seite: die Zahlen über der Liste sollen sich beim
+    Suchen nicht ändern, sonst beantworten sie eine andere Frage als die, für
+    die sie da sind.
+    """
+    rows = conn.execute(
+        f"SELECT {_MAIL_STATE} AS mail_state, COUNT(*) AS total,"
+        " SUM(CASE WHEN c.email = '' THEN 1 ELSE 0 END) AS ohne_email"
+        + _MAIL_FROM
+        + " GROUP BY mail_state",
+        (cutoff,),
+    ).fetchall()
+
+    return {
+        row["mail_state"]: (int(row["total"]), int(row["ohne_email"] or 0))
+        for row in rows
+    }
+
+
+def find_mail_entry(
+    conn: sqlite3.Connection, contact_id: str, cutoff: str
+) -> sqlite3.Row | None:
+    """Eine Zeile der Versandliste, oder `None`.
+
+    `None` heißt zweierlei: den Kontakt gibt es nicht — oder er steht nicht
+    (mehr) auf „Zusage". Beides beantwortet der Service mit derselben
+    Meldung, weil beides denselben Grund hat: hier ist nichts mehr zu tun.
+    """
+    return conn.execute(
+        "SELECT" + _MAIL_SELECT + _MAIL_FROM + " AND c.id = ?",
+        (cutoff, contact_id),
+    ).fetchone()
+
+
+def all_mail_entries(conn: sqlite3.Connection, cutoff: str) -> list[sqlite3.Row]:
+    """Die ganze Versandliste — für die Ausgabe."""
+    return list(
+        conn.execute(
+            "SELECT" + _MAIL_SELECT + _MAIL_FROM + _MAIL_ORDER, (cutoff,)
+        ).fetchall()
+    )
+
+
+def set_mail_status(
+    conn: sqlite3.Connection,
+    contact_id: str,
+    *,
+    state: str,
+    sent_at: str | None,
+    answered_at: str | None,
+    note: str,
+    updated_by: str,
+) -> None:
+    """Den Versandzustand setzen. Legt die Zeile an, wenn es noch keine gibt.
+
+    Ein Zurücksetzen auf `offen` löscht die Zeile bewusst **nicht**: dann
+    stünde dort niemand mehr, der es getan hat. Die Zeile bleibt und trägt
+    `offen` mit leerem Versanddatum — der Unterschied zwischen „noch nichts
+    passiert" und „zurückgesetzt von Marie" ist genau das, wonach jemand
+    fragt, der die Liste morgen ansieht.
+    """
+    conn.execute(
+        "INSERT INTO mail_status"
+        " (contact_id, state, sent_at, answered_at, note, updated_at, updated_by)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?)"
+        " ON CONFLICT(contact_id) DO UPDATE SET"
+        "   state = excluded.state,"
+        "   sent_at = excluded.sent_at,"
+        "   answered_at = excluded.answered_at,"
+        "   note = excluded.note,"
+        "   updated_at = excluded.updated_at,"
+        "   updated_by = excluded.updated_by",
+        (contact_id, state, sent_at, answered_at, note, now(), updated_by),
+    )
