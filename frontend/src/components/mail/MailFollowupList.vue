@@ -2,8 +2,10 @@
 /**
  * Die Versandliste: jede Zusage mit dem, was daraus geworden ist.
  *
- * Der Aufbau folgt dem Arbeitsplatz der Telefonakquise – Zähler, die zugleich
- * der Filter sind, darunter die Zeilen mit ihren Knöpfen. Die Knöpfe einer
+ * Oben ein Reiter je Versandstand mit seiner Anzahl, darunter die Zeilen mit
+ * ihren Knöpfen. Reiter und nicht anklickbare Zähler-Kacheln: eine Kachel
+ * sieht aus wie eine Zahl, und dass sie zugleich der Filter ist, sieht man
+ * ihr nicht an. Die Knöpfe einer
  * Zeile kommen als `entry.actions` aus dem Backend; welche Übergänge es gibt,
  * entscheidet dort eine Tabelle, gegen die auch das Schreiben prüft. Diese
  * Regel hier nachzubauen hieße, sich früher oder später einen Knopf zu
@@ -51,14 +53,36 @@ const ICONS: Record<MailState, string> = {
   keine_antwort: "hourglass_disabled",
 };
 
-/** Die Zähler über der Liste – zugleich der Filter. */
-const TILES: { id: MailState; label: string; accent?: string }[] = [
-  { id: "offen", label: "Mail offen" },
-  { id: "versendet", label: "Wartet auf Antwort" },
-  { id: "positiv", label: "Antwort positiv", accent: "text-emerald-400" },
+/**
+ * Die Reiter über der Liste – Filter und Zähler in einem.
+ *
+ * `id: null` ist „Alle" und hebt den Filter auf. Die Beschriftungen sind
+ * kürzer als die Zustandsnamen aus dem Backend (`state_label`), weil sie in
+ * eine Reiterzeile müssen; welcher Zustand gemeint ist, steht ausführlich an
+ * der Zeile selbst.
+ */
+const TABS: { id: MailState | null; label: string }[] = [
+  { id: null, label: "Alle" },
+  { id: "offen", label: "Offen" },
+  { id: "versendet", label: "Verschickt" },
+  { id: "positiv", label: "Antwort positiv" },
   { id: "abgelehnt", label: "Abgelehnt" },
   { id: "keine_antwort", label: "Keine Antwort" },
 ];
+
+/**
+ * Die Zahl auf einem Reiter.
+ *
+ * Kommt immer aus `counters` und nie aus `matched`: die Zähler zählen alle
+ * Zusagen, auch während eine Suche läuft. Sonst zeigte jeder Reiter die Zahl
+ * der gerade sichtbaren Zeilen – und die Reiter beantworteten die Frage
+ * nicht mehr, für die sie da sind („wo stehe ich insgesamt?").
+ */
+function countOf(state: MailState | null): number {
+  if (!props.board) return 0;
+
+  return state === null ? props.board.counters.gesamt : props.board.counters[state];
+}
 
 /** Welche Zeile gerade eine Anmerkung bekommt – immer höchstens eine. */
 const editing = ref<string | null>(null);
@@ -107,33 +131,29 @@ function waiting(entry: MailEntry): string {
 
 <template>
   <div class="space-y-4">
-    <!-- Zähler, die zugleich der Filter sind -->
-    <div v-if="board" class="flex flex-wrap items-stretch gap-3">
-      <div class="rounded-xl border light-grey-background light-grey-stroke px-5 py-3 min-w-36">
-        <p class="eyebrow">Zusagen</p>
-        <p class="text-3xl font-semibold leading-tight">{{ board.counters.gesamt }}</p>
-        <p v-if="board.counters.ohne_email" class="text-xs text-amber-400">
-          {{ board.counters.ohne_email }} ohne Adresse
-        </p>
-      </div>
-
+    <!-- Die Reiter: Filter und Zähler in einem -->
+    <div
+      v-if="board"
+      role="tablist"
+      aria-label="Nach Versandstand filtern"
+      class="flex flex-wrap items-center gap-x-1 border-b border-zinc-800"
+    >
       <button
-        v-for="tile in TILES"
-        :key="tile.id"
+        v-for="tab in TABS"
+        :key="tab.id ?? 'alle'"
         type="button"
-        class="rounded-xl border px-4 py-3 text-left transition-colors"
-        :class="
-          stateFilter === tile.id
-            ? 'border-blue-500 bg-blue-500/10'
-            : 'light-grey-background light-grey-stroke hover:border-zinc-600'
-        "
-        :title="stateFilter === tile.id ? 'Filter aufheben' : `Nur „${tile.label}“ anzeigen`"
-        @click="filterBy(tile.id)"
+        role="tab"
+        class="tab"
+        :class="stateFilter === tab.id ? 'tab--active' : ''"
+        :aria-selected="stateFilter === tab.id"
+        :data-tab="tab.id ?? 'alle'"
+        @click="filterBy(tab.id)"
       >
-        <p class="eyebrow">{{ tile.label }}</p>
-        <p class="text-xl font-semibold leading-tight" :class="tile.accent">
-          {{ board.counters[tile.id] }}
-        </p>
+        <span v-if="tab.id" class="material-symbols-outlined" style="font-size: 16px">
+          {{ ICONS[tab.id] }}
+        </span>
+        {{ tab.label }}
+        <span class="tab-count">{{ countOf(tab.id) }}</span>
       </button>
     </div>
 
@@ -155,12 +175,13 @@ function waiting(entry: MailEntry): string {
         />
       </div>
 
-      <button v-if="stateFilter" class="chip" type="button" @click="filterBy(null)">
-        <span class="material-symbols-outlined" style="font-size: 16px">close</span>
-        Filter aufheben
-      </button>
+      <!-- Die Zusagen ohne Adresse: keine eigene Spalte im Zustandsmodell,
+           aber die Nacharbeit, die sonst niemand sieht. -->
+      <p v-if="board?.counters.ohne_email" class="text-xs text-amber-400">
+        {{ board.counters.ohne_email }} ohne E-Mail-Adresse
+      </p>
 
-      <a :href="exportUrl()" class="chip" download>
+      <a :href="exportUrl()" class="chip ml-auto" download>
         <span class="material-symbols-outlined" style="font-size: 16px">download</span>
         Als CSV
       </a>

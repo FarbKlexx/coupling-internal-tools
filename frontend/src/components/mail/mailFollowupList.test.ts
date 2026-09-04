@@ -1,16 +1,16 @@
 /**
  * Die Versandliste.
  *
- * Drei Dinge sind hier eigene Logik und nicht bloß Anzeige: dass eine Zeile
- * genau die Knöpfe zeigt, die das Backend ihr mitgibt (und keine, die es
- * ablehnen würde), dass eine Anmerkung *ohne* Zustand abgeschickt wird, und
- * dass eine Zusage ohne Adresse als solche kenntlich ist statt still zu
- * verschwinden.
+ * Vier Dinge sind hier eigene Logik und nicht bloß Anzeige: die Reiter (welche
+ * es gibt, was sie zählen, welcher als aktiv gilt), dass eine Zeile genau die
+ * Knöpfe zeigt, die das Backend ihr mitgibt (und keine, die es ablehnen
+ * würde), dass eine Anmerkung *ohne* Zustand abgeschickt wird, und dass eine
+ * Zusage ohne Adresse als solche kenntlich ist statt still zu verschwinden.
  */
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, type Mock } from "vitest";
 import { mount } from "@vue/test-utils";
 import MailFollowupList from "./MailFollowupList.vue";
-import type { MailActionInfo, MailBoard, MailEntry } from "@/api/mail_followup.api";
+import type { MailActionInfo, MailBoard, MailEntry, MailState } from "@/api/mail_followup.api";
 
 const actions: MailActionInfo[] = [
   {
@@ -76,7 +76,16 @@ function board(...entries: MailEntry[]): MailBoard {
   };
 }
 
-function mountList(entries: MailEntry[] = [], save = vi.fn().mockResolvedValue(true)) {
+/** Der Filter-Aufruf, typisiert – sonst passt `vi.fn()` nicht auf die Prop. */
+type FilterMock = Mock<(state: MailState | null) => void>;
+
+function mountList(
+  entries: MailEntry[] = [],
+  save = vi.fn().mockResolvedValue(true),
+  extra: { filterBy?: FilterMock; stateFilter?: MailState | null } = {},
+) {
+  const filterBy: FilterMock = extra.filterBy ?? vi.fn();
+
   const wrapper = mount(MailFollowupList, {
     props: {
       board: board(...entries),
@@ -84,23 +93,67 @@ function mountList(entries: MailEntry[] = [], save = vi.fn().mockResolvedValue(t
       timeoutDays: 30,
       isLoading: false,
       isSaving: false,
-      filterBy: vi.fn(),
+      filterBy,
       goToPage: vi.fn(),
       save,
       query: "",
-      stateFilter: null,
+      stateFilter: extra.stateFilter ?? null,
     },
   });
 
-  return { wrapper, save };
+  return { wrapper, save, filterBy };
 }
 
-/** Die Knöpfe *einer* Zeile, ohne Zähler-Kacheln und Werkzeugleiste. */
+/** Die Knöpfe *einer* Zeile, ohne Reiter und Werkzeugleiste. */
 function rowButtons(wrapper: ReturnType<typeof mount>) {
   return wrapper.findAll("li button").map((button) => button.text());
 }
 
 describe("MailFollowupList", () => {
+  it("bietet einen Reiter je Zustand, plus „Alle“", () => {
+    const { wrapper } = mountList();
+
+    const tabs = wrapper.findAll("[role='tab']").map((tab) => tab.attributes("data-tab"));
+
+    expect(tabs).toEqual(["alle", "offen", "versendet", "positiv", "abgelehnt", "keine_antwort"]);
+  });
+
+  it("filtert beim Klick auf einen Reiter", async () => {
+    const { wrapper, filterBy } = mountList();
+
+    await wrapper.find("[data-tab='versendet']").trigger("click");
+
+    expect(filterBy).toHaveBeenCalledWith("versendet");
+  });
+
+  it("hebt den Filter über den Reiter „Alle“ wieder auf", async () => {
+    const { wrapper, filterBy } = mountList([], undefined, { stateFilter: "versendet" });
+
+    await wrapper.find("[data-tab='alle']").trigger("click");
+
+    expect(filterBy).toHaveBeenCalledWith(null);
+  });
+
+  it("markiert den aktiven Reiter – auch fuer Screenreader", () => {
+    const { wrapper } = mountList([], undefined, { stateFilter: "versendet" });
+
+    const active = wrapper.find("[data-tab='versendet']");
+
+    expect(active.classes()).toContain("tab--active");
+    expect(active.attributes("aria-selected")).toBe("true");
+    expect(wrapper.find("[data-tab='alle']").attributes("aria-selected")).toBe("false");
+  });
+
+  it("zaehlt auf den Reitern alle Zusagen, nicht die gerade sichtbaren", () => {
+    // Sonst zeigte jeder Reiter waehrend einer Suche die Zahl der Treffer –
+    // und beantwortete die Frage nicht mehr, fuer die er da ist.
+    const { wrapper } = mountList();
+
+    expect(wrapper.find("[data-tab='alle']").text()).toContain("1");
+    expect(wrapper.find("[data-tab='offen']").text()).toContain("1");
+    expect(wrapper.find("[data-tab='positiv']").text()).toContain("0");
+  });
+
   it("zeigt genau die Knoepfe, die das Backend der Zeile mitgibt", () => {
     // Die Uebergaenge stehen im Backend; eine Oberflaeche, die sie nachbaut,
     // bietet frueher oder spaeter einen an, der mit 400 antwortet.

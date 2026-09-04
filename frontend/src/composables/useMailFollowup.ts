@@ -79,8 +79,17 @@ export function useMailFollowup() {
     }, 300);
   });
 
+  /**
+   * Einen Reiter wählen. `null` ist „Alle".
+   *
+   * Setzt, statt zu wechseln: die Reiter zeigen, welcher gilt, und ein Klick
+   * auf den aktiven soll ihn nicht abwählen (das wäre bei einem Reiter eine
+   * Überraschung). Derselbe Wert lädt deshalb auch nicht neu.
+   */
   function filterBy(state: MailState | null) {
-    stateFilter.value = stateFilter.value === state ? null : state;
+    if (stateFilter.value === state) return;
+
+    stateFilter.value = state;
     offset.value = 0;
     void load();
   }

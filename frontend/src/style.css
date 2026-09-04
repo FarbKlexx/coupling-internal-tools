@@ -396,3 +396,60 @@ textarea:disabled {
   border-color: rgba(239, 68, 68, 0.5);
   color: #fca5a5;
 }
+
+/* --------------------------------------------------------------------------
+   Filter-Tabs
+   --------------------------------------------------------------------------
+
+   Ein Reiter pro Zustand, mit der Anzahl dahinter. Absichtlich ein
+   Tab-Streifen und keine Reihe anklickbarer Zähler-Kacheln: eine Kachel sieht
+   aus wie eine Zahl, und dass sie zugleich der Filter ist, sieht man ihr nicht
+   an. Ein Reiter dagegen sagt von sich aus, dass er eine Auswahl trifft — und
+   der aktive zeigt, welche gerade gilt.
+
+   Gehört hierher und nicht in die Komponente, damit die zweite Seite mit
+   Reitern nicht ihre eigene Variante erfindet. */
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.5rem 0.75rem;
+  /* Der Rahmen ist immer da, nur unten farbig — sonst springt die Zeile beim
+     Wechsel um zwei Pixel. */
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  font-size: 0.8125rem;
+  color: #a1a1aa;
+  white-space: nowrap;
+  transition:
+    color 0.15s,
+    border-color 0.15s;
+}
+
+.tab:hover:not(:disabled) {
+  color: #fafafa;
+}
+
+.tab--active {
+  color: #fafafa;
+  border-bottom-color: #3b82f6;
+  font-weight: 500;
+}
+
+.tab:disabled {
+  opacity: 0.4;
+}
+
+/* Die Anzahl hinter der Beschriftung. */
+.tab-count {
+  border-radius: 9999px;
+  background: #2d2d30;
+  padding: 0.0625rem 0.4375rem;
+  font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.tab--active .tab-count {
+  background: rgba(59, 130, 246, 0.2);
+  color: #93c5fd;
+}

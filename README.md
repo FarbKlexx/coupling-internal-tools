@@ -141,7 +141,9 @@ Welche Knöpfe eine Zeile zeigt, entscheidet die Übergangstabelle
 Schreiben prüft. Die Oberfläche kann also keinen Übergang anbieten, den der
 Server ablehnt.
 
-Die Zähler über der Liste sind zugleich der Filter; dazu kommen Suche
+Oben steht ein **Reiter je Zustand** mit seiner Anzahl (`Alle`, `Offen`,
+`Verschickt`, `Antwort positiv`, `Abgelehnt`, `Keine Antwort`) – die Zahlen
+zählen immer alle Zusagen, auch während eine Suche läuft. Dazu kommen die Suche
 (Betrieb, Adresse, Nummer) und `GET /api/mailversand/export` als CSV.
 
 **Berechtigung:** eine eigene (`mailversand`), getrennt von der Telefonakquise.
