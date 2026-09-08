@@ -3,6 +3,7 @@ import { computed, ref, watch } from "vue";
 import type { CallContact, CallCounters, OutcomeInfo, OutcomePayload } from "@/api/call_list.api";
 import OutcomeChooser, { type OutcomeChoice } from "./OutcomeChooser.vue";
 import { formatClock, formatMoment } from "./callTime";
+import { contactWebsite } from "./contactWebsite";
 
 const props = defineProps<{
   contact: CallContact | null;
@@ -44,6 +45,9 @@ watch(
 );
 
 const emailChanged = computed(() => email.value.trim() !== (props.contact?.email ?? ""));
+
+/** Die Website des Betriebs, `null`, wenn keine in der Liste stand. */
+const website = computed(() => contactWebsite(props.contact?.website ?? ""));
 
 /**
  * Der Hinweis, dass dieser Betrieb kein neuer ist.
@@ -235,9 +239,13 @@ function answer(choice: OutcomeChoice) {
           <span class="material-symbols-outlined">call</span>
           {{ contact.telefon }}
         </a>
+        <!-- `website` steht wortwörtlich aus der CSV in der Datenbank, also
+             oft ohne Schema. `contactWebsite` ergänzt es – ein
+             `href="www.beispiel.de"` wäre relativ und landete in der eigenen
+             SPA statt beim Betrieb. -->
         <a
-          v-if="contact.website"
-          :href="contact.website"
+          v-if="website?.href"
+          :href="website.href"
           target="_blank"
           rel="noopener noreferrer"
           class="flex items-center gap-1 text-sm light-grey-text hover:text-white transition-colors"
@@ -245,6 +253,9 @@ function answer(choice: OutcomeChoice) {
           <span class="material-symbols-outlined nav-icon">open_in_new</span>
           Website ansehen
         </a>
+        <span v-else-if="website" class="text-sm text-zinc-500">
+          Website: {{ website.label }}
+        </span>
       </div>
 
       <!-- Vorherige Versuche -->

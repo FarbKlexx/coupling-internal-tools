@@ -23,6 +23,7 @@ import {
   type MailState,
 } from "@/api/mail_followup.api";
 import { formatMoment } from "@/components/calls/callTime";
+import ContactWebsiteLink from "@/components/calls/ContactWebsiteLink.vue";
 
 const props = defineProps<{
   board: MailBoard | null;
@@ -243,6 +244,13 @@ function waiting(entry: MailEntry): string {
               <template v-if="entry.telefon"> · {{ entry.telefon }}</template>
               <template v-if="entry.plz || entry.ort"> · {{ entry.plz }} {{ entry.ort }}</template>
               <template v-if="entry.gewerk"> · {{ entry.gewerk }}</template>
+              <!-- Die Website: beim Nachfassen die Frage „mit wem rede ich
+                   hier eigentlich?“, ohne den Betrieb erst googeln zu müssen.
+                   Ob daraus ein Link wird, entscheidet die Komponente – der
+                   Wert kommt unverändert aus der CSV. -->
+              <template v-if="entry.website">
+                · <ContactWebsiteLink :website="entry.website" />
+              </template>
             </p>
 
             <p class="text-xs text-zinc-500">

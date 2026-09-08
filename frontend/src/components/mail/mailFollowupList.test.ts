@@ -195,6 +195,34 @@ describe("MailFollowupList", () => {
     expect(rowButtons(wrapper).some((text) => text.includes("Mail versendet"))).toBe(false);
   });
 
+  it("verlinkt die Website des Betriebs, auch ohne Schema in der CSV", () => {
+    // Beim Nachfassen die Frage „mit wem rede ich hier eigentlich?" – und die
+    // Analysen schreiben „www.beispiel.de", woraus ein relativer Link wuerde.
+    const { wrapper } = mountList([{ ...entry, website: "www.tayfun-design.de" }]);
+
+    // Ueber `target` und nicht ueber den Text: die Adresse der Zeile steht als
+    // `mailto:` in derselben Zeile und traegt oft dieselbe Domain.
+    const link = wrapper.find("li a[target='_blank']");
+
+    expect(link.attributes("href")).toBe("https://www.tayfun-design.de/");
+    expect(link.attributes("rel")).toBe("noopener noreferrer");
+    expect(link.text()).toContain("tayfun-design.de");
+  });
+
+  it("zeigt eine Zeile ohne Website ohne leeren Link", () => {
+    const { wrapper } = mountList();
+
+    expect(wrapper.find("li a[target='_blank']").exists()).toBe(false);
+  });
+
+  it("macht aus einem Wort wie „keine“ keinen Link, laesst es aber stehen", () => {
+    // In dieser Spalte steht auch, was gar keine Adresse ist.
+    const { wrapper } = mountList([{ ...entry, website: "keine" }]);
+
+    expect(wrapper.find("li a[target='_blank']").exists()).toBe(false);
+    expect(wrapper.text()).toContain("keine");
+  });
+
   it("weist den automatisch gesetzten Zustand als solchen aus", () => {
     // Sonst sieht die Zeile aus, als haette jemand sie abgeschlossen.
     const { wrapper } = mountList([
