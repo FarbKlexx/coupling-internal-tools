@@ -22,6 +22,35 @@ export const MAIL_STATES = ["offen", "versendet", "positiv", "abgelehnt", "keine
 
 export type MailState = (typeof MAIL_STATES)[number];
 
+/**
+ * Die Bau-Einschätzung einer Zusage. Spiegel von `BuildReadiness` im Backend.
+ *
+ * Zweite, vom Versandstand unabhängige Größe: sie sagt, ob die bestehende
+ * Website Inhalt hat, den die neue übernehmen kann. Hat sie keinen, ist es
+ * kein Redesign mehr – dann müssen Texte entstehen, und darüber muss vorher
+ * jemand mit dem Kunden sprechen.
+ *
+ * `unbewertet` ist der Ausgangswert *und* der Rückweg: entfernt wird ein
+ * Marker, indem man ihn setzt (siehe `MailUpdate.readiness`).
+ */
+export const BUILD_READINESS = ["unbewertet", "ready_to_build", "missing_content"] as const;
+
+export type BuildReadiness = (typeof BUILD_READINESS)[number];
+
+/**
+ * Ein Marker, wie ihn das Frontend rendert – Beschriftung und Beschreibung
+ * kommen mit der Antwort (`MailBoard.readiness_options`).
+ *
+ * Ohne `tone`, anders als bei den Zustands-Knöpfen: „Missing Content" ist
+ * keine schlechte Nachricht, sondern mehr Arbeit. Die Farben der drei Werte
+ * stehen deshalb in der Oberfläche (`READINESS_STYLE`).
+ */
+export interface ReadinessOptionInfo {
+  id: BuildReadiness;
+  label: string;
+  description: string;
+}
+
 export interface MailActionInfo {
   /** Der Zustand, in dem die Zeile danach steht – die Aktion *ist* ihr Ziel. */
   id: MailState;
@@ -49,6 +78,9 @@ export interface MailEntry {
   note: string;
   state: MailState;
   state_label: string;
+  /** Die Bau-Einschätzung – unabhängig vom Versandstand. */
+  readiness: BuildReadiness;
+  readiness_label: string;
   /** Der Zustand folgt aus der Frist und wurde nicht angeklickt. */
   automatic: boolean;
   sent_at: string | null;
@@ -77,6 +109,15 @@ export interface MailCounters {
   keine_antwort: number;
   /** Zusagen ohne Adresse – die Nacharbeit, die sonst niemand sieht. */
   ohne_email: number;
+  /**
+   * Die Bau-Einschätzung, gezählt über *alle* Zusagen.
+   *
+   * „Wie viele könnten wir sofort bauen?" ist die Frage, für die die Marker
+   * gesetzt werden – und die stellt sich vor der Antwort auf die Mail.
+   */
+  ready_to_build: number;
+  missing_content: number;
+  unbewertet: number;
 }
 
 export interface MailBoard {
@@ -91,6 +132,8 @@ export interface MailBoard {
   offset: number;
   limit: number;
   actions: MailActionInfo[];
+  /** Die Marker samt Beschriftung – wie `actions` Daten und nicht Code. */
+  readiness_options: ReadinessOptionInfo[];
   /** Die Frist, nach der ohne Antwort „keine Antwort" gilt. */
   timeout_days: number;
 }
@@ -99,15 +142,25 @@ export interface MailBoard {
 export interface MailView {
   q?: string;
   state?: MailState | null;
+  /** Zweiter, unabhängiger Filter: „was ist verschickt" und „was können wir
+   *  bauen" sind zwei Fragen, zusammen ergeben sie die Bauliste. */
+  readiness?: BuildReadiness | null;
   offset?: number;
   limit?: number;
 }
 
-/** Was ein Klick schickt. Ohne `state` ist es eine reine Anmerkung. */
+/**
+ * Was ein Klick schickt. Jedes Feld einzeln, jedes Weglassen „unverändert".
+ *
+ * Ohne `state` ist es eine reine Anmerkung oder ein reiner Marker – der
+ * Versandstand bleibt dabei stehen, samt Versand- und Antwortdatum.
+ */
 export interface MailUpdate {
   state?: MailState;
   /** `undefined` = unverändert, `""` = löschen. */
   note?: string;
+  /** `undefined` = unverändert; entfernt wird mit `"unbewertet"`. */
+  readiness?: BuildReadiness;
 }
 
 /** Query-Parameter aus einer Sicht – leere Felder bleiben weg. */
@@ -116,6 +169,7 @@ function params(view: MailView): Record<string, string | number> {
 
   if (view.q?.trim()) query.q = view.q.trim();
   if (view.state) query.state = view.state;
+  if (view.readiness) query.readiness = view.readiness;
   if (view.offset) query.offset = view.offset;
   if (view.limit) query.limit = view.limit;
 

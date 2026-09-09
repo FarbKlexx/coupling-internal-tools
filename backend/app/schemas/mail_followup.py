@@ -20,6 +20,11 @@ Code:
   Sinnvolles tun. Dieselbe Übergangstabelle entscheidet beim Schreiben, also
   kann die Oberfläche keinen Knopf zeigen, der mit 400 antwortet.
 
+Neben dem Versandstand trägt jede Zeile eine zweite, davon unabhängige
+Größe: `BuildReadiness` — ob sich aus der bestehenden Website überhaupt eine
+neue bauen lässt. Sie beantwortet eine andere Frage („was kostet die
+Umsetzung?") und hat deshalb eigene Marker statt eines sechsten Zustands.
+
 Der Zustand `keine_antwort` wird **nicht geschrieben, sondern gerechnet**:
 eine versendete Mail, auf die seit `MAIL_TIMEOUT_DAYS` Tagen nichts kam,
 erscheint als „keine Antwort". Es gibt in dieser Anwendung keinen
@@ -174,6 +179,85 @@ MAIL_ACTIONS: tuple[MailActionInfo, ...] = (
 )
 
 
+class BuildReadiness(str, Enum):
+    """Wie gut sich aus der bestehenden Website eine neue bauen lässt.
+
+    Zweite, von `MailState` **unabhängige** Dimension: der Versandstand sagt,
+    wo die Mail steht, diese Einschätzung sagt, was die Umsetzung kostet. Ein
+    Betrieb kann „Antwort positiv" und „Missing Content" gleichzeitig sein —
+    das ist sogar der Fall, für den die Einschätzung gemacht wird.
+
+    Der Unterschied ist nicht „hat eine Domain": aufrufbar sind fast alle.
+    Gemeint ist, ob dort Inhalt steht, den die neue Seite übernehmen kann.
+    Fehlt er, ist es kein Redesign mehr — dann müssen Texte neu entstehen,
+    und darüber muss vorher jemand mit dem Kunden sprechen.
+
+    `unbewertet` ist wie `MailState.OFFEN` der Ausgangszustand und braucht
+    keinen Eintrag: eine Zusage, die noch niemand angesehen hat, steht darauf.
+    """
+
+    #: Noch nicht angesehen. Der Ausgangszustand jeder Zusage.
+    UNBEWERTET = "unbewertet"
+    #: Inhalt ist da, die neue Seite kann ihn übernehmen — reines Redesign.
+    READY_TO_BUILD = "ready_to_build"
+    #: Seite erreichbar, aber praktisch ohne Inhalt: Texte müssen neu
+    #: entstehen, vorher Rücksprache mit dem Kunden.
+    MISSING_CONTENT = "missing_content"
+
+
+READINESS_LABELS: dict[BuildReadiness, str] = {
+    BuildReadiness.UNBEWERTET: "noch nicht eingeschätzt",
+    BuildReadiness.READY_TO_BUILD: "Ready to Build",
+    BuildReadiness.MISSING_CONTENT: "Missing Content",
+}
+
+
+class ReadinessOptionInfo(BaseModel):
+    """Ein Marker, wie ihn das Frontend rendert.
+
+    Wie bei `MailActionInfo` ist die `id` das Ziel — nur gibt es hier keine
+    Übergangstabelle: eingeschätzt wird jederzeit und in jedem Versandstand,
+    und jeder Wert lässt sich in jeden anderen ändern. Eine Einschätzung ist
+    eine Beobachtung über eine Website, kein Vorgang mit Reihenfolge.
+
+    Ohne `tone`: die drei Werte haben in der Oberfläche ihre eigene Farbe,
+    denn „Missing Content" ist keine schlechte Nachricht (das wäre
+    `negative`), sondern mehr Arbeit.
+    """
+
+    id: BuildReadiness
+    label: str
+    description: str
+
+
+#: Reihenfolge = Reihenfolge der Marker an der Zeile. `unbewertet` steht
+#: bewusst mit darin: es ist der Rückweg aus dem Fehlklick, und ohne ihn
+#: bliebe eine falsch gesetzte Einschätzung für immer stehen.
+READINESS_OPTIONS: tuple[ReadinessOptionInfo, ...] = (
+    ReadinessOptionInfo(
+        id=BuildReadiness.READY_TO_BUILD,
+        label="Ready to Build",
+        description=(
+            "Die bestehende Website hat Inhalt, den die neue übernehmen kann – "
+            "ein Redesign. Kann so in die Umsetzung."
+        ),
+    ),
+    ReadinessOptionInfo(
+        id=BuildReadiness.MISSING_CONTENT,
+        label="Missing Content",
+        description=(
+            "Die Seite ist erreichbar, hat aber kaum Inhalt: Texte müssten neu "
+            "entstehen. Erst Rücksprache mit dem Kunden, dann bauen."
+        ),
+    ),
+    ReadinessOptionInfo(
+        id=BuildReadiness.UNBEWERTET,
+        label="Einschätzung entfernen",
+        description="Zurück auf „noch nicht eingeschätzt“ – für den Fehlklick.",
+    ),
+)
+
+
 class MailEntry(BaseModel):
     """Eine Zusage in der Versandliste.
 
@@ -203,6 +287,10 @@ class MailEntry(BaseModel):
 
     state: MailState
     state_label: str
+    #: Die Bau-Einschätzung — zweite Dimension, unabhängig von `state`.
+    #: `unbewertet`, solange niemand die Website angesehen hat.
+    readiness: BuildReadiness
+    readiness_label: str
     #: Wahr, wenn dieser Zustand aus der Frist folgt und nicht angeklickt
     #: wurde. Die Oberfläche schreibt „automatisch" daneben — sonst sieht es
     #: aus, als hätte jemand die Zeile abgeschlossen.
@@ -240,6 +328,16 @@ class MailCounters(BaseModel):
     #: Versand-Knopf — die Nacharbeit, die sonst niemand sieht.
     ohne_email: int
 
+    #: Die Bau-Einschätzung, gezählt über *alle* Zusagen — nicht nur über die
+    #: beantworteten. „Wie viele könnten wir sofort bauen?" ist die Frage, für
+    #: die die Marker gesetzt werden, und die stellt sich vor der Antwort.
+    ready_to_build: int
+    missing_content: int
+    #: Die noch nicht angesehenen. Ausdrücklich mitgeschickt und nicht als
+    #: `gesamt` minus die anderen zwei gerechnet: sonst müsste die Oberfläche
+    #: die Regel kennen, dass die drei Werte einander ausschließen.
+    unbewertet: int
+
 
 class MailBoard(BaseModel):
     """Die ganze Ansicht in einer Antwort.
@@ -260,6 +358,11 @@ class MailBoard(BaseModel):
     offset: int
     limit: int
     actions: list[MailActionInfo]
+    #: Die Marker der Bau-Einschätzung, samt Beschriftung — wie `actions`
+    #: Daten und nicht Code. Ohne Übergangstabelle: jeder Wert ist immer
+    #: erlaubt (siehe `ReadinessOptionInfo`), deshalb hängt die Liste am Board
+    #: und nicht an der Zeile.
+    readiness_options: list[ReadinessOptionInfo]
     #: Die Frist, damit die Oberfläche sie nennen kann, ohne sie zu kennen.
     timeout_days: int = MAIL_TIMEOUT_DAYS
 
@@ -280,3 +383,8 @@ class MailUpdateRequest(BaseModel):
     #: E-Mail-Adresse im Anruf-Ergebnis: wer das Feld nicht anfasst, darf eine
     #: vorhandene Anmerkung nicht verlieren.
     note: str | None = Field(default=None, max_length=MAX_MAIL_NOTE)
+    #: Die Bau-Einschätzung. `None` = unverändert — gelöscht wird nicht durch
+    #: Weglassen, sondern durch `unbewertet`: bei drei Werten ist der
+    #: Rückweg selbst einer, und ein Marker, den nur das *Fehlen* eines Feldes
+    #: entfernt, wäre von „nicht mitgeschickt" nicht zu unterscheiden.
+    readiness: BuildReadiness | None = None

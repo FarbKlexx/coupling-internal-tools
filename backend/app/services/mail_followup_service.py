@@ -4,7 +4,7 @@ Was nach der Zusage passiert. Die Telefonakquise beantwortet „dürfen wir
 schreiben?" und legt den Nachweis dafür an; hier steht die andere Hälfte:
 *haben* wir geschrieben, und was kam zurück.
 
-Drei Entscheidungen prägen dieses Modul:
+Vier Entscheidungen prägen dieses Modul:
 
 * **Keine eigenen Kontakte.** Die Zeilen sind die Kontakte der
   Telefonakquise im Zustand `zugesagt`. Ein Betrieb, dessen Zusage
@@ -15,6 +15,11 @@ Drei Entscheidungen prägen dieses Modul:
   Datenmodul). Es gibt in dieser Anwendung keinen Hintergrundjob, und ein
   Feld, das erst beim nächsten Klick nachgezogen würde, wäre bis dahin
   falsch.
+* **Die Bau-Einschätzung ist eine zweite Dimension**, kein sechster
+  Zustand: `BuildReadiness` sagt, ob aus der bestehenden Website eine neue
+  werden kann, und beantwortet damit eine andere Frage als der Versandstand.
+  Sie hat aus demselben Grund keine Übergangstabelle — eingeschätzt wird
+  jederzeit, in jedem Versandstand, in jede Richtung.
 * **Die Übergänge stehen in einer Tabelle**, und dieselbe Tabelle bestückt die
   Knöpfe der Zeile (`MAIL_TRANSITIONS`). Die Oberfläche kann deshalb keinen
   Übergang anbieten, den das Schreiben ablehnt — das Muster von
@@ -38,6 +43,9 @@ from app.schemas.mail_followup import (
     MAIL_TIMEOUT_DAYS,
     MAIL_TRANSITIONS,
     MAX_MAIL_PAGE_SIZE,
+    READINESS_LABELS,
+    READINESS_OPTIONS,
+    BuildReadiness,
     MailBoard,
     MailCounters,
     MailEntry,
@@ -115,6 +123,7 @@ def _actions(row: sqlite3.Row, state: MailState) -> list[MailState]:
 def _entry(row: sqlite3.Row) -> MailEntry:
     state = MailState(row["mail_state"])
     stored = MailState(row["stored_state"] or MailState.OFFEN.value)
+    readiness = BuildReadiness(row["readiness"])
 
     return MailEntry(
         contact_id=row["contact_id"],
@@ -133,6 +142,8 @@ def _entry(row: sqlite3.Row) -> MailEntry:
         note=row["note"] or "",
         state=state,
         state_label=MAIL_STATE_LABELS[state],
+        readiness=readiness,
+        readiness_label=READINESS_LABELS[readiness],
         # Der einzige Fall, in dem sich der angezeigte vom gespeicherten
         # Zustand unterscheidet: die abgelaufene Frist. Ohne diesen Hinweis
         # sähe die Zeile aus, als hätte jemand sie abgeschlossen.
@@ -149,9 +160,15 @@ def _entry(row: sqlite3.Row) -> MailEntry:
 
 def _counters(conn: sqlite3.Connection, cutoff: str) -> MailCounters:
     totals = db.mail_totals(conn, cutoff)
+    # Zweite Abfrage, weil es eine zweite Frage ist: die Einschätzung hängt
+    # weder am Stichtag noch am Versandstand.
+    readiness = db.mail_readiness_totals(conn)
 
     def count(state: MailState) -> int:
         return totals.get(state.value, (0, 0))[0]
+
+    def marked(value: BuildReadiness) -> int:
+        return readiness.get(value.value, 0)
 
     return MailCounters(
         gesamt=sum(total for total, _ in totals.values()),
@@ -161,6 +178,9 @@ def _counters(conn: sqlite3.Connection, cutoff: str) -> MailCounters:
         abgelehnt=count(MailState.ABGELEHNT),
         keine_antwort=count(MailState.KEINE_ANTWORT),
         ohne_email=sum(without for _, without in totals.values()),
+        ready_to_build=marked(BuildReadiness.READY_TO_BUILD),
+        missing_content=marked(BuildReadiness.MISSING_CONTENT),
+        unbewertet=marked(BuildReadiness.UNBEWERTET),
     )
 
 
@@ -170,6 +190,7 @@ def _board(
     cutoff: str,
     query: str,
     state: MailState | None,
+    readiness: BuildReadiness | None,
     offset: int,
     limit: int,
 ) -> MailBoard:
@@ -179,6 +200,7 @@ def _board(
         cutoff=cutoff,
         query=query,
         state=state.value if state else None,
+        readiness=readiness.value if readiness else None,
         limit=limit,
         offset=offset,
     )
@@ -192,6 +214,7 @@ def _board(
         offset=offset,
         limit=limit,
         actions=list(MAIL_ACTIONS),
+        readiness_options=list(READINESS_OPTIONS),
     )
 
 
@@ -204,6 +227,7 @@ def get_board(
     *,
     query: str = "",
     state: MailState | None = None,
+    readiness: BuildReadiness | None = None,
     offset: int = 0,
     limit: int = MAIL_PAGE_SIZE,
 ) -> MailBoard:
@@ -215,6 +239,7 @@ def get_board(
             cutoff=_cutoff(),
             query=query,
             state=state,
+            readiness=readiness,
             offset=offset,
             limit=limit,
         )
@@ -250,15 +275,20 @@ def set_state(
     username: str,
     query: str = "",
     state: MailState | None = None,
+    readiness: BuildReadiness | None = None,
     offset: int = 0,
     limit: int = MAIL_PAGE_SIZE,
 ) -> MailBoard:
-    """Den Versandzustand einer Zusage setzen — oder nur ihre Anmerkung.
+    """Den Versandzustand einer Zusage setzen — oder Anmerkung, oder Marker.
 
-    Ohne `state` im Anfragekörper bleibt der Zustand samt Versand- und
-    Antwortdatum, wie er ist, und nur die Anmerkung wird geschrieben. Das ist
-    kein Sonderfall aus Bequemlichkeit: notiert wird meistens *während* eine
+    Alle drei Felder des Anfragekörpers sind einzeln setzbar, und jedes
+    Weglassen heißt „unverändert". Ohne `state` bleibt der Zustand samt
+    Versand- und Antwortdatum, wie er ist. Das ist kein Sonderfall aus
+    Bequemlichkeit: notiert und eingeschätzt wird meistens *während* eine
     Zeile wartet, und für „wartet weiter" gibt es keinen Knopf.
+
+    `readiness` als Schlüsselwort ist der *Filter* der Ansicht, `request.
+    readiness` der zu setzende Marker — dieselbe Doppelung wie bei `state`.
 
     Antwortet mit der ganzen Ansicht für *dieselbe* Sicht, aus der der Klick
     kam (Suche, Filter, Seite reisen mit) — sonst spränge die Liste nach jedem
@@ -307,6 +337,14 @@ def set_state(
                 state=target.value,
                 sent_at=sent_at,
                 answered_at=answered_at,
+                # Fehlt der Marker, bleibt der gesetzte stehen: ein Klick auf
+                # „Mail versendet" darf eine Einschätzung nicht verwerfen.
+                # Entfernt wird sie mit `unbewertet`, nicht durch Weglassen.
+                readiness=(
+                    row["readiness"]
+                    if request.readiness is None
+                    else request.readiness.value
+                ),
                 # Fehlt das Feld, bleibt die Anmerkung stehen: wer nur einen
                 # Knopf drückt, soll nicht löschen, was jemand notiert hat.
                 note=(
@@ -327,6 +365,7 @@ def set_state(
             cutoff=cutoff,
             query=query,
             state=state,
+            readiness=readiness,
             offset=offset,
             limit=limit,
         )
@@ -352,6 +391,7 @@ def export_board() -> CallListExport:
         "Zusage aufgenommen von",
         "Versandstatus",
         "automatisch",
+        "Bau-Einschätzung",
         "Mail versendet am (UTC)",
         "Tage seit Versand",
         "Antwort am (UTC)",
@@ -377,6 +417,13 @@ def export_board() -> CallListExport:
             entry.promised_by,
             MAIL_STATE_LABELS[entry.state],
             "ja" if entry.automatic else "",
+            # Leer statt „noch nicht eingeschätzt": in einer Tabelle mit 400
+            # Zeilen ist die leere Zelle die Auskunft, die man filtern kann.
+            (
+                ""
+                if entry.readiness is BuildReadiness.UNBEWERTET
+                else READINESS_LABELS[entry.readiness]
+            ),
             entry.sent_at or "",
             "" if entry.days_since_sent is None else str(entry.days_since_sent),
             entry.answered_at or "",

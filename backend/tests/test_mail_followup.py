@@ -21,8 +21,15 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from app.core import call_list_db as db
 from app.schemas.access import Page
-from app.schemas.mail_followup import MAIL_TIMEOUT_DAYS, MAIL_TRANSITIONS, MailState
+from app.schemas.mail_followup import (
+    MAIL_TIMEOUT_DAYS,
+    MAIL_TRANSITIONS,
+    READINESS_OPTIONS,
+    BuildReadiness,
+    MailState,
+)
 
 CSV = (
     "Betrieb;Telefon;Ort;E-Mail\r\n"
@@ -77,6 +84,21 @@ def _click(client, contact_id, state, expected=200, **params):
     )
     assert response.status_code == expected, response.text
     return response.json()
+
+
+def _mark(client, contact_id, readiness, expected=200, **params):
+    """Einen Marker setzen — ohne Zustand im Körper, wie die Oberfläche."""
+    response = client.post(
+        f"/mailversand/contacts/{contact_id}",
+        json={"readiness": readiness},
+        params=params,
+    )
+    assert response.status_code == expected, response.text
+    return response.json()
+
+
+def _entry(board, contact_id):
+    return next(e for e in board["entries"] if e["contact_id"] == contact_id)
 
 
 def _backdate(call_db, contact_id, days):
@@ -453,3 +475,315 @@ def test_a_note_can_be_written_without_touching_the_state(zusagen, call_db):
     # die Frist bleibt gerechnet, statt durch die Notiz zementiert zu werden.
     assert entry["state"] == "keine_antwort"
     assert entry["automatic"] is True
+
+
+# ------------------------------
+# Die Bau-Einschätzung
+# ------------------------------
+
+
+def test_a_promise_starts_without_an_assessment(zusagen):
+    """Der Ausgangswert braucht keinen Eintrag — wie „noch nicht versendet".
+
+    Eine Zusage, deren Website niemand angesehen hat, steht auf
+    `unbewertet`; das ist kein fehlender Wert, sondern eine Auskunft.
+    """
+    client, ids = zusagen
+
+    board = _board(client)
+
+    assert _entry(board, ids[0])["readiness"] == "unbewertet"
+    assert _entry(board, ids[0])["readiness_label"] == "noch nicht eingeschätzt"
+    assert board["counters"]["unbewertet"] == 2
+    assert board["counters"]["ready_to_build"] == 0
+    assert board["counters"]["missing_content"] == 0
+    # Die Marker fahren als Daten mit, wie die Knöpfe.
+    assert [option["id"] for option in board["readiness_options"]] == [
+        option.id.value for option in READINESS_OPTIONS
+    ]
+
+
+def test_a_marker_is_set_without_touching_the_state(zusagen):
+    """Eingeschätzt wird, *während* eine Zeile irgendwo steht.
+
+    Die Einschätzung ist keine Stufe im Versand, sondern eine Beobachtung
+    über eine Website — sie darf den Versandstand nicht anfassen.
+    """
+    client, ids = zusagen
+    _click(client, ids[0], "versendet")
+
+    board = _mark(client, ids[0], "ready_to_build")
+    entry = _entry(board, ids[0])
+
+    assert entry["readiness"] == "ready_to_build"
+    assert entry["readiness_label"] == "Ready to Build"
+    assert entry["state"] == "versendet"
+    assert entry["sent_at"]
+    assert board["counters"]["ready_to_build"] == 1
+    assert board["counters"]["unbewertet"] == 1
+
+
+def test_the_two_markers_replace_each_other(zusagen):
+    """Entweder die alte Seite hat Inhalt, oder sie hat keinen.
+
+    Zwei unabhängige Häkchen wären ein Zustand, den niemand lesen kann
+    („Ready to Build *und* Missing Content"), deshalb ist es ein Wert.
+    """
+    client, ids = zusagen
+    _mark(client, ids[0], "ready_to_build")
+
+    board = _mark(client, ids[0], "missing_content")
+
+    assert _entry(board, ids[0])["readiness"] == "missing_content"
+    assert board["counters"]["ready_to_build"] == 0
+    assert board["counters"]["missing_content"] == 1
+
+
+def test_a_marker_can_be_removed_again(zusagen):
+    """Der Fehlklick gehört zum Werkzeug — auch hier.
+
+    Entfernt wird durch `unbewertet` und nicht durch ein weggelassenes Feld:
+    „nicht mitgeschickt" heißt überall in diesem Anfragekörper
+    „unverändert".
+    """
+    client, ids = zusagen
+    _mark(client, ids[0], "missing_content")
+
+    board = _mark(client, ids[0], "unbewertet")
+
+    assert _entry(board, ids[0])["readiness"] == "unbewertet"
+    assert board["counters"]["missing_content"] == 0
+    assert board["counters"]["unbewertet"] == 2
+
+
+def test_a_send_click_keeps_the_marker(zusagen):
+    """Sonst verwirft der Weg durch den Versand die Einschätzung still.
+
+    Beide Größen liegen in derselben Zeile, und geschrieben wird sie immer
+    ganz — das „unverändert" muss der Service auflösen.
+    """
+    client, ids = zusagen
+    _mark(client, ids[0], "ready_to_build")
+
+    board = _click(client, ids[0], "versendet")
+    assert _entry(board, ids[0])["readiness"] == "ready_to_build"
+
+    board = _click(client, ids[0], "positiv")
+    assert _entry(board, ids[0])["readiness"] == "ready_to_build"
+
+    # Auch das Zurücksetzen des Versands ist keine Aussage über die Website.
+    board = _click(client, ids[0], "offen")
+    assert _entry(board, ids[0])["readiness"] == "ready_to_build"
+
+
+def test_a_note_keeps_the_marker_and_a_marker_keeps_the_note(zusagen):
+    """Drei Felder, drei unabhängige Wege in dieselbe Zeile."""
+    client, ids = zusagen
+    response = client.post(
+        f"/mailversand/contacts/{ids[0]}",
+        json={"note": "Seite hat drei Sätze", "readiness": "missing_content"},
+    )
+    assert response.status_code == 200, response.text
+
+    board = _mark(client, ids[0], "ready_to_build")
+    entry = _entry(board, ids[0])
+
+    assert entry["mail_note"] == "Seite hat drei Sätze"
+    assert entry["readiness"] == "ready_to_build"
+
+    board = client.post(
+        f"/mailversand/contacts/{ids[0]}", json={"note": "doch genug Inhalt"}
+    ).json()
+
+    assert _entry(board, ids[0])["readiness"] == "ready_to_build"
+    assert _entry(board, ids[0])["mail_note"] == "doch genug Inhalt"
+
+
+def test_a_marker_survives_the_expired_deadline(zusagen, call_db):
+    """Ein Marker darf die gerechnete Frist nicht festschreiben.
+
+    Dieselbe Falle wie beim Notizzettel: geschrieben wird der *gespeicherte*
+    Zustand, nicht der angezeigte.
+    """
+    client, ids = zusagen
+    _click(client, ids[0], "versendet")
+    _backdate(call_db, ids[0], MAIL_TIMEOUT_DAYS + 4)
+
+    board = _mark(client, ids[0], "ready_to_build")
+    entry = _entry(board, ids[0])
+
+    assert entry["readiness"] == "ready_to_build"
+    assert entry["state"] == "keine_antwort"
+    assert entry["automatic"] is True
+
+
+def test_a_marker_needs_no_email_address(zusagen):
+    """Ob eine Website Inhalt hat, ist von der Adresse unabhängig.
+
+    Die Zusage ohne Adresse ist Nacharbeit — und ausgerechnet die will man
+    einschätzen können, bevor man ihr nachtelefoniert.
+    """
+    client, _ = zusagen
+    without = next(
+        e for e in _board(client)["entries"] if e["betrieb"] == "Dritter Betrieb"
+    )
+
+    board = _mark(client, without["contact_id"], "missing_content")
+
+    assert _entry(board, without["contact_id"])["readiness"] == "missing_content"
+
+
+def test_the_marker_filter_is_independent_of_the_state_filter(zusagen):
+    """Zwei Filter, zwei Fragen — und zusammen die dritte.
+
+    „Verschickt und Ready to Build" ist die Liste, mit der jemand anfängt zu
+    bauen; sie entsteht nur, wenn beide Filter gleichzeitig gelten.
+    """
+    client, ids = zusagen
+    _mark(client, ids[0], "ready_to_build")
+    _click(client, ids[0], "versendet")
+    _mark(client, ids[1], "ready_to_build")
+
+    both = _board(client, state="versendet", readiness="ready_to_build")
+    assert [e["contact_id"] for e in both["entries"]] == [ids[0]]
+    assert both["matched"] == 1
+
+    marker_only = _board(client, readiness="ready_to_build")
+    assert marker_only["matched"] == 2
+
+    assert _board(client, readiness="missing_content")["matched"] == 0
+    assert _board(client, readiness="unbewertet")["matched"] == 0
+
+    # Die Zahlen über der Liste zählen weiter alles — gefiltert ist die Liste,
+    # nicht die Auskunft „wo stehe ich insgesamt".
+    assert both["total"] == 2
+    assert both["counters"]["gesamt"] == 2
+    assert both["counters"]["ready_to_build"] == 2
+
+
+def test_the_marker_filter_combines_with_the_search(zusagen):
+    """Drei Bedingungen in einem WHERE, mit drei Parametern in einer Reihe.
+
+    Die Reihenfolge der Platzhalter ist die einzige Stelle, an der ein
+    zweiter Filter etwas kaputt machen kann — ein falsch eingefädelter
+    Stichtag liefert kein Fehlerbild, sondern leise falsche Treffer.
+    """
+    client, ids = zusagen
+    _mark(client, ids[0], "ready_to_build")
+
+    assert _board(client, q="Erster", readiness="ready_to_build")["matched"] == 1
+    assert _board(client, q="Dritter", readiness="ready_to_build")["matched"] == 0
+
+    _click(client, ids[0], "versendet")
+    hit = _board(
+        client, q="+49 5221 111", state="versendet", readiness="ready_to_build"
+    )
+    assert [e["contact_id"] for e in hit["entries"]] == [ids[0]]
+
+
+def test_an_unknown_marker_is_refused(zusagen):
+    """Ein Wert, den das Enum nicht kennt, kommt nicht in die Datenbank."""
+    client, ids = zusagen
+
+    response = client.post(
+        f"/mailversand/contacts/{ids[0]}", json={"readiness": "vielleicht"}
+    )
+
+    assert response.status_code == 422
+
+
+def test_a_marked_row_answers_with_the_view_it_came_from(zusagen):
+    """Wie beim Zustand: sonst spränge die Liste auf die erste Seite zurück."""
+    client, ids = zusagen
+
+    board = _mark(client, ids[0], "ready_to_build", q="Erster")
+
+    assert [entry["betrieb"] for entry in board["entries"]] == ["Erster Betrieb"]
+    assert board["matched"] == 1
+
+
+def test_the_export_names_the_assessment(zusagen):
+    """Und lässt die Zelle leer, solange keine gemacht wurde."""
+    client, ids = zusagen
+    _mark(client, ids[0], "missing_content")
+
+    response = client.get("/mailversand/export")
+    assert response.status_code == 200
+    lines = response.content.decode("utf-8-sig").splitlines()
+
+    assert "Bau-Einschätzung" in lines[0].split(";")
+    column = lines[0].split(";").index("Bau-Einschätzung")
+    marked = next(line for line in lines if line.startswith("Erster Betrieb"))
+    unmarked = next(line for line in lines if line.startswith("Dritter Betrieb"))
+
+    assert marked.split(";")[column] == "Missing Content"
+    assert unmarked.split(";")[column] == ""
+
+
+def test_every_marker_can_be_set_and_unset(zusagen):
+    """Keine Übergangstabelle heißt: jeder Wert ist von jedem aus erreichbar.
+
+    Billig zu prüfen, und es hält die Begründung fest — die Einschätzung ist
+    kein Vorgang mit Reihenfolge, sondern eine Beobachtung.
+    """
+    client, ids = zusagen
+
+    for value in BuildReadiness:
+        for target in BuildReadiness:
+            _mark(client, ids[0], value.value)
+            board = _mark(client, ids[0], target.value)
+            assert _entry(board, ids[0])["readiness"] == target.value
+
+
+def test_a_database_from_before_the_assessment_gets_the_new_column(zusagen):
+    """`CREATE TABLE IF NOT EXISTS` fasst eine vorhandene Tabelle nicht an.
+
+    `calls.db` liegt in Produktion auf einem Volume und überlebt jeden Build.
+    Ohne das Nachziehen der Spalte liefe dort *jede* Abfrage der Versandliste
+    auf einen Fehler — die Einschätzung steht in der Spaltenliste von allen.
+    """
+    client, ids = zusagen
+
+    with db.connect() as conn:
+        # Die Tabelle von vor der Spalte, mitsamt Fremdschlüssel: dass ein
+        # `ADD COLUMN` mit eingeschalteten Fremdschlüsseln durchgeht, gilt in
+        # SQLite nur für NULL-vorbelegte Spalten — genau die Bedingung, unter
+        # der `_ADDED_COLUMNS` steht.
+        conn.executescript(
+            "DROP TABLE mail_status;"
+            "CREATE TABLE mail_status ("
+            "  contact_id TEXT PRIMARY KEY REFERENCES contacts (id)"
+            "    ON DELETE CASCADE,"
+            "  state TEXT NOT NULL DEFAULT 'offen',"
+            "  sent_at TEXT,"
+            "  answered_at TEXT,"
+            "  note TEXT NOT NULL DEFAULT '',"
+            "  updated_at TEXT NOT NULL,"
+            "  updated_by TEXT NOT NULL DEFAULT ''"
+            ");"
+        )
+        conn.execute(
+            "INSERT INTO mail_status (contact_id, state, note, updated_at)"
+            " VALUES (?, 'versendet', 'alter Eintrag', '2026-01-01T09:00:00Z')",
+            (ids[0],),
+        )
+
+    db.init_schema()
+
+    with db.connect() as conn:
+        columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(mail_status)")
+        }
+        stored = conn.execute("SELECT * FROM mail_status").fetchone()
+
+    assert "build_readiness" in columns
+    # Der alte Stand bleibt: NULL heißt „noch nicht eingeschätzt", und genau
+    # das ist die Wahrheit über eine Zeile von vor der Spalte.
+    assert stored["note"] == "alter Eintrag"
+    assert stored["build_readiness"] is None
+
+    # Und die Liste antwortet weiter — das ist der Punkt der Übung.
+    entry = _entry(_board(client), ids[0])
+    assert entry["state"] == "versendet"
+    assert entry["readiness"] == "unbewertet"
+    assert _board(client)["counters"]["unbewertet"] == 2

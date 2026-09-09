@@ -1,12 +1,13 @@
 /**
- * Die Zustands-IDs des Mailversands existieren an zwei Stellen: dem
- * `MailState`-Enum im Backend (dort wird validiert und gespeichert) und
- * `MAIL_STATES` hier im Frontend, wo jeder ID ein Symbol zugeordnet ist.
+ * Der Mailversand hat zwei Vokabulare, die je zweimal existieren: den
+ * Versandstand (`MailState` / `MAIL_STATES`) und die Bau-Einschätzung
+ * (`BuildReadiness` / `BUILD_READINESS`). Validiert und gespeichert wird im
+ * Backend, im Frontend hängt an jeder ID die Darstellung.
  *
  * Beschriftung, Beschreibung und Tonlage der Knöpfe kommen dagegen *als Daten*
  * mit der Antwort und sind hier bewusst nicht gespiegelt – ein sechster
  * Zustand ist eine Änderung an einer Python-Datei. Was drüben trotzdem
- * nachgetragen werden muss, ist genau das Symbol, und genau das prüft dieser
+ * nachgetragen werden muss, sind Symbol und Farbe, und genau das prüft dieser
  * Test.
  *
  * Nach dem Muster von `callOutcomes.test.ts` und `pageIds.test.ts`.
@@ -14,7 +15,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { MAIL_STATES } from "./mail_followup.api";
+import { BUILD_READINESS, MAIL_STATES } from "./mail_followup.api";
 
 /**
  * Liest eine Datei relativ zu diesem Test.
@@ -60,6 +61,31 @@ function iconIds(): string[] {
   );
 }
 
+function backendReadiness(): string[] {
+  const source = read(SCHEMA);
+  const enumBody = source.match(/class BuildReadiness\(str, Enum\):([\s\S]*?)\n\n\n/)?.[1];
+
+  expect(enumBody, "BuildReadiness-Enum im Backend nicht gefunden").toBeTruthy();
+
+  return [...(enumBody ?? "").matchAll(/^\s+[A-Z_]+ = "([a-z_]+)"$/gm)].flatMap((match) =>
+    match[1] ? [match[1]] : [],
+  );
+}
+
+/** Die Einschätzungen, für die die Oberfläche Symbol und Farbe kennt. */
+function readinessStyleIds(): string[] {
+  const source = read("../components/mail/MailFollowupList.vue");
+  const block = source.match(
+    /const READINESS: Record<\n?\s*BuildReadiness,[\s\S]*?\n> = \{([\s\S]*?)\n\};/,
+  )?.[1];
+
+  expect(block, "READINESS-Zuordnung in MailFollowupList.vue nicht gefunden").toBeTruthy();
+
+  return [...(block ?? "").matchAll(/^ {2}([a-z_]+):\s*\{/gm)].flatMap((match) =>
+    match[1] ? [match[1]] : [],
+  );
+}
+
 describe("Versand-Zustaende", () => {
   it("stimmen zwischen Backend und Frontend ueberein", () => {
     // Reihenfolge egal: welcher Knopf an welcher Zeile steht, entscheidet
@@ -87,6 +113,39 @@ describe("Versand-Zustaende", () => {
       const member = state.toUpperCase();
       expect(table, `MailState.${member} fehlt in MAIL_TRANSITIONS`).toContain(
         `MailState.${member}`,
+      );
+    }
+  });
+});
+
+describe("Bau-Einschaetzung", () => {
+  it("stimmt zwischen Backend und Frontend ueberein", () => {
+    expect([...BUILD_READINESS].sort()).toEqual(backendReadiness().sort());
+  });
+
+  it("hat je Wert ein Symbol und eine Farbe in der Oberflaeche", () => {
+    // Beschriftung und Beschreibung kommen als Daten mit der Antwort – Symbol
+    // und Farbe nicht, und die sind es, die beim Nachtragen eines vierten
+    // Wertes vergessen werden. Ohne sie steht in der Filterzeile ein leeres
+    // Kaestchen.
+    expect(readinessStyleIds().sort()).toEqual([...BUILD_READINESS].sort());
+  });
+
+  it("bietet jeden Wert im Katalog des Backends an", () => {
+    // `READINESS_OPTIONS` bestueckt die Knoepfe; ein Wert, der dort fehlt,
+    // waere ein Zustand, in den die Oberflaeche nicht zurueckkommt – und
+    // „unbewertet" ist ausgerechnet der Rueckweg aus dem Fehlklick.
+    const source = read(SCHEMA);
+    const table = source.match(
+      /READINESS_OPTIONS: tuple\[ReadinessOptionInfo, \.\.\.\] = \(([\s\S]*?)\n\)/,
+    )?.[1];
+
+    expect(table, "READINESS_OPTIONS im Backend nicht gefunden").toBeTruthy();
+
+    for (const value of BUILD_READINESS) {
+      const member = value.toUpperCase();
+      expect(table, `BuildReadiness.${member} fehlt in READINESS_OPTIONS`).toContain(
+        `BuildReadiness.${member}`,
       );
     }
   });

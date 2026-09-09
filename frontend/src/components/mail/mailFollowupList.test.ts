@@ -1,16 +1,25 @@
 /**
  * Die Versandliste.
  *
- * Vier Dinge sind hier eigene Logik und nicht bloß Anzeige: die Reiter (welche
+ * Fünf Dinge sind hier eigene Logik und nicht bloß Anzeige: die Reiter (welche
  * es gibt, was sie zählen, welcher als aktiv gilt), dass eine Zeile genau die
  * Knöpfe zeigt, die das Backend ihr mitgibt (und keine, die es ablehnen
- * würde), dass eine Anmerkung *ohne* Zustand abgeschickt wird, und dass eine
- * Zusage ohne Adresse als solche kenntlich ist statt still zu verschwinden.
+ * würde), dass eine Anmerkung *ohne* Zustand abgeschickt wird, dass eine
+ * Zusage ohne Adresse als solche kenntlich ist statt still zu verschwinden,
+ * und dass die Bau-Einschätzung ein Umschalter ist: derselbe Marker nochmal
+ * nimmt ihn zurück, und den Versandstand fasst er dabei nicht an.
  */
 import { describe, expect, it, vi, type Mock } from "vitest";
 import { mount } from "@vue/test-utils";
 import MailFollowupList from "./MailFollowupList.vue";
-import type { MailActionInfo, MailBoard, MailEntry, MailState } from "@/api/mail_followup.api";
+import type {
+  BuildReadiness,
+  MailActionInfo,
+  MailBoard,
+  MailEntry,
+  MailState,
+  ReadinessOptionInfo,
+} from "@/api/mail_followup.api";
 
 const actions: MailActionInfo[] = [
   {
@@ -23,6 +32,13 @@ const actions: MailActionInfo[] = [
   { id: "abgelehnt", label: "Angebot abgelehnt", description: "Hat abgelehnt.", tone: "negative" },
   { id: "keine_antwort", label: "keine Antwort", description: "Von Hand.", tone: "neutral" },
   { id: "offen", label: "zurücksetzen", description: "Für den Fehlklick.", tone: "neutral" },
+];
+
+/** Der Marker-Katalog, wie das Backend ihn mitschickt. */
+const readinessOptions: ReadinessOptionInfo[] = [
+  { id: "ready_to_build", label: "Ready to Build", description: "Inhalt ist da." },
+  { id: "missing_content", label: "Missing Content", description: "Erst Rücksprache." },
+  { id: "unbewertet", label: "Einschätzung entfernen", description: "Für den Fehlklick." },
 ];
 
 const entry: MailEntry = {
@@ -42,6 +58,8 @@ const entry: MailEntry = {
   note: "will Preise sehen",
   state: "offen",
   state_label: "Mail noch nicht versendet",
+  readiness: "unbewertet",
+  readiness_label: "noch nicht eingeschätzt",
   automatic: false,
   sent_at: null,
   answered_at: null,
@@ -65,6 +83,9 @@ function board(...entries: MailEntry[]): MailBoard {
       abgelehnt: 0,
       keine_antwort: 0,
       ohne_email: rows.filter((row) => !row.email).length,
+      ready_to_build: rows.filter((row) => row.readiness === "ready_to_build").length,
+      missing_content: rows.filter((row) => row.readiness === "missing_content").length,
+      unbewertet: rows.filter((row) => row.readiness === "unbewertet").length,
     },
     entries: rows,
     total: rows.length,
@@ -72,36 +93,46 @@ function board(...entries: MailEntry[]): MailBoard {
     offset: 0,
     limit: 50,
     actions,
+    readiness_options: readinessOptions,
     timeout_days: 30,
   };
 }
 
-/** Der Filter-Aufruf, typisiert – sonst passt `vi.fn()` nicht auf die Prop. */
+/** Die Filter-Aufrufe, typisiert – sonst passt `vi.fn()` nicht auf die Prop. */
 type FilterMock = Mock<(state: MailState | null) => void>;
+type ReadinessFilterMock = Mock<(readiness: BuildReadiness | null) => void>;
 
 function mountList(
   entries: MailEntry[] = [],
   save = vi.fn().mockResolvedValue(true),
-  extra: { filterBy?: FilterMock; stateFilter?: MailState | null } = {},
+  extra: {
+    filterBy?: FilterMock;
+    stateFilter?: MailState | null;
+    readinessFilter?: BuildReadiness | null;
+  } = {},
 ) {
   const filterBy: FilterMock = extra.filterBy ?? vi.fn();
+  const filterByReadiness: ReadinessFilterMock = vi.fn();
 
   const wrapper = mount(MailFollowupList, {
     props: {
       board: board(...entries),
       actions,
+      readinessOptions,
       timeoutDays: 30,
       isLoading: false,
       isSaving: false,
       filterBy,
+      filterByReadiness,
       goToPage: vi.fn(),
       save,
       query: "",
       stateFilter: extra.stateFilter ?? null,
+      readinessFilter: extra.readinessFilter ?? null,
     },
   });
 
-  return { wrapper, save, filterBy };
+  return { wrapper, save, filterBy, filterByReadiness };
 }
 
 /** Die Knöpfe *einer* Zeile, ohne Reiter und Werkzeugleiste. */
@@ -247,17 +278,128 @@ describe("MailFollowupList", () => {
       props: {
         board: empty,
         actions,
+        readinessOptions,
         timeoutDays: 30,
         isLoading: false,
         isSaving: false,
         filterBy: vi.fn(),
+        filterByReadiness: vi.fn(),
         goToPage: vi.fn(),
         save: vi.fn(),
         query: "",
         stateFilter: null,
+        readinessFilter: null,
       },
     });
 
     expect(wrapper.text()).toContain("Telefonakquise");
+  });
+  it("setzt die Bau-Einschaetzung ohne Zustand", async () => {
+    // Zwei unabhaengige Groessen: ein Marker darf den Versandstand nicht
+    // anfassen – und erst gar nicht eine abgelaufene Frist festschreiben.
+    const { wrapper, save } = mountList();
+
+    await wrapper.find("li [data-marker='ready_to_build']").trigger("click");
+
+    expect(save).toHaveBeenCalledWith("k1", { readiness: "ready_to_build" });
+  });
+
+  it("nimmt denselben Marker beim zweiten Klick wieder zurueck", async () => {
+    // Der Fehlklick gehoert zum Werkzeug: ein Marker, den man nur setzen
+    // kann, waere fuer die Zeile eine Einbahnstrasse.
+    const { wrapper, save } = mountList([{ ...entry, readiness: "ready_to_build" }]);
+
+    await wrapper.find("li [data-marker='ready_to_build']").trigger("click");
+
+    expect(save).toHaveBeenCalledWith("k1", { readiness: "unbewertet" });
+  });
+
+  it("ersetzt den einen Marker durch den anderen", async () => {
+    // Entweder die alte Seite hat Inhalt, oder sie hat keinen.
+    const { wrapper, save } = mountList([{ ...entry, readiness: "ready_to_build" }]);
+
+    await wrapper.find("li [data-marker='missing_content']").trigger("click");
+
+    expect(save).toHaveBeenCalledWith("k1", { readiness: "missing_content" });
+  });
+
+  it("zeigt den gesetzten Marker in der Zeile, den fehlenden nicht", () => {
+    // Ein Marker, den man beim Ueberfliegen nicht sieht, ist keiner – und
+    // „unbewertet" ist keine Aussage ueber eine Website.
+    const marked = mountList([
+      { ...entry, readiness: "missing_content", readiness_label: "Missing Content" },
+    ]);
+
+    expect(marked.wrapper.find("[data-readiness='missing_content']").exists()).toBe(true);
+    expect(marked.wrapper.text()).toContain("Missing Content");
+
+    const unmarked = mountList();
+
+    expect(unmarked.wrapper.find("[data-readiness='unbewertet']").exists()).toBe(false);
+  });
+
+  it("beschriftet die Marker mit dem, was das Backend mitschickt", () => {
+    // Wie bei den Zustands-Knoepfen: Beschriftung und Beschreibung sind Daten.
+    const { wrapper } = mountList();
+
+    const button = wrapper.find("li [data-marker='missing_content']");
+
+    expect(button.text()).toContain("Missing Content");
+    expect(button.attributes("title")).toBe("Erst Rücksprache.");
+  });
+
+  it("erklaert am gesetzten Marker den Rueckweg", () => {
+    // Der Titel des aktiven Knopfes ist die Beschreibung von „entfernen" –
+    // sonst ist der zweite Klick nicht zu erraten.
+    const { wrapper } = mountList([{ ...entry, readiness: "ready_to_build" }]);
+
+    const button = wrapper.find("li [data-marker='ready_to_build']");
+
+    expect(button.attributes("title")).toBe("Für den Fehlklick.");
+    expect(button.attributes("aria-pressed")).toBe("true");
+  });
+
+  it("filtert nach der Bau-Einschaetzung, unabhaengig vom Reiter", async () => {
+    const { wrapper, filterByReadiness, filterBy } = mountList([], undefined, {
+      stateFilter: "versendet",
+    });
+
+    await wrapper.find("[data-readiness-filter='ready_to_build']").trigger("click");
+
+    expect(filterByReadiness).toHaveBeenCalledWith("ready_to_build");
+    // Der Reiter bleibt, wo er ist: „verschickt und Ready to Build" ist die
+    // Liste, mit der jemand zu bauen anfaengt.
+    expect(filterBy).not.toHaveBeenCalled();
+  });
+
+  it("zaehlt an den Filtern alle Zusagen, nach Einschaetzung getrennt", () => {
+    const { wrapper } = mountList([
+      { ...entry, readiness: "ready_to_build" },
+      { ...entry, contact_id: "k2", readiness: "missing_content" },
+      { ...entry, contact_id: "k3" },
+    ]);
+
+    expect(wrapper.find("[data-readiness-filter='ready_to_build']").text()).toContain("1");
+    expect(wrapper.find("[data-readiness-filter='missing_content']").text()).toContain("1");
+    expect(wrapper.find("[data-readiness-filter='unbewertet']").text()).toContain("1");
+  });
+
+  it("markiert den aktiven Einschaetzungs-Filter fuer Screenreader", () => {
+    const { wrapper } = mountList([], undefined, { readinessFilter: "missing_content" });
+
+    expect(
+      wrapper.find("[data-readiness-filter='missing_content']").attributes("aria-pressed"),
+    ).toBe("true");
+    expect(
+      wrapper.find("[data-readiness-filter='ready_to_build']").attributes("aria-pressed"),
+    ).toBe("false");
+  });
+
+  it("laesst die Einschaetzung auch ohne E-Mail-Adresse zu", () => {
+    // Ob eine Website Inhalt hat, ist von der Adresse unabhaengig – und
+    // ausgerechnet diese Zeile will man einschaetzen koennen.
+    const { wrapper } = mountList([{ ...entry, contact_id: "k2", email: "", actions: [] }]);
+
+    expect(wrapper.find("li [data-marker='ready_to_build']").exists()).toBe(true);
   });
 });

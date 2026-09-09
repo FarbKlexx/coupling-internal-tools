@@ -410,6 +410,44 @@ textarea:disabled {
   color: #fca5a5;
 }
 
+/* Die Bau-Einschätzung im Mailversand: gesetzter Marker bzw. aktiver Filter.
+   Ein Umschalter und kein Ergebnis-Knopf, deshalb `chip` und nicht `outcome`.
+
+   Die beiden Farben sind absichtlich nicht grün/rot: „Missing Content" ist
+   keine schlechte Nachricht, sondern mehr Arbeit — Bernstein heißt in dieser
+   Anwendung durchgehend „hier ist noch etwas zu tun" (Zusage ohne Adresse,
+   abgelaufene Frist). Deshalb tragen diese Marker auch keine `tone` aus dem
+   Backend. */
+.chip--ready {
+  border-color: rgba(16, 185, 129, 0.5);
+  background: rgba(16, 185, 129, 0.1);
+  color: #6ee7b7;
+}
+
+.chip--ready:hover:not(:disabled) {
+  border-color: #10b981;
+  background: rgba(16, 185, 129, 0.16);
+}
+
+.chip--missing {
+  border-color: rgba(245, 158, 11, 0.5);
+  background: rgba(245, 158, 11, 0.1);
+  color: #fcd34d;
+}
+
+.chip--missing:hover:not(:disabled) {
+  border-color: #f59e0b;
+  background: rgba(245, 158, 11, 0.16);
+}
+
+/* Der Filter „noch nicht eingeschätzt", aktiv: keine eigene Farbe, denn er
+   sagt nichts über eine Website — nur, dass niemand hingesehen hat. */
+.chip--on {
+  border-color: #4b5563;
+  background: #2d2d30;
+  color: #fafafa;
+}
+
 /* --------------------------------------------------------------------------
    Filter-Tabs
    --------------------------------------------------------------------------

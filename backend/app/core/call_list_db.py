@@ -143,7 +143,12 @@ CREATE TABLE IF NOT EXISTS mail_status (
     answered_at TEXT,
     note        TEXT    NOT NULL DEFAULT '',
     updated_at  TEXT    NOT NULL,
-    updated_by  TEXT    NOT NULL DEFAULT ''
+    updated_by  TEXT    NOT NULL DEFAULT '',
+    -- Die Bau-Einschätzung: eine zweite, vom Versandstand unabhängige
+    -- Größe (`BuildReadiness`). NULL heißt „noch nicht eingeschätzt" —
+    -- genauso wie eine fehlende Zeile `offen` heißt. Nachträglich
+    -- hinzugekommen, siehe `_ADDED_COLUMNS`.
+    build_readiness TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_mail_status_state ON mail_status (state, sent_at);
@@ -279,6 +284,7 @@ _ADDED_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {
             "corrects_event_id INTEGER REFERENCES events (id) ON DELETE SET NULL",
         ),
     ),
+    "mail_status": (("build_readiness", "build_readiness TEXT"),),
 }
 
 
@@ -998,6 +1004,19 @@ _MAIL_STATE = (
 #: Die Zusagen und sonst nichts. Archivierte Listen zählen mit: eine Zusage
 #: gilt weiter, auch wenn die Anrufrunde beendet ist, und die Mail muss
 #: trotzdem heraus.
+#: Die Bau-Einschätzung, wie sie jede Abfrage liest.
+#:
+#: Dieselbe Regel wie beim Versandstand: der Ausgangswert braucht keinen
+#: Eintrag. NULL steht in zwei Fällen dort — die Zeile ist älter als die
+#: Spalte, oder niemand hat die Website angesehen —, und beide bedeuten
+#: dasselbe.
+#:
+#: Der Ausdruck wird überall ausgeschrieben und nie über seinen Alias
+#: angesprochen: ein `GROUP BY readiness` hätte in SQLite die *Spalte*
+#: `m.build_readiness` treffen können und damit NULL als eigene Gruppe
+#: gezählt — deshalb heißt der Alias auch nicht wie die Spalte.
+_MAIL_READINESS = "COALESCE(m.build_readiness, 'unbewertet')"
+
 _MAIL_FROM = (
     " FROM contacts c"
     " JOIN lists l ON l.id = c.list_id"
@@ -1021,7 +1040,8 @@ _MAIL_SELECT = (
     " (SELECT e.username FROM events e"
     "   WHERE e.contact_id = c.id AND e.outcome = 'zugesagt'"
     "   ORDER BY e.id DESC LIMIT 1) AS promised_by,"
-    f" {_MAIL_STATE} AS mail_state"
+    f" {_MAIL_STATE} AS mail_state,"
+    f" {_MAIL_READINESS} AS readiness"
 )
 
 #: Reihenfolge der Liste: erst was zu tun ist, dann was wartet, dann was
@@ -1038,12 +1058,24 @@ _MAIL_ORDER = (
 )
 
 
-def _mail_filter(query: str, state: str | None) -> tuple[str, list[object]]:
-    """Suche und Zustandsfilter als SQL-Fragment plus Parameter.
+def _mail_filter(
+    query: str,
+    state: str | None,
+    readiness: str | None,
+    cutoff: str,
+) -> tuple[str, list[object]]:
+    """Suche, Versandstand und Bau-Einschätzung als SQL plus Parameter.
 
     Die Suche geht über Betrieb, Adresse und Nummer: gesucht wird mal nach dem
     Betrieb, von dem gerade eine Antwort kam, mal nach der Adresse aus dem
-    Postfach.
+    Postfach. Zustand und Einschätzung sind zwei *unabhängige* Filter — „was
+    ist verschickt" und „was können wir bauen" sind zwei Fragen, und beide
+    zusammen („verschickt und Ready to Build") ist die dritte.
+
+    Gibt die Parameter **vollständig** und in der Reihenfolge der Bedingungen
+    zurück, den Stichtag des Zustandsfilters eingeschlossen. Vorher hat der
+    Aufrufer ihn selbst dazwischengeschoben — bei zwei Filtern wäre diese
+    Fädelarbeit die nächste Fehlerquelle.
     """
     where = ""
     params: list[object] = []
@@ -1063,6 +1095,11 @@ def _mail_filter(query: str, state: str | None) -> tuple[str, list[object]]:
         # Zustand, sonst zeigte der Filter „keine Antwort" nur die von Hand
         # abgeschlossenen Zeilen.
         where += f" AND {_MAIL_STATE} = ?"
+        params += [cutoff, state]
+
+    if readiness:
+        where += f" AND {_MAIL_READINESS} = ?"
+        params.append(readiness)
 
     return where, params
 
@@ -1073,6 +1110,7 @@ def mail_page(
     cutoff: str,
     query: str = "",
     state: str | None = None,
+    readiness: str | None = None,
     limit: int,
     offset: int,
 ) -> tuple[list[sqlite3.Row], int, int]:
@@ -1084,8 +1122,7 @@ def mail_page(
     sonst könnte eine Zeile zwischen zwei Abfragen derselben Antwort die
     Gruppe wechseln.
     """
-    where, filter_params = _mail_filter(query, state)
-    state_params: list[object] = [cutoff] if state else []
+    where, filter_params = _mail_filter(query, state, readiness, cutoff)
 
     total = int(
         conn.execute("SELECT COUNT(*) AS total" + _MAIL_FROM, ()).fetchone()["total"]
@@ -1094,7 +1131,7 @@ def mail_page(
     matched = int(
         conn.execute(
             "SELECT COUNT(*) AS total" + _MAIL_FROM + where,
-            filter_params + state_params + ([state] if state else []),
+            filter_params,
         ).fetchone()["total"]
     )
 
@@ -1106,11 +1143,9 @@ def mail_page(
             + where
             + _MAIL_ORDER
             + " LIMIT ? OFFSET ?",
-            [cutoff]
-            + filter_params
-            + state_params
-            + ([state] if state else [])
-            + [limit, offset],
+            # Der Stichtag zuerst: er steht im `?` der Spaltenliste, die
+            # Filterparameter dahinter in der Reihenfolge ihrer Bedingungen.
+            [cutoff] + filter_params + [limit, offset],
         ).fetchall()
     )
 
@@ -1137,6 +1172,23 @@ def mail_totals(conn: sqlite3.Connection, cutoff: str) -> dict[str, tuple[int, i
         row["mail_state"]: (int(row["total"]), int(row["ohne_email"] or 0))
         for row in rows
     }
+
+
+def mail_readiness_totals(conn: sqlite3.Connection) -> dict[str, int]:
+    """Pro Bau-Einschätzung: die Anzahl der Zusagen.
+
+    Eigene Abfrage und nicht in `mail_totals` hineingerechnet: die
+    Einschätzung hängt nicht am Stichtag und nicht am Versandstand, und eine
+    Gruppierung über beide Größen gäbe fünfzehn Zeilen, aus denen die
+    Zähler wieder zusammenzusummieren wären.
+    """
+    rows = conn.execute(
+        f"SELECT {_MAIL_READINESS} AS readiness, COUNT(*) AS total"
+        + _MAIL_FROM
+        + f" GROUP BY {_MAIL_READINESS}"
+    ).fetchall()
+
+    return {row["readiness"]: int(row["total"]) for row in rows}
 
 
 def find_mail_entry(
@@ -1171,6 +1223,7 @@ def set_mail_status(
     sent_at: str | None,
     answered_at: str | None,
     note: str,
+    readiness: str,
     updated_by: str,
 ) -> None:
     """Den Versandzustand setzen. Legt die Zeile an, wenn es noch keine gibt.
@@ -1180,17 +1233,33 @@ def set_mail_status(
     `offen` mit leerem Versanddatum — der Unterschied zwischen „noch nichts
     passiert" und „zurückgesetzt von Marie" ist genau das, wonach jemand
     fragt, der die Liste morgen ansieht.
+
+    Jedes Feld wird geschrieben, auch die Bau-Einschätzung: was „unverändert"
+    heißt, löst der Service auf. Diese Funktion kennt nur einen Endstand —
+    sonst gäbe es hier je Feld ein „oder so lassen", und ein Klick auf einen
+    Versand-Knopf würde still einen Marker verwerfen.
     """
     conn.execute(
         "INSERT INTO mail_status"
-        " (contact_id, state, sent_at, answered_at, note, updated_at, updated_by)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?)"
+        " (contact_id, state, sent_at, answered_at, note, build_readiness,"
+        "  updated_at, updated_by)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
         " ON CONFLICT(contact_id) DO UPDATE SET"
         "   state = excluded.state,"
         "   sent_at = excluded.sent_at,"
         "   answered_at = excluded.answered_at,"
         "   note = excluded.note,"
+        "   build_readiness = excluded.build_readiness,"
         "   updated_at = excluded.updated_at,"
         "   updated_by = excluded.updated_by",
-        (contact_id, state, sent_at, answered_at, note, now(), updated_by),
+        (
+            contact_id,
+            state,
+            sent_at,
+            answered_at,
+            note,
+            readiness,
+            now(),
+            updated_by,
+        ),
     )

@@ -3,6 +3,7 @@ import axios from "axios";
 import {
   fetchBoard,
   updateEntry,
+  type BuildReadiness,
   type MailBoard,
   type MailState,
   type MailUpdate,
@@ -33,15 +34,23 @@ export function useMailFollowup() {
   /** Die aktuelle Sicht – sie reist mit jedem Schreibzugriff mit. */
   const query = ref("");
   const stateFilter = ref<MailState | null>(null);
+  /** Zweiter Filter, unabhängig vom ersten. `null` heißt „alle". */
+  const readinessFilter = ref<BuildReadiness | null>(null);
   const offset = ref(0);
 
   const counters = computed(() => board.value?.counters ?? null);
   const entries = computed(() => board.value?.entries ?? []);
   const actions = computed(() => board.value?.actions ?? []);
+  const readinessOptions = computed(() => board.value?.readiness_options ?? []);
   const timeoutDays = computed(() => board.value?.timeout_days ?? 30);
 
   function view(): MailView {
-    return { q: query.value, state: stateFilter.value, offset: offset.value };
+    return {
+      q: query.value,
+      state: stateFilter.value,
+      readiness: readinessFilter.value,
+      offset: offset.value,
+    };
   }
 
   function readDetail(error: unknown, fallback: string): string {
@@ -94,6 +103,20 @@ export function useMailFollowup() {
     void load();
   }
 
+  /**
+   * Die Bau-Einschätzung filtern. `null` ist „alle".
+   *
+   * Anders als der Reiter ein Umschalter: derselbe Wert nochmal hebt den
+   * Filter auf. Die Marker sind eine Auswahl neben der Reiterzeile, und dort
+   * ist „nochmal klicken" der erwartete Rückweg – ein Reiter dagegen zeigt,
+   * welcher gerade gilt, und darf sich nicht ins Nichts abwählen lassen.
+   */
+  function filterByReadiness(readiness: BuildReadiness | null) {
+    readinessFilter.value = readinessFilter.value === readiness ? null : readiness;
+    offset.value = 0;
+    void load();
+  }
+
   function goToPage(next: number) {
     if (!board.value) return;
     if (next < 0 || next >= board.value.matched) return;
@@ -103,7 +126,7 @@ export function useMailFollowup() {
   }
 
   /**
-   * Einen Zustand setzen oder eine Anmerkung schreiben.
+   * Einen Zustand setzen, eine Anmerkung schreiben oder einen Marker setzen.
    *
    * Die Sicht reist mit, damit die Antwort dieselbe Seite zeigt wie vorher –
    * sonst spränge die Liste nach jedem Klick zurück an den Anfang.
@@ -133,14 +156,17 @@ export function useMailFollowup() {
     entries,
     actions,
     timeoutDays,
+    readinessOptions,
     query,
     stateFilter,
+    readinessFilter,
     isLoading,
     isSaving,
     errorMessage,
 
     load,
     filterBy,
+    filterByReadiness,
     goToPage,
     save,
   };

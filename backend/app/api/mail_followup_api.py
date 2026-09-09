@@ -25,6 +25,7 @@ from app.schemas.access import Page
 from app.schemas.mail_followup import (
     MAIL_PAGE_SIZE,
     MAX_MAIL_PAGE_SIZE,
+    BuildReadiness,
     MailBoard,
     MailState,
     MailUpdateRequest,
@@ -55,12 +56,23 @@ def _fail(exc: MailFollowupError) -> HTTPException:
 def read_board(
     q: str = Query(default="", max_length=200),
     state: MailState | None = Query(default=None),
+    readiness: BuildReadiness | None = Query(default=None),
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=MAIL_PAGE_SIZE, ge=1, le=MAX_MAIL_PAGE_SIZE),
     _: CurrentUser = Depends(current_user),
 ) -> MailBoard:
-    """Die Versandliste: Zähler, eine Seite Zusagen, die Knöpfe."""
-    return get_board(query=q, state=state, offset=offset, limit=limit)
+    """Die Versandliste: Zähler, eine Seite Zusagen, die Knöpfe.
+
+    `state` und `readiness` sind zwei unabhängige Filter, weil sie zwei
+    Fragen beantworten: was ist verschickt, und was lässt sich bauen.
+    """
+    return get_board(
+        query=q,
+        state=state,
+        readiness=readiness,
+        offset=offset,
+        limit=limit,
+    )
 
 
 @router.post("/contacts/{contact_id}", response_model=MailBoard)
@@ -69,15 +81,19 @@ def change_state(
     request: MailUpdateRequest,
     q: str = Query(default="", max_length=200),
     state: MailState | None = Query(default=None),
+    readiness: BuildReadiness | None = Query(default=None),
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=MAIL_PAGE_SIZE, ge=1, le=MAX_MAIL_PAGE_SIZE),
     user: CurrentUser = Depends(current_user),
 ) -> MailBoard:
-    """Einen Versandzustand setzen.
+    """Einen Versandzustand, eine Anmerkung oder einen Marker setzen.
 
     Wer geklickt hat, kommt aus der Sitzung und nie aus dem Anfragekörper —
     dieselbe Regel wie im Anrufprotokoll, auch wenn hier kein Nachweis
     entsteht, sondern Arbeitsstand.
+
+    `state`/`readiness` sind hier zweimal da und meinen zweierlei: in der
+    Query die Sicht, die zurückkommen soll, im Körper das, was gesetzt wird.
     """
     try:
         return set_state(
@@ -86,6 +102,7 @@ def change_state(
             username=user.username,
             query=q,
             state=state,
+            readiness=readiness,
             offset=offset,
             limit=limit,
         )

@@ -5,7 +5,8 @@
       <p class="text-xs text-zinc-500">
         Jede Zusage aus der Telefonakquise mit dem, was daraus geworden ist. Ohne Antwort gilt eine
         versendete Mail nach {{ timeoutDays }} Tagen als unbeantwortet – das setzt niemand, das
-        ergibt sich aus dem Versanddatum.
+        ergibt sich aus dem Versanddatum. „Ready to Build“ und „Missing Content“ sagen daneben, ob
+        die bestehende Website Inhalt hat, den die neue übernehmen kann.
       </p>
     </div>
 
@@ -22,12 +23,15 @@
     <MailFollowupList
       v-model:query="query"
       v-model:state-filter="stateFilter"
+      v-model:readiness-filter="readinessFilter"
       :board="board"
       :actions="actions"
+      :readiness-options="readinessOptions"
       :timeout-days="timeoutDays"
       :is-loading="isLoading"
       :is-saving="isSaving"
       :filter-by="filterBy"
+      :filter-by-readiness="filterByReadiness"
       :go-to-page="goToPage"
       :save="save"
     />
@@ -42,14 +46,17 @@ import { useMailFollowup } from "@/composables/useMailFollowup";
 const {
   board,
   actions,
+  readinessOptions,
   timeoutDays,
   query,
   stateFilter,
+  readinessFilter,
   isLoading,
   isSaving,
   errorMessage,
   load,
   filterBy,
+  filterByReadiness,
   goToPage,
   save,
 } = useMailFollowup();

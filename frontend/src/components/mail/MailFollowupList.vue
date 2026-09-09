@@ -13,14 +13,22 @@
  *
  * Beschriftung, Beschreibung und Tonlage der Knöpfe reisen ebenfalls als
  * Daten mit (`actions`). Was hier steht, ist reine Darstellung.
+ *
+ * Quer zu den Reitern liegt die **Bau-Einschätzung**: zwei Marker je Zeile,
+ * die sagen, ob aus der bestehenden Website eine neue werden kann. Sie ist
+ * kein Versandstand und steht deshalb nicht in der Reiterzeile, sondern als
+ * eigene Filterzeile darunter — zwei Fragen, zwei Filter, und beide
+ * gleichzeitig ergibt die Liste, mit der jemand zu bauen anfängt.
  */
 import { ref } from "vue";
 import {
   exportUrl,
+  type BuildReadiness,
   type MailActionInfo,
   type MailBoard,
   type MailEntry,
   type MailState,
+  type ReadinessOptionInfo,
 } from "@/api/mail_followup.api";
 import { formatMoment } from "@/components/calls/callTime";
 import ContactWebsiteLink from "@/components/calls/ContactWebsiteLink.vue";
@@ -28,16 +36,24 @@ import ContactWebsiteLink from "@/components/calls/ContactWebsiteLink.vue";
 const props = defineProps<{
   board: MailBoard | null;
   actions: MailActionInfo[];
+  readinessOptions: ReadinessOptionInfo[];
   timeoutDays: number;
   isLoading: boolean;
   isSaving: boolean;
   filterBy: (state: MailState | null) => void;
+  filterByReadiness: (readiness: BuildReadiness | null) => void;
   goToPage: (offset: number) => void;
-  save: (contactId: string, update: { state?: MailState; note?: string }) => Promise<boolean>;
+  save: (
+    contactId: string,
+    update: { state?: MailState; note?: string; readiness?: BuildReadiness },
+  ) => Promise<boolean>;
 }>();
 
 const query = defineModel<string>("query", { required: true });
 const stateFilter = defineModel<MailState | null>("stateFilter", { required: true });
+const readinessFilter = defineModel<BuildReadiness | null>("readinessFilter", {
+  required: true,
+});
 
 /**
  * Symbol pro Zustand.
@@ -53,6 +69,77 @@ const ICONS: Record<MailState, string> = {
   abgelehnt: "do_not_disturb_on",
   keine_antwort: "hourglass_disabled",
 };
+
+/**
+ * Symbol, Farbe und Filter-Beschriftung je Einschätzung.
+ *
+ * Anders als bei den Zustands-Knöpfen kommt hier **keine** Tonlage aus dem
+ * Backend: „Missing Content" ist keine Ablehnung, sondern mehr Arbeit, und
+ * Bernstein heißt in dieser Anwendung durchgehend „hier ist noch etwas zu
+ * tun". Die Beschriftung an der Zeile kommt dagegen mit der Antwort – nur die
+ * kurze Form für die Filterzeile steht hier, wie bei `TABS`.
+ *
+ * `mailStates.test.ts` hält diese Zuordnung mit `BuildReadiness` im Backend
+ * zusammen: ein Wert ohne Symbol wäre ein leeres Kästchen in einem Knopf.
+ */
+const READINESS: Record<
+  BuildReadiness,
+  { icon: string; text: string; chip: string; filter: string }
+> = {
+  unbewertet: {
+    icon: "help",
+    text: "text-zinc-500",
+    chip: "chip--on",
+    filter: "Nicht eingeschätzt",
+  },
+  ready_to_build: {
+    icon: "construction",
+    text: "text-emerald-400",
+    chip: "chip--ready",
+    filter: "Ready to Build",
+  },
+  missing_content: {
+    icon: "edit_document",
+    text: "text-amber-400",
+    chip: "chip--missing",
+    filter: "Missing Content",
+  },
+};
+
+/** Die drei Werte in der Reihenfolge der Filterzeile. */
+const READINESS_FILTERS: BuildReadiness[] = ["ready_to_build", "missing_content", "unbewertet"];
+
+/** Die zwei Marker, die an einer Zeile stehen. `unbewertet` ist kein Knopf,
+ *  sondern das Ausschalten des gesetzten – siehe `toggleReadiness`. */
+const READINESS_MARKERS: BuildReadiness[] = ["ready_to_build", "missing_content"];
+
+function readinessOption(id: BuildReadiness): ReadinessOptionInfo | undefined {
+  return props.readinessOptions.find((option) => option.id === id);
+}
+
+function readinessCount(id: BuildReadiness): number {
+  return props.board?.counters[id] ?? 0;
+}
+
+/**
+ * Einen Marker setzen – oder den gesetzten wieder entfernen.
+ *
+ * Ein zweiter Klick auf denselben Marker schickt `unbewertet`: der Fehlklick
+ * gehört zum Werkzeug, und ein Marker, den man nur setzen kann, wäre für die
+ * Zeile eine Einbahnstraße. Der Titel des aktiven Knopfes sagt das auch –
+ * mit der Beschreibung, die das Backend für den Rückweg mitschickt.
+ */
+function toggleReadiness(entry: MailEntry, id: BuildReadiness) {
+  void props.save(entry.contact_id, {
+    readiness: entry.readiness === id ? "unbewertet" : id,
+  });
+}
+
+function markerTitle(entry: MailEntry, id: BuildReadiness): string {
+  const option = readinessOption(entry.readiness === id ? "unbewertet" : id);
+
+  return option?.description ?? "";
+}
 
 /**
  * Die Reiter über der Liste – Filter und Zähler in einem.
@@ -158,6 +245,34 @@ function waiting(entry: MailEntry): string {
       </button>
     </div>
 
+    <!-- Die Bau-Einschätzung als zweiter, unabhängiger Filter. Bewusst
+         keine zweite Reiterzeile: zwei Reiterzeilen übereinander sähen aus
+         wie eine Hierarchie, und die beiden Größen liegen nebeneinander. -->
+    <div
+      v-if="board"
+      role="group"
+      aria-label="Nach Bau-Einschätzung filtern"
+      class="flex flex-wrap items-center gap-2"
+    >
+      <span class="text-xs text-zinc-500">Website:</span>
+      <button
+        v-for="id in READINESS_FILTERS"
+        :key="id"
+        type="button"
+        class="chip"
+        :class="readinessFilter === id ? READINESS[id].chip : ''"
+        :aria-pressed="readinessFilter === id"
+        :data-readiness-filter="id"
+        @click="filterByReadiness(id)"
+      >
+        <span class="material-symbols-outlined" style="font-size: 16px">
+          {{ READINESS[id].icon }}
+        </span>
+        {{ READINESS[id].filter }}
+        <span class="tab-count">{{ readinessCount(id) }}</span>
+      </button>
+    </div>
+
     <!-- Suche und Ausgabe -->
     <div class="flex flex-wrap items-center gap-3">
       <div class="relative min-w-64 flex-1 max-w-md">
@@ -227,6 +342,22 @@ function waiting(entry: MailEntry): string {
                 :title="`Automatisch, weil seit ${timeoutDays} Tagen keine Antwort kam.`"
               >
                 automatisch
+              </span>
+              <!-- Die Einschätzung, wenn eine gemacht wurde: der Marker soll
+                   beim Überfliegen der Liste ins Auge fallen, sonst ist er
+                   keiner. `unbewertet` steht hier nicht — eine Zeile ohne
+                   Marker ist die Auskunft „noch nicht angesehen". -->
+              <span
+                v-if="entry.readiness !== 'unbewertet'"
+                class="flex items-center gap-1 text-xs"
+                :class="READINESS[entry.readiness].text"
+                :data-readiness="entry.readiness"
+                :title="readinessOption(entry.readiness)?.description"
+              >
+                <span class="material-symbols-outlined" style="font-size: 15px">
+                  {{ READINESS[entry.readiness].icon }}
+                </span>
+                {{ entry.readiness_label }}
               </span>
             </p>
 
@@ -303,6 +434,30 @@ function waiting(entry: MailEntry): string {
             <span class="material-symbols-outlined" style="font-size: 16px">edit_note</span>
             {{ entry.mail_note ? "Anmerkung ändern" : "Anmerkung" }}
           </button>
+
+          <!-- Die Einschätzung: Umschalter, keine Übergänge. Sie ändert den
+               Versandstand nicht und ist deshalb von den Ergebnis-Knöpfen
+               abgesetzt (`ml-auto`) — und ein zweiter Klick auf den gesetzten
+               nimmt ihn zurück. -->
+          <span class="ml-auto flex flex-wrap items-center gap-2">
+            <button
+              v-for="id in READINESS_MARKERS"
+              :key="id"
+              type="button"
+              class="chip"
+              :class="entry.readiness === id ? READINESS[id].chip : ''"
+              :aria-pressed="entry.readiness === id"
+              :data-marker="id"
+              :disabled="isSaving"
+              :title="markerTitle(entry, id)"
+              @click="toggleReadiness(entry, id)"
+            >
+              <span class="material-symbols-outlined" style="font-size: 16px">
+                {{ READINESS[id].icon }}
+              </span>
+              {{ readinessOption(id)?.label ?? id }}
+            </button>
+          </span>
         </div>
 
         <p
