@@ -27,10 +27,7 @@ from app.core.csv_import import (
     normalise_column,
 )
 
-GERMAN_EXCEL = (
-    "Vorname;Nachname;Funktion;Firma\r\n"
-    "Anna;Müller;Geschäftsführerin;Coupling Media\r\n"
-)
+GERMAN_EXCEL = "Vorname;Nachname;Firma\r\nAnna;Müller;Coupling Media\r\n"
 
 
 def _names(result) -> list[str]:
@@ -49,7 +46,7 @@ def test_german_excel_export_cp1252():
     assert result.encoding == "cp1252"
     assert result.delimiter == ";"
     assert _names(result) == ["Müller"]
-    assert result.records[0].get("funktion") == "Geschäftsführerin"
+    assert result.records[0].get("firma") == "Coupling Media"
 
 
 def test_utf8_with_bom():
@@ -94,12 +91,12 @@ def test_undecodable_file_explains_the_way_out():
 
 @pytest.mark.parametrize("delimiter", [";", ",", "\t"])
 def test_all_three_delimiters(delimiter):
-    header = delimiter.join(["Vorname", "Nachname", "Funktion"])
-    row = delimiter.join(["Anna", "Müller", "CEO"])
+    header = delimiter.join(["Vorname", "Nachname", "Firma"])
+    row = delimiter.join(["Anna", "Müller", "Coupling"])
     result = parse_csv(f"{header}\n{row}\n".encode())
 
     assert result.delimiter == delimiter
-    assert result.records[0].get("funktion") == "CEO"
+    assert result.records[0].get("firma") == "Coupling"
 
 
 def test_single_column_file():
@@ -176,10 +173,12 @@ def test_umlauts_are_written_out_not_dropped():
 
 
 def test_columns_with_spaces_and_special_characters_still_map():
-    result = parse_csv("  Vor Name ;Nach-Name!;Tätigkeit\nAnna;Müller;CEO\n".encode())
+    result = parse_csv(
+        "  Vor Name ;Nach-Name!;Unternehmen\nAnna;Müller;Coupling\n".encode()
+    )
 
     assert result.mapping["nachname"] == "Nach-Name!"
-    assert result.records[0].get("funktion") == "CEO"
+    assert result.records[0].get("firma") == "Coupling"
 
 
 def test_duplicate_columns_are_an_error_not_a_warning():
@@ -255,9 +254,9 @@ def test_line_numbers_match_the_file_including_the_header():
 
 def test_short_rows_leave_the_missing_fields_empty():
     """Excel schneidet leere Felder am Zeilenende gerne ab."""
-    result = parse_csv("Vorname;Nachname;Funktion\nAnna;Müller\n".encode())
+    result = parse_csv("Vorname;Nachname;Firma\nAnna;Müller\n".encode())
 
-    assert result.records[0].get("funktion") == ""
+    assert result.records[0].get("firma") == ""
 
 
 def test_values_are_trimmed():
@@ -290,7 +289,7 @@ def test_empty_file():
 
 def test_header_only():
     with pytest.raises(BadgeCsvError, match="nur die Kopfzeile"):
-        parse_csv("Vorname;Nachname;Funktion\n".encode())
+        parse_csv("Vorname;Nachname;Firma\n".encode())
 
 
 def test_header_only_with_trailing_empty_lines():

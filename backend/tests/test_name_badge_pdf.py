@@ -254,7 +254,7 @@ def test_every_font_selected_in_the_content_stream_is_embedded():
     reader = _reader(
         _render(
             [
-                _person("Müller", vorname="Anna", funktion="CEO", firma="Coupling"),
+                _person("Müller", vorname="Anna", firma="Coupling"),
                 _person("Schmidt", vorname="Bert"),
             ]
         )
@@ -403,13 +403,12 @@ def test_every_field_of_a_full_card_stays_inside_the_safety_zone():
     record = _person(
         "Schmidt-Wolkenkuckucksheim-Hohenzollern",
         vorname="Maximilian-Alexander",
-        funktion="Senior Account Manager Nord und Ost",
         firma="Sehr Lange Firmenbezeichnung GmbH & Co. KG",
     )
     safe = SHEET.safe_rect(0)
 
     drawn = list(_texts_with_geometry(_render([record])))
-    assert len(drawn) == 4
+    assert len(drawn) == 3
 
     for text, width_mm, height_pt in drawn:
         baseline_mm = text.baseline_mm(height_pt)
@@ -421,7 +420,7 @@ def test_every_field_of_a_full_card_stays_inside_the_safety_zone():
 
 def test_ascenders_and_descenders_stay_inside_the_safety_zone():
     """Nicht nur die Grundlinie: die Ober- und Unterlängen zählen mit."""
-    record = _person("Müller", vorname="Anna", funktion="Typografin", firma="Coupling")
+    record = _person("Müller", vorname="Anna", firma="Coupling")
     raw = _render([record])
     reader = _reader(raw)
     page = reader.pages[0]

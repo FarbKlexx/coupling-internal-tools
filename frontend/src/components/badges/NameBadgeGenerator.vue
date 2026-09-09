@@ -253,8 +253,8 @@ async function downloadCalibrationSheet() {
         <h2 class="text-lg font-semibold">Namensschilder drucken</h2>
         <p class="text-xs text-zinc-500">
           Teilnehmerliste als CSV hochladen und als druckfertiges PDF für perforierte
-          Einsteckschilder-Bögen herunterladen. Pflichtspalte ist der Nachname; Vorname, Funktion
-          und Firma kommen dazu, wenn es sie gibt. Die Liste wird nirgends gespeichert.
+          Einsteckschilder-Bögen herunterladen. Pflichtspalte ist der Nachname; Vorname und Firma
+          kommen dazu, wenn es sie gibt. Die Liste wird nirgends gespeichert.
         </p>
       </div>
 

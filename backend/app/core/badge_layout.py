@@ -16,7 +16,7 @@ from app.core.badge_geometry import SHEET_FORMATS, SheetFormat
 
 # Felder, die eine Karte tragen kann. Die Reihenfolge ist die Reihenfolge im
 # Trockenlauf-Bericht.
-FIELD_NAMES: tuple[str, ...] = ("vorname", "nachname", "funktion", "firma")
+FIELD_NAMES: tuple[str, ...] = ("vorname", "nachname", "firma")
 
 # Ohne Nachnamen ist die Karte wertlos — Zeilen ohne ihn werden übersprungen
 # und dem Anwender mit Zeilennummer gemeldet (siehe `badge_csv`).
@@ -25,7 +25,6 @@ REQUIRED_FIELD = "nachname"
 FIELD_LABELS: dict[str, str] = {
     "vorname": "Vorname",
     "nachname": "Nachname",
-    "funktion": "Funktion",
     "firma": "Firma",
 }
 
@@ -102,8 +101,10 @@ class CardLayout:
 
 
 # Standardlayout für 75 × 40 mm: Vorname klein darüber, Nachname groß und fett,
-# darunter Funktion und Firma. Alles zentriert, weil die Karte im Steckrahmen
-# mittig sitzt.
+# darunter die Firma. Alles zentriert, weil die Karte im Steckrahmen mittig
+# sitzt. Die Firma sitzt auf der Grundlinie, auf der vorher die Funktion stand
+# — bewusst nicht auf ihrer alten, weiter unten: eine Zeile weniger soll den
+# Block nicht auseinanderziehen.
 CARD_LAYOUTS: dict[str, CardLayout] = {
     "a4_75x40": CardLayout(
         fields=(
@@ -121,14 +122,8 @@ CARD_LAYOUTS: dict[str, CardLayout] = {
                 bold=True,
             ),
             LayoutField(
-                field="funktion",
-                baseline_mm=29.0,
-                size_pt=9.5,
-                min_size_pt=7.0,
-            ),
-            LayoutField(
                 field="firma",
-                baseline_mm=34.5,
+                baseline_mm=29.0,
                 size_pt=9.5,
                 min_size_pt=7.0,
             ),

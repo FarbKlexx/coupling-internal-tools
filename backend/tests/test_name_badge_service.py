@@ -24,9 +24,9 @@ from app.services.name_badge_service import (
 SHEET = get_format(DEFAULT_FORMAT_ID)
 
 
-def _csv(rows: int, header: str = "Vorname;Nachname;Funktion;Firma") -> bytes:
+def _csv(rows: int, header: str = "Vorname;Nachname;Firma") -> bytes:
     lines = [header]
-    lines += [f"Vorname{index};Nachname{index};Rolle;Firma" for index in range(rows)]
+    lines += [f"Vorname{index};Nachname{index};Firma" for index in range(rows)]
     return ("\n".join(lines) + "\n").encode()
 
 
@@ -77,7 +77,7 @@ def test_dry_run_reports_encoding_delimiter_and_mapping():
     assert report.delimiter == "Tabulator"
     assert [entry.column for entry in report.mapping] == ["Vorname", "Nachname"]
     assert report.ignored_columns == ["Tischnummer"]
-    assert report.missing_fields == ["Funktion", "Firma"]
+    assert report.missing_fields == ["Firma"]
 
 
 def test_dry_run_lists_skipped_rows_with_their_line_numbers():
@@ -188,12 +188,7 @@ def test_formats_carry_the_geometry_the_frontend_draws_from():
     assert (a4.card_width_mm, a4.card_height_mm) == (75.0, 40.0)
     assert (a4.sheet_width_mm, a4.sheet_height_mm) == (210.0, 297.0)
     assert a4.safety_mm == 4.0
-    assert [entry.field for entry in a4.fields] == [
-        "vorname",
-        "nachname",
-        "funktion",
-        "firma",
-    ]
+    assert [entry.field for entry in a4.fields] == ["vorname", "nachname", "firma"]
 
 
 # ------------------------------

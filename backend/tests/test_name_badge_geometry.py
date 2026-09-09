@@ -220,12 +220,30 @@ def test_every_format_has_a_layout_that_fits_it():
         get_layout(format_id).validate(sheet_format)
 
 
-def test_default_layout_has_the_four_expected_fields():
+def test_default_layout_has_the_three_expected_fields():
+    """Die Karte tragt Vorname, Nachname und Firma — keine Funktion.
+
+    Die Funktion stand bis zur Umstellung zwischen Nachname und Firma. Sie ist
+    aus dem Layout *und* aus `FIELD_NAMES` heraus, damit der Trockenlauf keine
+    Spalte als zugeordnet meldet, die nie gedruckt wird.
+    """
     fields = [
         layout_field.field for layout_field in get_layout(DEFAULT_FORMAT_ID).fields
     ]
 
-    assert fields == ["vorname", "nachname", "funktion", "firma"]
+    assert fields == ["vorname", "nachname", "firma"]
+
+
+def test_the_company_sits_on_the_baseline_the_role_used_to_have():
+    """29 mm, nicht 34,5 mm — die alte Grundlinie der Firma.
+
+    Beim Entfernen der Funktion ist die Firma eine Zeile nach oben gerueckt.
+    Wuerde sie auf ihrer alten Grundlinie stehen bleiben, klaffte zwischen
+    Nachname und Firma eine leere Zeile.
+    """
+    firma = next(f for f in get_layout(DEFAULT_FORMAT_ID).fields if f.field == "firma")
+
+    assert firma.baseline_mm == 29.0
 
 
 def test_surname_is_the_largest_and_the_only_bold_field():

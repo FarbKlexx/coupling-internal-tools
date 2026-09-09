@@ -57,18 +57,6 @@ COLUMN_SYNONYMS: dict[str, tuple[str, ...]] = {
         "given_name",
         "givenname",
     ),
-    "funktion": (
-        "funktion",
-        "position",
-        "rolle",
-        "jobtitel",
-        "job_title",
-        "jobtitle",
-        "taetigkeit",
-        "role",
-        "function",
-        "titel",
-    ),
     "firma": (
         "firma",
         "unternehmen",
@@ -148,7 +136,7 @@ class CsvParseResult:
         """Wie oft ein zugeordnetes Feld leer bleibt — pro Feld.
 
         Das ist die Zahl, die im Trockenlauf davor warnt, dass auf 40 Karten
-        die Funktion fehlt, obwohl die Spalte existiert.
+        die Firma fehlt, obwohl die Spalte existiert.
         """
         return {
             name: sum(1 for record in self.records if not record.get(name))
@@ -191,7 +179,7 @@ def _parse_csv(data: bytes) -> CsvParseResult:
 
     rows = read_rows(text, delimiter)
 
-    header = find_header(rows, example="Vorname;Nachname;Funktion;Firma")
+    header = find_header(rows, example="Vorname;Nachname;Firma")
     mapping, columns, ignored = _map_columns(header)
 
     warnings: list[str] = []
