@@ -496,6 +496,7 @@ def test_a_promise_starts_without_an_assessment(zusagen):
     assert _entry(board, ids[0])["readiness_label"] == "noch nicht eingeschätzt"
     assert board["counters"]["unbewertet"] == 2
     assert board["counters"]["ready_to_build"] == 0
+    assert board["counters"]["in_development"] == 0
     assert board["counters"]["ready_to_mail"] == 0
     assert board["counters"]["missing_content"] == 0
     # Die Marker fahren als Daten mit, wie die Knöpfe.
@@ -538,6 +539,33 @@ def test_the_markers_replace_each_other(zusagen):
     assert _entry(board, ids[0])["readiness"] == "missing_content"
     assert board["counters"]["ready_to_build"] == 0
     assert board["counters"]["missing_content"] == 1
+
+
+def test_the_build_runs_through_the_marker_track(zusagen):
+    """Der Bau selbst ist ein Wert dieser Spur, kein zweites Häkchen.
+
+    „lässt sich bauen" → „wird gebaut" → „ist gebaut" schließen einander
+    aus: wer angefangen hat, braucht die Einschätzung von vorher nicht mehr.
+    Der Versandstand bleibt bei jedem Schritt, wo er ist — gebaut wird,
+    bevor die Mail heraus ist.
+    """
+    client, ids = zusagen
+    _mark(client, ids[0], "ready_to_build")
+
+    board = _mark(client, ids[0], "in_development")
+    entry = _entry(board, ids[0])
+
+    assert entry["readiness"] == "in_development"
+    assert entry["readiness_label"] == "In Development"
+    assert entry["state"] == "offen"
+    assert board["counters"]["in_development"] == 1
+    assert board["counters"]["ready_to_build"] == 0
+
+    board = _mark(client, ids[0], "ready_to_mail")
+
+    assert _entry(board, ids[0])["readiness"] == "ready_to_mail"
+    assert board["counters"]["in_development"] == 0
+    assert _board(client, readiness="in_development")["matched"] == 0
 
 
 def test_a_built_website_is_a_marker_and_not_a_mail_state(zusagen):
@@ -716,11 +744,13 @@ def test_each_counter_row_counts_within_the_other_filter(zusagen):
     offen = _board(client, state="offen")["counters"]
     assert offen["offen"] == 1
     assert (offen["ready_to_build"], offen["missing_content"]) == (0, 1)
-    assert (offen["ready_to_mail"], offen["unbewertet"]) == (0, 0)
+    assert (offen["in_development"], offen["ready_to_mail"]) == (0, 0)
+    assert offen["unbewertet"] == 0
     # Die Summe der Marken ist die Zahl auf dem Reiter — genau das war vorher
     # nicht so.
     assert (
         offen["ready_to_build"]
+        + offen["in_development"]
         + offen["ready_to_mail"]
         + offen["missing_content"]
         + offen["unbewertet"]
@@ -735,7 +765,7 @@ def test_each_counter_row_counts_within_the_other_filter(zusagen):
     assert ready["ohne_email"] == 0
     # Der eigene Filter der Markerreihe bleibt draußen.
     assert (ready["missing_content"], ready["unbewertet"]) == (1, 0)
-    assert ready["ready_to_mail"] == 0
+    assert (ready["in_development"], ready["ready_to_mail"]) == (0, 0)
 
 
 def test_the_marker_filter_combines_with_the_search(zusagen):

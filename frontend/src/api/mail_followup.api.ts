@@ -29,8 +29,9 @@ export type MailState = (typeof MAIL_STATES)[number];
  * steht. Zuerst, ob die bestehende Inhalt hat, den die neue übernehmen kann –
  * hat sie keinen, ist es kein Redesign mehr, dann müssen Texte entstehen, und
  * darüber muss vorher jemand mit dem Kunden sprechen. Und dann, mit
- * `ready_to_mail`, dass die neue Seite steht und nur noch zum Betrieb muss:
- * gebaut, aber noch nicht verschickt.
+ * `in_development` und `ready_to_mail`, dass die neue Seite gebaut wird bzw.
+ * schon steht und nur noch zum Betrieb muss: gebaut, aber noch nicht
+ * verschickt.
  *
  * `unbewertet` ist der Ausgangswert *und* der Rückweg: entfernt wird ein
  * Marker, indem man ihn setzt (siehe `MailUpdate.readiness`).
@@ -38,6 +39,7 @@ export type MailState = (typeof MAIL_STATES)[number];
 export const BUILD_READINESS = [
   "unbewertet",
   "ready_to_build",
+  "in_development",
   "ready_to_mail",
   "missing_content",
 ] as const;
@@ -137,6 +139,8 @@ export interface MailCounters {
    * Antwort auf die Mail.
    */
   ready_to_build: number;
+  /** Wird gerade gebaut. */
+  in_development: number;
   /** Gebaut, aber noch nicht beim Betrieb. */
   ready_to_mail: number;
   missing_content: number;

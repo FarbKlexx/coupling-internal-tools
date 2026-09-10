@@ -418,7 +418,8 @@ textarea:disabled {
    Anwendung durchgehend „hier ist noch etwas zu tun" (Zusage ohne Adresse,
    abgelaufene Frist). Deshalb tragen diese Marker auch keine `tone` aus dem
    Backend. „Ready to Mail" ist blau, dieselbe Farbe wie der Versandstand
-   „verschickt": fertig und auf dem Weg. */
+   „verschickt": fertig und auf dem Weg — und „In Development" davor violett,
+   die einzige Farbe, die hier sonst nichts bedeutet. */
 .chip--ready {
   border-color: rgba(16, 185, 129, 0.5);
   background: rgba(16, 185, 129, 0.1);
@@ -428,6 +429,17 @@ textarea:disabled {
 .chip--ready:hover:not(:disabled) {
   border-color: #10b981;
   background: rgba(16, 185, 129, 0.16);
+}
+
+.chip--dev {
+  border-color: rgba(139, 92, 246, 0.5);
+  background: rgba(139, 92, 246, 0.1);
+  color: #c4b5fd;
+}
+
+.chip--dev:hover:not(:disabled) {
+  border-color: #8b5cf6;
+  background: rgba(139, 92, 246, 0.16);
 }
 
 .chip--built {

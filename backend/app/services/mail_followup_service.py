@@ -17,9 +17,9 @@ Vier Entscheidungen prägen dieses Modul:
   falsch.
 * **Die Bau-Einschätzung ist eine zweite Dimension**, kein sechster
   Zustand: `BuildReadiness` sagt, ob aus der bestehenden Website eine neue
-  werden kann — und, mit `ready_to_mail`, dass sie es schon ist und nur noch
-  zum Betrieb muss. Damit beantwortet sie eine andere Frage als der
-  Versandstand. Sie hat aus demselben Grund keine Übergangstabelle —
+  werden kann — und, mit `in_development`/`ready_to_mail`, dass sie gebaut
+  wird bzw. schon gebaut ist und nur noch zum Betrieb muss. Damit
+  beantwortet sie eine andere Frage als der Versandstand. Sie hat aus demselben Grund keine Übergangstabelle —
   eingeschätzt wird jederzeit, in jedem Versandstand, in jede Richtung.
 * **Die Übergänge stehen in einer Tabelle**, und dieselbe Tabelle bestückt die
   Knöpfe der Zeile (`MAIL_TRANSITIONS`). Die Oberfläche kann deshalb keinen
@@ -204,6 +204,7 @@ def _counters(
         keine_antwort=count(MailState.KEINE_ANTWORT),
         ohne_email=sum(without for _, without in totals.values()),
         ready_to_build=marked(BuildReadiness.READY_TO_BUILD),
+        in_development=marked(BuildReadiness.IN_DEVELOPMENT),
         ready_to_mail=marked(BuildReadiness.READY_TO_MAIL),
         missing_content=marked(BuildReadiness.MISSING_CONTENT),
         unbewertet=marked(BuildReadiness.UNBEWERTET),

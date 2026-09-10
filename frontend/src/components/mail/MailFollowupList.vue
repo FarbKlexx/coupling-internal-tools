@@ -14,9 +14,10 @@
  * Beschriftung, Beschreibung und Tonlage der Knöpfe reisen ebenfalls als
  * Daten mit (`actions`). Was hier steht, ist reine Darstellung.
  *
- * Quer zu den Reitern liegt die **Bau-Einschätzung**: drei Marker je Zeile,
+ * Quer zu den Reitern liegt die **Bau-Einschätzung**: vier Marker je Zeile,
  * die sagen, wo die Website steht — ob aus der bestehenden eine neue werden
- * kann, und ob sie es schon ist und nur noch zum Betrieb muss. Sie ist kein
+ * kann, ob sie gebaut wird, und ob sie fertig ist und nur noch zum Betrieb
+ * muss. Sie ist kein
  * Versandstand und steht deshalb nicht in der Reiterzeile, sondern als eigene
  * Filterzeile darunter — zwei Fragen, zwei Filter, und beide gleichzeitig
  * ergibt die Liste, mit der jemand zu bauen anfängt.
@@ -79,7 +80,9 @@ const ICONS: Record<MailState, string> = {
  * Bernstein heißt in dieser Anwendung durchgehend „hier ist noch etwas zu
  * tun". „Ready to Mail" ist aus demselben Grund blau: dieselbe Farbe wie der
  * Versandstand „verschickt", weil es dieselbe Aussage über die Website ist –
- * fertig und auf dem Weg. Die Beschriftung an der Zeile kommt dagegen mit der
+ * fertig und auf dem Weg. „In Development" liegt davor und ist violett, die
+ * einzige Farbe, die in dieser Anwendung sonst nichts bedeutet – der Bau ist
+ * weder eine Einschätzung noch ein Versand. Die Beschriftung an der Zeile kommt dagegen mit der
  * Antwort – nur die kurze Form für die Filterzeile steht hier, wie bei
  * `TABS`.
  *
@@ -102,6 +105,12 @@ const READINESS: Record<
     chip: "chip--ready",
     filter: "Ready to Build",
   },
+  in_development: {
+    icon: "code",
+    text: "text-violet-300",
+    chip: "chip--dev",
+    filter: "In Development",
+  },
   ready_to_mail: {
     icon: "schedule_send",
     text: "text-blue-300",
@@ -121,6 +130,7 @@ const READINESS: Record<
  *  Frage. */
 const READINESS_FILTERS: BuildReadiness[] = [
   "ready_to_build",
+  "in_development",
   "ready_to_mail",
   "missing_content",
   "unbewertet",
@@ -128,7 +138,12 @@ const READINESS_FILTERS: BuildReadiness[] = [
 
 /** Die Marker, die an einer Zeile stehen. `unbewertet` ist kein Knopf,
  *  sondern das Ausschalten des gesetzten – siehe `toggleReadiness`. */
-const READINESS_MARKERS: BuildReadiness[] = ["ready_to_build", "ready_to_mail", "missing_content"];
+const READINESS_MARKERS: BuildReadiness[] = [
+  "ready_to_build",
+  "in_development",
+  "ready_to_mail",
+  "missing_content",
+];
 
 function readinessOption(id: BuildReadiness): ReadinessOptionInfo | undefined {
   return props.readinessOptions.find((option) => option.id === id);
