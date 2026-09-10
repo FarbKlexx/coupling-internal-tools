@@ -496,6 +496,7 @@ def test_a_promise_starts_without_an_assessment(zusagen):
     assert _entry(board, ids[0])["readiness_label"] == "noch nicht eingeschätzt"
     assert board["counters"]["unbewertet"] == 2
     assert board["counters"]["ready_to_build"] == 0
+    assert board["counters"]["ready_to_mail"] == 0
     assert board["counters"]["missing_content"] == 0
     # Die Marker fahren als Daten mit, wie die Knöpfe.
     assert [option["id"] for option in board["readiness_options"]] == [
@@ -523,11 +524,11 @@ def test_a_marker_is_set_without_touching_the_state(zusagen):
     assert board["counters"]["unbewertet"] == 1
 
 
-def test_the_two_markers_replace_each_other(zusagen):
+def test_the_markers_replace_each_other(zusagen):
     """Entweder die alte Seite hat Inhalt, oder sie hat keinen.
 
-    Zwei unabhängige Häkchen wären ein Zustand, den niemand lesen kann
-    („Ready to Build *und* Missing Content"), deshalb ist es ein Wert.
+    Unabhängige Häkchen wären ein Zustand, den niemand lesen kann („Ready to
+    Build *und* Missing Content"), deshalb ist es ein Wert.
     """
     client, ids = zusagen
     _mark(client, ids[0], "ready_to_build")
@@ -537,6 +538,34 @@ def test_the_two_markers_replace_each_other(zusagen):
     assert _entry(board, ids[0])["readiness"] == "missing_content"
     assert board["counters"]["ready_to_build"] == 0
     assert board["counters"]["missing_content"] == 1
+
+
+def test_a_built_website_is_a_marker_and_not_a_mail_state(zusagen):
+    """„Ready to Mail": die Seite ist gebaut, die Mail ist damit nicht heraus.
+
+    Der Marker gehört in die Bau-Spur und nicht in den Versandstand — sonst
+    stünde in der Zeile, es sei etwas verschickt worden, was noch beim uns
+    liegt. Und er ersetzt „Ready to Build": wer gebaut hat, braucht die
+    Einschätzung von vorher nicht mehr.
+    """
+    client, ids = zusagen
+    _mark(client, ids[0], "ready_to_build")
+
+    board = _mark(client, ids[0], "ready_to_mail")
+    entry = _entry(board, ids[0])
+
+    assert entry["readiness"] == "ready_to_mail"
+    assert entry["readiness_label"] == "Ready to Mail"
+    # Der Versandstand ist unberührt: die Mail ist weiterhin nicht heraus.
+    assert entry["state"] == "offen"
+    assert entry["sent_at"] is None
+    assert board["counters"]["ready_to_mail"] == 1
+    assert board["counters"]["ready_to_build"] == 0
+
+    # Und er überlebt den Versand — wie jeder andere Marker auch.
+    board = _click(client, ids[0], "versendet")
+    assert _entry(board, ids[0])["readiness"] == "ready_to_mail"
+    assert _board(client, readiness="ready_to_mail")["matched"] == 1
 
 
 def test_a_marker_can_be_removed_again(zusagen):
@@ -669,7 +698,7 @@ def test_each_counter_row_counts_within_the_other_filter(zusagen):
 
     Vorher zählten die Marker immer über alle Zusagen: wer oben auf „Offen"
     filterte, sah darunter Zahlen einer anderen Menge als die Liste — die
-    Auskunft „12 Ready to Build" über einer Liste mit drei Zeilen. Die drei
+    Auskunft „12 Ready to Build" über einer Liste mit drei Zeilen. Die
     Marken müssen den Reiter ergeben, auf dem sie stehen, sonst beantworten
     sie eine Frage, die niemand gestellt hat.
 
@@ -687,11 +716,14 @@ def test_each_counter_row_counts_within_the_other_filter(zusagen):
     offen = _board(client, state="offen")["counters"]
     assert offen["offen"] == 1
     assert (offen["ready_to_build"], offen["missing_content"]) == (0, 1)
-    assert offen["unbewertet"] == 0
+    assert (offen["ready_to_mail"], offen["unbewertet"]) == (0, 0)
     # Die Summe der Marken ist die Zahl auf dem Reiter — genau das war vorher
     # nicht so.
     assert (
-        offen["ready_to_build"] + offen["missing_content"] + offen["unbewertet"]
+        offen["ready_to_build"]
+        + offen["ready_to_mail"]
+        + offen["missing_content"]
+        + offen["unbewertet"]
         == offen["offen"]
     )
 
@@ -703,6 +735,7 @@ def test_each_counter_row_counts_within_the_other_filter(zusagen):
     assert ready["ohne_email"] == 0
     # Der eigene Filter der Markerreihe bleibt draußen.
     assert (ready["missing_content"], ready["unbewertet"]) == (1, 0)
+    assert ready["ready_to_mail"] == 0
 
 
 def test_the_marker_filter_combines_with_the_search(zusagen):

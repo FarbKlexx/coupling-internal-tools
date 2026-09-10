@@ -1311,13 +1311,13 @@ def mail_readiness_totals(
     """Pro Bau-Einschätzung: die Anzahl der Zusagen.
 
     Eigene Abfrage und nicht in `mail_totals` hineingerechnet: eine
-    Gruppierung über beide Größen gäbe fünfzehn Zeilen, aus denen die Zähler
+    Gruppierung über beide Größen gäbe zwanzig Zeilen, aus denen die Zähler
     wieder zusammenzusummieren wären — und die beiden Reihen brauchen
     verschiedene Filter, siehe dort.
 
     `state` ist hier dieser andere Filter: steht die Reiterzeile auf „Offen",
-    zählt diese Reihe innerhalb der offenen Zusagen, und ihre drei Zahlen
-    ergeben zusammen die Zahl auf dem Reiter. Der Stichtag wird deshalb auch
+    zählt diese Reihe innerhalb der offenen Zusagen, und ihre Zahlen ergeben
+    zusammen die Zahl auf dem Reiter. Der Stichtag wird deshalb auch
     hier gebraucht — gefiltert wird über den *gerechneten* Zustand, nicht
     über die Spalte.
     """

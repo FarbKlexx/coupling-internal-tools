@@ -413,11 +413,12 @@ textarea:disabled {
 /* Die Bau-Einschätzung im Mailversand: gesetzter Marker bzw. aktiver Filter.
    Ein Umschalter und kein Ergebnis-Knopf, deshalb `chip` und nicht `outcome`.
 
-   Die beiden Farben sind absichtlich nicht grün/rot: „Missing Content" ist
-   keine schlechte Nachricht, sondern mehr Arbeit — Bernstein heißt in dieser
+   Die Farben sind absichtlich nicht grün/rot: „Missing Content" ist keine
+   schlechte Nachricht, sondern mehr Arbeit — Bernstein heißt in dieser
    Anwendung durchgehend „hier ist noch etwas zu tun" (Zusage ohne Adresse,
    abgelaufene Frist). Deshalb tragen diese Marker auch keine `tone` aus dem
-   Backend. */
+   Backend. „Ready to Mail" ist blau, dieselbe Farbe wie der Versandstand
+   „verschickt": fertig und auf dem Weg. */
 .chip--ready {
   border-color: rgba(16, 185, 129, 0.5);
   background: rgba(16, 185, 129, 0.1);
@@ -427,6 +428,17 @@ textarea:disabled {
 .chip--ready:hover:not(:disabled) {
   border-color: #10b981;
   background: rgba(16, 185, 129, 0.16);
+}
+
+.chip--built {
+  border-color: rgba(59, 130, 246, 0.5);
+  background: rgba(59, 130, 246, 0.1);
+  color: #93c5fd;
+}
+
+.chip--built:hover:not(:disabled) {
+  border-color: #3b82f6;
+  background: rgba(59, 130, 246, 0.16);
 }
 
 .chip--missing {

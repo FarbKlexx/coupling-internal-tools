@@ -21,9 +21,10 @@ Code:
   kann die Oberfläche keinen Knopf zeigen, der mit 400 antwortet.
 
 Neben dem Versandstand trägt jede Zeile eine zweite, davon unabhängige
-Größe: `BuildReadiness` — ob sich aus der bestehenden Website überhaupt eine
-neue bauen lässt. Sie beantwortet eine andere Frage („was kostet die
-Umsetzung?") und hat deshalb eigene Marker statt eines sechsten Zustands.
+Größe: `BuildReadiness` — wo die *Website* steht, von „lässt sich aus der
+bestehenden eine neue bauen?" bis „ist gebaut und wartet auf den Versand".
+Sie beantwortet eine andere Frage als der Versandstand („was ist mit der
+Seite?") und hat deshalb eigene Marker statt weiterer Zustände.
 
 Der Zustand `keine_antwort` wird **nicht geschrieben, sondern gerechnet**:
 eine versendete Mail, auf die seit `MAIL_TIMEOUT_DAYS` Tagen nichts kam,
@@ -180,17 +181,26 @@ MAIL_ACTIONS: tuple[MailActionInfo, ...] = (
 
 
 class BuildReadiness(str, Enum):
-    """Wie gut sich aus der bestehenden Website eine neue bauen lässt.
+    """Wo die Website eines Betriebs steht. Gespeichert wird der Slug.
 
     Zweite, von `MailState` **unabhängige** Dimension: der Versandstand sagt,
-    wo die Mail steht, diese Einschätzung sagt, was die Umsetzung kostet. Ein
-    Betrieb kann „Antwort positiv" und „Missing Content" gleichzeitig sein —
-    das ist sogar der Fall, für den die Einschätzung gemacht wird.
+    wo die Mail steht, diese Spur sagt, was mit der Seite ist. Ein Betrieb
+    kann „Antwort positiv" und „Missing Content" gleichzeitig sein — das ist
+    sogar der Fall, für den die Marker gemacht werden.
 
+    Die ersten beiden Werte sind eine Einschätzung der *bestehenden* Seite.
     Der Unterschied ist nicht „hat eine Domain": aufrufbar sind fast alle.
     Gemeint ist, ob dort Inhalt steht, den die neue Seite übernehmen kann.
     Fehlt er, ist es kein Redesign mehr — dann müssen Texte neu entstehen,
     und darüber muss vorher jemand mit dem Kunden sprechen.
+
+    `ready_to_mail` ist der Schritt danach und der einzige Wert, der nicht
+    von der alten Seite redet, sondern von der neuen: sie ist gebaut, aber
+    noch nicht beim Betrieb. Trotzdem hier und nicht als Versandzustand — es
+    ist die Website, die fertig ist, nicht die Mail, die heraus ist, und
+    beides steht in derselben Liste nebeneinander. Ein Wert derselben Spur
+    ist es, weil „lässt sich bauen" und „ist gebaut" einander ausschließen:
+    hat jemand gebaut, ist die Einschätzung von vorher erledigt.
 
     `unbewertet` ist wie `MailState.OFFEN` der Ausgangszustand und braucht
     keinen Eintrag: eine Zusage, die noch niemand angesehen hat, steht darauf.
@@ -200,6 +210,8 @@ class BuildReadiness(str, Enum):
     UNBEWERTET = "unbewertet"
     #: Inhalt ist da, die neue Seite kann ihn übernehmen — reines Redesign.
     READY_TO_BUILD = "ready_to_build"
+    #: Die neue Seite steht, ist aber noch nicht beim Betrieb.
+    READY_TO_MAIL = "ready_to_mail"
     #: Seite erreichbar, aber praktisch ohne Inhalt: Texte müssen neu
     #: entstehen, vorher Rücksprache mit dem Kunden.
     MISSING_CONTENT = "missing_content"
@@ -208,6 +220,7 @@ class BuildReadiness(str, Enum):
 READINESS_LABELS: dict[BuildReadiness, str] = {
     BuildReadiness.UNBEWERTET: "noch nicht eingeschätzt",
     BuildReadiness.READY_TO_BUILD: "Ready to Build",
+    BuildReadiness.READY_TO_MAIL: "Ready to Mail",
     BuildReadiness.MISSING_CONTENT: "Missing Content",
 }
 
@@ -220,9 +233,9 @@ class ReadinessOptionInfo(BaseModel):
     und jeder Wert lässt sich in jeden anderen ändern. Eine Einschätzung ist
     eine Beobachtung über eine Website, kein Vorgang mit Reihenfolge.
 
-    Ohne `tone`: die drei Werte haben in der Oberfläche ihre eigene Farbe,
-    denn „Missing Content" ist keine schlechte Nachricht (das wäre
-    `negative`), sondern mehr Arbeit.
+    Ohne `tone`: jeder Wert hat in der Oberfläche seine eigene Farbe, denn
+    „Missing Content" ist keine schlechte Nachricht (das wäre `negative`),
+    sondern mehr Arbeit.
     """
 
     id: BuildReadiness
@@ -240,6 +253,15 @@ READINESS_OPTIONS: tuple[ReadinessOptionInfo, ...] = (
         description=(
             "Die bestehende Website hat Inhalt, den die neue übernehmen kann – "
             "ein Redesign. Kann so in die Umsetzung."
+        ),
+    ),
+    ReadinessOptionInfo(
+        id=BuildReadiness.READY_TO_MAIL,
+        label="Ready to Mail",
+        description=(
+            "Die neue Website ist gebaut und muss nur noch zum Betrieb – "
+            "gemeint ist die Seite, nicht die Mail: den Versandstand daneben "
+            "ändert dieser Marker nicht."
         ),
     ),
     ReadinessOptionInfo(
@@ -320,7 +342,7 @@ class MailCounters(BaseModel):
     Die Oberfläche zeigt sie in zwei Filterreihen (Versandstand, dann
     Bau-Einschätzung), und **jede Reihe zählt innerhalb der Auswahl der
     anderen**: wer auf „Offen" filtert, bekommt in den Markern die offenen
-    Zusagen, deren drei Zahlen zusammen die Zahl auf dem Reiter ergeben.
+    Zusagen, deren Zahlen zusammen die Zahl auf dem Reiter ergeben.
     Ihren *eigenen* Filter lässt eine Reihe dabei außen vor — sonst stünde
     auf allen Marken außer der angeklickten eine Null und es gäbe keinen
     Rückweg, der eine Zahl nennt. Die Suche bleibt aus beiden Reihen heraus:
@@ -345,10 +367,13 @@ class MailCounters(BaseModel):
     #: Frage, für die die Marker gesetzt werden, und die stellt sich vor der
     #: Antwort auf die Mail).
     ready_to_build: int
+    #: Gebaut, aber noch nicht beim Betrieb — die Zahl, die am Ende einer
+    #: Bau-Runde auf null laufen soll.
+    ready_to_mail: int
     missing_content: int
     #: Die noch nicht angesehenen. Ausdrücklich mitgeschickt und nicht als
-    #: `gesamt` minus die anderen zwei gerechnet: sonst müsste die Oberfläche
-    #: die Regel kennen, dass die drei Werte einander ausschließen.
+    #: `gesamt` minus die übrigen gerechnet: sonst müsste die Oberfläche die
+    #: Regel kennen, dass die Werte einander ausschließen.
     unbewertet: int
 
 
@@ -397,7 +422,7 @@ class MailUpdateRequest(BaseModel):
     #: vorhandene Anmerkung nicht verlieren.
     note: str | None = Field(default=None, max_length=MAX_MAIL_NOTE)
     #: Die Bau-Einschätzung. `None` = unverändert — gelöscht wird nicht durch
-    #: Weglassen, sondern durch `unbewertet`: bei drei Werten ist der
+    #: Weglassen, sondern durch `unbewertet`: bei mehreren Werten ist der
     #: Rückweg selbst einer, und ein Marker, den nur das *Fehlen* eines Feldes
     #: entfernt, wäre von „nicht mitgeschickt" nicht zu unterscheiden.
     readiness: BuildReadiness | None = None

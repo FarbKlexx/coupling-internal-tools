@@ -25,15 +25,22 @@ export type MailState = (typeof MAIL_STATES)[number];
 /**
  * Die Bau-Einschätzung einer Zusage. Spiegel von `BuildReadiness` im Backend.
  *
- * Zweite, vom Versandstand unabhängige Größe: sie sagt, ob die bestehende
- * Website Inhalt hat, den die neue übernehmen kann. Hat sie keinen, ist es
- * kein Redesign mehr – dann müssen Texte entstehen, und darüber muss vorher
- * jemand mit dem Kunden sprechen.
+ * Zweite, vom Versandstand unabhängige Größe: sie sagt, wo die *Website*
+ * steht. Zuerst, ob die bestehende Inhalt hat, den die neue übernehmen kann –
+ * hat sie keinen, ist es kein Redesign mehr, dann müssen Texte entstehen, und
+ * darüber muss vorher jemand mit dem Kunden sprechen. Und dann, mit
+ * `ready_to_mail`, dass die neue Seite steht und nur noch zum Betrieb muss:
+ * gebaut, aber noch nicht verschickt.
  *
  * `unbewertet` ist der Ausgangswert *und* der Rückweg: entfernt wird ein
  * Marker, indem man ihn setzt (siehe `MailUpdate.readiness`).
  */
-export const BUILD_READINESS = ["unbewertet", "ready_to_build", "missing_content"] as const;
+export const BUILD_READINESS = [
+  "unbewertet",
+  "ready_to_build",
+  "ready_to_mail",
+  "missing_content",
+] as const;
 
 export type BuildReadiness = (typeof BUILD_READINESS)[number];
 
@@ -42,8 +49,8 @@ export type BuildReadiness = (typeof BUILD_READINESS)[number];
  * kommen mit der Antwort (`MailBoard.readiness_options`).
  *
  * Ohne `tone`, anders als bei den Zustands-Knöpfen: „Missing Content" ist
- * keine schlechte Nachricht, sondern mehr Arbeit. Die Farben der drei Werte
- * stehen deshalb in der Oberfläche (`READINESS_STYLE`).
+ * keine schlechte Nachricht, sondern mehr Arbeit. Die Farben der Werte stehen
+ * deshalb in der Oberfläche (`READINESS`).
  */
 export interface ReadinessOptionInfo {
   id: BuildReadiness;
@@ -105,7 +112,7 @@ export interface MailEntry {
  *
  * Die Oberfläche hat zwei Filterreihen, und **jede zählt innerhalb der
  * Auswahl der anderen**: mit Reiter „Offen" nennen die Marker die offenen
- * Zusagen, und ihre drei Zahlen ergeben zusammen die Zahl auf dem Reiter.
+ * Zusagen, und ihre Zahlen ergeben zusammen die Zahl auf dem Reiter.
  * Ihren eigenen Filter lässt eine Reihe außen vor, sonst gäbe es keinen
  * Rückweg, der eine Zahl nennt. Die Suche bleibt aus beiden heraus.
  *
@@ -130,6 +137,8 @@ export interface MailCounters {
    * Antwort auf die Mail.
    */
   ready_to_build: number;
+  /** Gebaut, aber noch nicht beim Betrieb. */
+  ready_to_mail: number;
   missing_content: number;
   unbewertet: number;
 }

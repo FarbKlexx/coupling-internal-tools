@@ -14,11 +14,12 @@
  * Beschriftung, Beschreibung und Tonlage der Knöpfe reisen ebenfalls als
  * Daten mit (`actions`). Was hier steht, ist reine Darstellung.
  *
- * Quer zu den Reitern liegt die **Bau-Einschätzung**: zwei Marker je Zeile,
- * die sagen, ob aus der bestehenden Website eine neue werden kann. Sie ist
- * kein Versandstand und steht deshalb nicht in der Reiterzeile, sondern als
- * eigene Filterzeile darunter — zwei Fragen, zwei Filter, und beide
- * gleichzeitig ergibt die Liste, mit der jemand zu bauen anfängt.
+ * Quer zu den Reitern liegt die **Bau-Einschätzung**: drei Marker je Zeile,
+ * die sagen, wo die Website steht — ob aus der bestehenden eine neue werden
+ * kann, und ob sie es schon ist und nur noch zum Betrieb muss. Sie ist kein
+ * Versandstand und steht deshalb nicht in der Reiterzeile, sondern als eigene
+ * Filterzeile darunter — zwei Fragen, zwei Filter, und beide gleichzeitig
+ * ergibt die Liste, mit der jemand zu bauen anfängt.
  */
 import { ref } from "vue";
 import {
@@ -76,8 +77,11 @@ const ICONS: Record<MailState, string> = {
  * Anders als bei den Zustands-Knöpfen kommt hier **keine** Tonlage aus dem
  * Backend: „Missing Content" ist keine Ablehnung, sondern mehr Arbeit, und
  * Bernstein heißt in dieser Anwendung durchgehend „hier ist noch etwas zu
- * tun". Die Beschriftung an der Zeile kommt dagegen mit der Antwort – nur die
- * kurze Form für die Filterzeile steht hier, wie bei `TABS`.
+ * tun". „Ready to Mail" ist aus demselben Grund blau: dieselbe Farbe wie der
+ * Versandstand „verschickt", weil es dieselbe Aussage über die Website ist –
+ * fertig und auf dem Weg. Die Beschriftung an der Zeile kommt dagegen mit der
+ * Antwort – nur die kurze Form für die Filterzeile steht hier, wie bei
+ * `TABS`.
  *
  * `mailStates.test.ts` hält diese Zuordnung mit `BuildReadiness` im Backend
  * zusammen: ein Wert ohne Symbol wäre ein leeres Kästchen in einem Knopf.
@@ -98,6 +102,12 @@ const READINESS: Record<
     chip: "chip--ready",
     filter: "Ready to Build",
   },
+  ready_to_mail: {
+    icon: "schedule_send",
+    text: "text-blue-300",
+    chip: "chip--built",
+    filter: "Ready to Mail",
+  },
   missing_content: {
     icon: "edit_document",
     text: "text-amber-400",
@@ -106,12 +116,19 @@ const READINESS: Record<
   },
 };
 
-/** Die drei Werte in der Reihenfolge der Filterzeile. */
-const READINESS_FILTERS: BuildReadiness[] = ["ready_to_build", "missing_content", "unbewertet"];
+/** Die Werte in der Reihenfolge der Filterzeile: erst der Weg durch den Bau
+ *  („lässt sich bauen" → „ist gebaut"), dann der Umweg, dann die offene
+ *  Frage. */
+const READINESS_FILTERS: BuildReadiness[] = [
+  "ready_to_build",
+  "ready_to_mail",
+  "missing_content",
+  "unbewertet",
+];
 
-/** Die zwei Marker, die an einer Zeile stehen. `unbewertet` ist kein Knopf,
+/** Die Marker, die an einer Zeile stehen. `unbewertet` ist kein Knopf,
  *  sondern das Ausschalten des gesetzten – siehe `toggleReadiness`. */
-const READINESS_MARKERS: BuildReadiness[] = ["ready_to_build", "missing_content"];
+const READINESS_MARKERS: BuildReadiness[] = ["ready_to_build", "ready_to_mail", "missing_content"];
 
 function readinessOption(id: BuildReadiness): ReadinessOptionInfo | undefined {
   return props.readinessOptions.find((option) => option.id === id);
@@ -119,9 +136,9 @@ function readinessOption(id: BuildReadiness): ReadinessOptionInfo | undefined {
 
 /**
  * Die Zahl auf einem Marker – gezählt innerhalb des Reiters, der oben aktiv
- * ist (`countOf` erklärt die Regel). Die drei ergeben damit zusammen die Zahl
- * des Reiters; vorher zählten sie immer über alle Zusagen und passten zur
- * Liste nur, solange „Alle" ausgewählt war.
+ * ist (`countOf` erklärt die Regel). Sie ergeben damit zusammen die Zahl des
+ * Reiters; vorher zählten sie immer über alle Zusagen und passten zur Liste
+ * nur, solange „Alle" ausgewählt war.
  */
 function readinessCount(id: BuildReadiness): number {
   return props.board?.counters[id] ?? 0;

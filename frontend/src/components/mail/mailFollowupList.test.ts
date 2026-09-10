@@ -37,6 +37,7 @@ const actions: MailActionInfo[] = [
 /** Der Marker-Katalog, wie das Backend ihn mitschickt. */
 const readinessOptions: ReadinessOptionInfo[] = [
   { id: "ready_to_build", label: "Ready to Build", description: "Inhalt ist da." },
+  { id: "ready_to_mail", label: "Ready to Mail", description: "Gebaut, muss noch raus." },
   { id: "missing_content", label: "Missing Content", description: "Erst Rücksprache." },
   { id: "unbewertet", label: "Einschätzung entfernen", description: "Für den Fehlklick." },
 ];
@@ -84,6 +85,7 @@ function board(...entries: MailEntry[]): MailBoard {
       keine_antwort: 0,
       ohne_email: rows.filter((row) => !row.email).length,
       ready_to_build: rows.filter((row) => row.readiness === "ready_to_build").length,
+      ready_to_mail: rows.filter((row) => row.readiness === "ready_to_mail").length,
       missing_content: rows.filter((row) => row.readiness === "missing_content").length,
       unbewertet: rows.filter((row) => row.readiness === "unbewertet").length,
     },
@@ -323,6 +325,21 @@ describe("MailFollowupList", () => {
     expect(save).toHaveBeenCalledWith("k1", { readiness: "missing_content" });
   });
 
+  it("setzt den Marker fuer die gebaute Seite ohne den Versandstand", async () => {
+    // Die *Website* ist fertig, die Mail ist damit nicht heraus: der Marker
+    // schickt kein `state`, sonst waere er ein sechster Versandzustand.
+    const { wrapper, save } = mountList([{ ...entry, readiness: "ready_to_build" }]);
+
+    const button = wrapper.find("li [data-marker='ready_to_mail']");
+
+    expect(button.text()).toContain("Ready to Mail");
+    expect(button.attributes("title")).toBe("Gebaut, muss noch raus.");
+
+    await button.trigger("click");
+
+    expect(save).toHaveBeenCalledWith("k1", { readiness: "ready_to_mail" });
+  });
+
   it("zeigt den gesetzten Marker in der Zeile, den fehlenden nicht", () => {
     // Ein Marker, den man beim Ueberfliegen nicht sieht, ist keiner – und
     // „unbewertet" ist keine Aussage ueber eine Website.
@@ -376,11 +393,13 @@ describe("MailFollowupList", () => {
     const { wrapper } = mountList([
       { ...entry, readiness: "ready_to_build" },
       { ...entry, contact_id: "k2", readiness: "missing_content" },
-      { ...entry, contact_id: "k3" },
+      { ...entry, contact_id: "k3", readiness: "ready_to_mail" },
+      { ...entry, contact_id: "k4" },
     ]);
 
     expect(wrapper.find("[data-readiness-filter='ready_to_build']").text()).toContain("1");
     expect(wrapper.find("[data-readiness-filter='missing_content']").text()).toContain("1");
+    expect(wrapper.find("[data-readiness-filter='ready_to_mail']").text()).toContain("1");
     expect(wrapper.find("[data-readiness-filter='unbewertet']").text()).toContain("1");
   });
 
