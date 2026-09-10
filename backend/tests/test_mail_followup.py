@@ -97,6 +97,17 @@ def _mark(client, contact_id, readiness, expected=200, **params):
     return response.json()
 
 
+def _scope(client, contact_id, oversized, expected=200, **params):
+    """Den Umfangs-Marker setzen — allein im Körper, wie die Oberfläche."""
+    response = client.post(
+        f"/mailversand/contacts/{contact_id}",
+        json={"oversized": oversized},
+        params=params,
+    )
+    assert response.status_code == expected, response.text
+    return response.json()
+
+
 def _entry(board, contact_id):
     return next(e for e in board["entries"] if e["contact_id"] == contact_id)
 
@@ -842,6 +853,131 @@ def test_every_marker_can_be_set_and_unset(zusagen):
             assert _entry(board, ids[0])["readiness"] == target.value
 
 
+# ------------------------------
+# „Bigger than expected" — die dritte, kombinierbare Größe
+# ------------------------------
+
+
+def test_the_scope_marker_stands_next_to_every_other_marker(zusagen):
+    """Der Umfang ist *neben* der Bau-Spur, nicht in ihr.
+
+    Das ist der ganze Grund für die eigene Spalte: eine Seite kann „In
+    Development" **und** größer als ein Onepager sein, und der Umfang soll
+    über jeden Bauschritt stehen bleiben. Als sechster Wert von
+    `BuildReadiness` wäre er beim nächsten Klick weg — und das ist die
+    Auskunft, die beim Planen gebraucht wird.
+    """
+    client, ids = zusagen
+
+    board = _scope(client, ids[0], True)
+    entry = _entry(board, ids[0])
+
+    assert entry["oversized"] is True
+    # Weder Versandstand noch Bau-Einschätzung sind angefasst.
+    assert entry["state"] == "offen"
+    assert entry["readiness"] == "unbewertet"
+    assert board["counters"]["oversized"] == 1
+
+    # Und beides gleichzeitig, in beiden Reihenfolgen gesetzt.
+    board = _mark(client, ids[0], "in_development")
+    entry = _entry(board, ids[0])
+    assert (entry["readiness"], entry["oversized"]) == ("in_development", True)
+
+    board = _mark(client, ids[0], "ready_to_mail")
+    assert _entry(board, ids[0])["oversized"] is True
+
+    board = _click(client, ids[0], "versendet")
+    assert _entry(board, ids[0])["oversized"] is True
+
+    board = client.post(
+        f"/mailversand/contacts/{ids[0]}", json={"note": "drei Unterseiten"}
+    ).json()
+    assert _entry(board, ids[0])["oversized"] is True
+    assert _entry(board, ids[0])["readiness"] == "ready_to_mail"
+
+
+def test_the_scope_marker_can_be_taken_back(zusagen):
+    """`False` ist der Rückweg, und hier braucht es dafür keinen dritten Wert.
+
+    Bei zwei Werten ist das Feld selbst der Rückweg — anders als bei der
+    Bau-Einschätzung, wo `unbewertet` ein eigener Wert sein muss. Ein
+    fehlendes Feld heißt weiter „unverändert".
+    """
+    client, ids = zusagen
+    _scope(client, ids[0], True)
+
+    board = _scope(client, ids[0], False)
+
+    assert _entry(board, ids[0])["oversized"] is False
+    assert board["counters"]["oversized"] == 0
+
+
+def test_the_scope_filter_is_independent_of_the_other_two(zusagen):
+    """Drei Filter, drei Fragen — und zusammen die vierte."""
+    client, ids = zusagen
+    _scope(client, ids[0], True)
+    _mark(client, ids[0], "in_development")
+    _scope(client, ids[1], True)
+    _click(client, ids[0], "versendet")
+
+    big = _board(client, oversized=True)
+    assert big["matched"] == 2
+
+    assert _board(client, oversized=False)["matched"] == 0
+
+    all_three = _board(
+        client, state="versendet", readiness="in_development", oversized=True
+    )
+    assert [e["contact_id"] for e in all_three["entries"]] == [ids[0]]
+
+    # Die Suche fädelt sich zwischen die drei ein, ohne sie zu verschieben.
+    assert _board(client, q="Erster", oversized=True)["matched"] == 1
+    assert _board(client, q="Erster", oversized=False)["matched"] == 0
+
+
+def test_the_scope_counter_counts_within_the_other_filters(zusagen):
+    """Dritte Größe, dieselbe Regel: mit den anderen, ohne sich selbst.
+
+    Ohne den eigenen Filter, weil die eine Marke sonst entweder die
+    Gesamtzahl oder die Zahl der Liste nennt — ein Rückweg ist keins von
+    beidem.
+    """
+    client, ids = zusagen
+    _scope(client, ids[0], True)
+    _click(client, ids[0], "versendet")
+    _scope(client, ids[1], True)
+
+    versendet = _board(client, state="versendet")["counters"]
+    assert versendet["oversized"] == 1
+
+    offen = _board(client, state="offen")["counters"]
+    assert offen["oversized"] == 1
+
+    # Mit dem eigenen Filter bleibt die Zahl stehen: sie zählt sich nicht
+    # selbst weg.
+    assert _board(client, oversized=True)["counters"]["oversized"] == 2
+    # … und die anderen Reihen zählen jetzt in *seiner* Auswahl.
+    assert _board(client, oversized=True)["counters"]["gesamt"] == 2
+    assert _board(client, oversized=False)["counters"]["gesamt"] == 0
+
+
+def test_the_export_names_the_scope(zusagen):
+    """Und lässt die Zelle leer, solange nichts gesagt wurde."""
+    client, ids = zusagen
+    _scope(client, ids[0], True)
+
+    response = client.get("/mailversand/export")
+    assert response.status_code == 200
+    lines = response.content.decode("utf-8-sig").splitlines()
+
+    column = lines[0].split(";").index("Umfang")
+    marked = next(line for line in lines if line.startswith("Erster Betrieb"))
+    unmarked = next(line for line in lines if line.startswith("Dritter Betrieb"))
+
+    assert marked.split(";")[column] == "Bigger than expected"
+    assert unmarked.split(";")[column] == ""
+
+
 def test_a_database_from_before_the_assessment_gets_the_new_column(zusagen):
     """`CREATE TABLE IF NOT EXISTS` fasst eine vorhandene Tabelle nicht an.
 
@@ -883,14 +1019,18 @@ def test_a_database_from_before_the_assessment_gets_the_new_column(zusagen):
         }
         stored = conn.execute("SELECT * FROM mail_status").fetchone()
 
-    assert "build_readiness" in columns
-    # Der alte Stand bleibt: NULL heißt „noch nicht eingeschätzt", und genau
-    # das ist die Wahrheit über eine Zeile von vor der Spalte.
+    assert {"build_readiness", "oversized"} <= columns
+    # Der alte Stand bleibt: NULL heißt „noch nicht eingeschätzt" bzw. „hat
+    # niemand gesagt", und genau das ist die Wahrheit über eine Zeile von vor
+    # den Spalten.
     assert stored["note"] == "alter Eintrag"
     assert stored["build_readiness"] is None
+    assert stored["oversized"] is None
 
     # Und die Liste antwortet weiter — das ist der Punkt der Übung.
     entry = _entry(_board(client), ids[0])
     assert entry["state"] == "versendet"
     assert entry["readiness"] == "unbewertet"
+    assert entry["oversized"] is False
     assert _board(client)["counters"]["unbewertet"] == 2
+    assert _board(client)["counters"]["oversized"] == 0

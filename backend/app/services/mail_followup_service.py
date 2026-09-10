@@ -46,6 +46,7 @@ from app.schemas.mail_followup import (
     MAX_MAIL_PAGE_SIZE,
     READINESS_LABELS,
     READINESS_OPTIONS,
+    SCOPE_MARKER,
     BuildReadiness,
     MailBoard,
     MailCounters,
@@ -145,6 +146,7 @@ def _entry(row: sqlite3.Row) -> MailEntry:
         state_label=MAIL_STATE_LABELS[state],
         readiness=readiness,
         readiness_label=READINESS_LABELS[readiness],
+        oversized=bool(row["oversized_flag"]),
         # Der einzige Fall, in dem sich der angezeigte vom gespeicherten
         # Zustand unterscheidet: die abgelaufene Frist. Ohne diesen Hinweis
         # sähe die Zeile aus, als hätte jemand sie abgeschlossen.
@@ -165,10 +167,11 @@ def _counters(
     *,
     state: MailState | None,
     readiness: BuildReadiness | None,
+    oversized: bool | None,
 ) -> MailCounters:
-    """Die Zahlen der beiden Filterreihen.
+    """Die Zahlen der drei Filtergrößen.
 
-    Jede Reihe zählt mit dem Filter der *anderen*, aber ohne ihren eigenen:
+    Jede zählt mit den Filtern der *anderen*, aber ohne ihren eigenen:
     steht die Reiterzeile auf „Offen", nennen die Marker die offenen Zusagen,
     und ihre Zahlen ergeben zusammen die Zahl auf dem Reiter. Umgekehrt
     genauso. Sonst stehen über der Liste zwei Aufteilungen derselben Menge,
@@ -184,10 +187,13 @@ def _counters(
     state_filter = state.value if state else None
     marker_filter = readiness.value if readiness else None
 
-    totals = db.mail_totals(conn, cutoff, marker_filter)
-    # Zweite Abfrage, weil es eine zweite Frage ist — und weil sie den
-    # anderen Filter braucht als die erste.
-    markers = db.mail_readiness_totals(conn, cutoff, state_filter)
+    totals = db.mail_totals(conn, cutoff, marker_filter, oversized)
+    # Zweite Abfrage, weil es eine zweite Frage ist — und weil sie andere
+    # Filter braucht als die erste.
+    markers = db.mail_readiness_totals(conn, cutoff, state_filter, oversized)
+    # Dritte, aus demselben Grund: der Umfang zählt in der Auswahl der
+    # beiden anderen und ohne sich selbst.
+    oversized_total = db.mail_oversized_total(conn, cutoff, state_filter, marker_filter)
 
     def count(value: MailState) -> int:
         return totals.get(value.value, (0, 0))[0]
@@ -207,6 +213,7 @@ def _counters(
         in_development=marked(BuildReadiness.IN_DEVELOPMENT),
         ready_to_mail=marked(BuildReadiness.READY_TO_MAIL),
         missing_content=marked(BuildReadiness.MISSING_CONTENT),
+        oversized=oversized_total,
         unbewertet=marked(BuildReadiness.UNBEWERTET),
     )
 
@@ -218,6 +225,7 @@ def _board(
     query: str,
     state: MailState | None,
     readiness: BuildReadiness | None,
+    oversized: bool | None,
     offset: int,
     limit: int,
 ) -> MailBoard:
@@ -228,15 +236,18 @@ def _board(
         query=query,
         state=state.value if state else None,
         readiness=readiness.value if readiness else None,
+        oversized=oversized,
         limit=limit,
         offset=offset,
     )
 
     return MailBoard(
         revision=db.revision(conn),
-        # Die Zähler kennen die Filter der Ansicht: jede Reihe zeigt ihre
+        # Die Zähler kennen die Filter der Ansicht: jede Größe zeigt ihre
         # Zahlen innerhalb der Auswahl der anderen.
-        counters=_counters(conn, cutoff, state=state, readiness=readiness),
+        counters=_counters(
+            conn, cutoff, state=state, readiness=readiness, oversized=oversized
+        ),
         entries=[_entry(row) for row in rows],
         total=total,
         matched=matched,
@@ -244,6 +255,7 @@ def _board(
         limit=limit,
         actions=list(MAIL_ACTIONS),
         readiness_options=list(READINESS_OPTIONS),
+        scope_marker=SCOPE_MARKER,
     )
 
 
@@ -257,6 +269,7 @@ def get_board(
     query: str = "",
     state: MailState | None = None,
     readiness: BuildReadiness | None = None,
+    oversized: bool | None = None,
     offset: int = 0,
     limit: int = MAIL_PAGE_SIZE,
 ) -> MailBoard:
@@ -269,6 +282,7 @@ def get_board(
             query=query,
             state=state,
             readiness=readiness,
+            oversized=oversized,
             offset=offset,
             limit=limit,
         )
@@ -305,12 +319,13 @@ def set_state(
     query: str = "",
     state: MailState | None = None,
     readiness: BuildReadiness | None = None,
+    oversized: bool | None = None,
     offset: int = 0,
     limit: int = MAIL_PAGE_SIZE,
 ) -> MailBoard:
     """Den Versandzustand einer Zusage setzen — oder Anmerkung, oder Marker.
 
-    Alle drei Felder des Anfragekörpers sind einzeln setzbar, und jedes
+    Alle Felder des Anfragekörpers sind einzeln setzbar, und jedes
     Weglassen heißt „unverändert". Ohne `state` bleibt der Zustand samt
     Versand- und Antwortdatum, wie er ist. Das ist kein Sonderfall aus
     Bequemlichkeit: notiert und eingeschätzt wird meistens *während* eine
@@ -374,6 +389,14 @@ def set_state(
                     if request.readiness is None
                     else request.readiness.value
                 ),
+                # Derselbe Grund wie beim Marker darüber: geschrieben wird
+                # immer die ganze Zeile, also muss „unverändert" hier
+                # aufgelöst werden.
+                oversized=(
+                    bool(row["oversized_flag"])
+                    if request.oversized is None
+                    else request.oversized
+                ),
                 # Fehlt das Feld, bleibt die Anmerkung stehen: wer nur einen
                 # Knopf drückt, soll nicht löschen, was jemand notiert hat.
                 note=(
@@ -395,6 +418,7 @@ def set_state(
             query=query,
             state=state,
             readiness=readiness,
+            oversized=oversized,
             offset=offset,
             limit=limit,
         )
@@ -421,6 +445,7 @@ def export_board() -> CallListExport:
         "Versandstatus",
         "automatisch",
         "Bau-Einschätzung",
+        "Umfang",
         "Mail versendet am (UTC)",
         "Tage seit Versand",
         "Antwort am (UTC)",
@@ -453,6 +478,9 @@ def export_board() -> CallListExport:
                 if entry.readiness is BuildReadiness.UNBEWERTET
                 else READINESS_LABELS[entry.readiness]
             ),
+            # Wie oben leer, wenn nichts gesagt wurde: die leere Zelle ist
+            # die filterbare Auskunft.
+            SCOPE_MARKER.label if entry.oversized else "",
             entry.sent_at or "",
             "" if entry.days_since_sent is None else str(entry.days_since_sent),
             entry.answered_at or "",

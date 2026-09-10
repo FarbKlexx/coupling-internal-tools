@@ -21,6 +21,13 @@
  * Versandstand und steht deshalb nicht in der Reiterzeile, sondern als eigene
  * Filterzeile darunter — zwei Fragen, zwei Filter, und beide gleichzeitig
  * ergibt die Liste, mit der jemand zu bauen anfängt.
+ *
+ * Quer zu *beiden* liegt **„Bigger than expected"**: der Umfang der Seite.
+ * Der eine Marker, der die anderen nicht ersetzt, sondern neben ihnen steht —
+ * eine Seite kann „In Development" und größer als ein Onepager sein, und
+ * gerade diese Kombination ist die Auskunft, für die es ihn gibt. Er sitzt
+ * deshalb an beiden Stellen abgesetzt: in der Filterzeile hinter einem
+ * Trenner, an der Zeile hinter den Bau-Markern.
  */
 import { ref } from "vue";
 import {
@@ -31,6 +38,7 @@ import {
   type MailEntry,
   type MailState,
   type ReadinessOptionInfo,
+  type ScopeMarkerInfo,
 } from "@/api/mail_followup.api";
 import { formatMoment } from "@/components/calls/callTime";
 import ContactWebsiteLink from "@/components/calls/ContactWebsiteLink.vue";
@@ -39,15 +47,24 @@ const props = defineProps<{
   board: MailBoard | null;
   actions: MailActionInfo[];
   readinessOptions: ReadinessOptionInfo[];
+  /** Der Umfangs-Marker samt Beschriftung – wie alles andere Daten aus der
+   *  Antwort. `null`, solange nichts geladen ist. */
+  scopeMarker: ScopeMarkerInfo | null;
   timeoutDays: number;
   isLoading: boolean;
   isSaving: boolean;
   filterBy: (state: MailState | null) => void;
   filterByReadiness: (readiness: BuildReadiness | null) => void;
+  filterByScope: () => void;
   goToPage: (offset: number) => void;
   save: (
     contactId: string,
-    update: { state?: MailState; note?: string; readiness?: BuildReadiness },
+    update: {
+      state?: MailState;
+      note?: string;
+      readiness?: BuildReadiness;
+      oversized?: boolean;
+    },
   ) => Promise<boolean>;
 }>();
 
@@ -56,6 +73,18 @@ const stateFilter = defineModel<MailState | null>("stateFilter", { required: tru
 const readinessFilter = defineModel<BuildReadiness | null>("readinessFilter", {
   required: true,
 });
+const oversizedFilter = defineModel<boolean | null>("oversizedFilter", { required: true });
+
+/**
+ * Symbol und Farbe des Umfangs-Markers.
+ *
+ * Orange, und damit in der Familie von Bernstein („hier ist noch etwas zu
+ * tun") – denn auch das hier ist mehr Arbeit –, aber deutlich davon
+ * unterscheidbar, weil es eine andere Größe ist als „Missing Content" und in
+ * derselben Zeile daneben stehen kann. `layers`, weil genau das den
+ * Unterschied zum Onepager macht: es sind mehrere Seiten.
+ */
+const SCOPE_ICON = "layers";
 
 /**
  * Symbol pro Zustand.
@@ -171,6 +200,24 @@ function toggleReadiness(entry: MailEntry, id: BuildReadiness) {
   void props.save(entry.contact_id, {
     readiness: entry.readiness === id ? "unbewertet" : id,
   });
+}
+
+/**
+ * Den Umfangs-Marker umschalten.
+ *
+ * Schickt `oversized` und sonst nichts: er ändert weder Versandstand noch
+ * Bau-Einschätzung, und das Weglassen der anderen Felder ist im Anfragekörper
+ * genau das Versprechen „unverändert". Der Rückweg ist `false` – bei zwei
+ * Werten braucht es kein „unbewertet" wie bei der Bau-Einschätzung.
+ */
+function toggleScope(entry: MailEntry) {
+  void props.save(entry.contact_id, { oversized: !entry.oversized });
+}
+
+function scopeTitle(entry: MailEntry): string {
+  if (!props.scopeMarker) return "";
+
+  return entry.oversized ? props.scopeMarker.undo_description : props.scopeMarker.description;
 }
 
 function markerTitle(entry: MailEntry, id: BuildReadiness): string {
@@ -315,6 +362,24 @@ function waiting(entry: MailEntry): string {
         {{ READINESS[id].filter }}
         <span class="tab-count">{{ readinessCount(id) }}</span>
       </button>
+
+      <!-- Hinter einem Trenner, weil hier die Größe wechselt: alles links
+           davon ist *ein* Wert (einer von fünf), das hier ist ein zweiter,
+           der zu jedem davon dazukommen kann. -->
+      <span class="mx-1 h-5 w-px bg-zinc-800" aria-hidden="true"></span>
+      <button
+        type="button"
+        class="chip"
+        :class="oversizedFilter ? 'chip--scope' : ''"
+        :aria-pressed="!!oversizedFilter"
+        data-scope-filter
+        :title="scopeMarker?.description"
+        @click="filterByScope()"
+      >
+        <span class="material-symbols-outlined" style="font-size: 16px">{{ SCOPE_ICON }}</span>
+        {{ scopeMarker?.label ?? "Bigger than expected" }}
+        <span class="tab-count">{{ board.counters.oversized }}</span>
+      </button>
     </div>
 
     <!-- Suche und Ausgabe -->
@@ -402,6 +467,19 @@ function waiting(entry: MailEntry): string {
                   {{ READINESS[entry.readiness].icon }}
                 </span>
                 {{ entry.readiness_label }}
+              </span>
+              <!-- Und der Umfang daneben, nicht anstelle: die beiden stehen
+                   in einer Zeile gleichzeitig, das ist der Punkt. -->
+              <span
+                v-if="entry.oversized"
+                class="flex items-center gap-1 text-xs text-orange-300"
+                data-oversized
+                :title="scopeMarker?.description"
+              >
+                <span class="material-symbols-outlined" style="font-size: 15px">
+                  {{ SCOPE_ICON }}
+                </span>
+                {{ scopeMarker?.label ?? "Bigger than expected" }}
               </span>
             </p>
 
@@ -500,6 +578,23 @@ function waiting(entry: MailEntry): string {
                 {{ READINESS[id].icon }}
               </span>
               {{ readinessOption(id)?.label ?? id }}
+            </button>
+
+            <span class="mx-0.5 h-5 w-px bg-zinc-800" aria-hidden="true"></span>
+            <button
+              type="button"
+              class="chip"
+              :class="entry.oversized ? 'chip--scope' : ''"
+              :aria-pressed="entry.oversized"
+              data-scope-marker
+              :disabled="isSaving"
+              :title="scopeTitle(entry)"
+              @click="toggleScope(entry)"
+            >
+              <span class="material-symbols-outlined" style="font-size: 16px">
+                {{ SCOPE_ICON }}
+              </span>
+              {{ scopeMarker?.label ?? "Bigger than expected" }}
             </button>
           </span>
         </div>

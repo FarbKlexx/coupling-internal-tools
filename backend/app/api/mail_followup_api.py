@@ -57,19 +57,22 @@ def read_board(
     q: str = Query(default="", max_length=200),
     state: MailState | None = Query(default=None),
     readiness: BuildReadiness | None = Query(default=None),
+    oversized: bool | None = Query(default=None),
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=MAIL_PAGE_SIZE, ge=1, le=MAX_MAIL_PAGE_SIZE),
     _: CurrentUser = Depends(current_user),
 ) -> MailBoard:
     """Die Versandliste: Zähler, eine Seite Zusagen, die Knöpfe.
 
-    `state` und `readiness` sind zwei unabhängige Filter, weil sie zwei
-    Fragen beantworten: was ist verschickt, und was lässt sich bauen.
+    `state`, `readiness` und `oversized` sind drei unabhängige Filter, weil
+    sie drei Fragen beantworten: was ist verschickt, was lässt sich bauen,
+    und was ist größer als ein Onepager.
     """
     return get_board(
         query=q,
         state=state,
         readiness=readiness,
+        oversized=oversized,
         offset=offset,
         limit=limit,
     )
@@ -82,6 +85,7 @@ def change_state(
     q: str = Query(default="", max_length=200),
     state: MailState | None = Query(default=None),
     readiness: BuildReadiness | None = Query(default=None),
+    oversized: bool | None = Query(default=None),
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=MAIL_PAGE_SIZE, ge=1, le=MAX_MAIL_PAGE_SIZE),
     user: CurrentUser = Depends(current_user),
@@ -92,8 +96,9 @@ def change_state(
     dieselbe Regel wie im Anrufprotokoll, auch wenn hier kein Nachweis
     entsteht, sondern Arbeitsstand.
 
-    `state`/`readiness` sind hier zweimal da und meinen zweierlei: in der
-    Query die Sicht, die zurückkommen soll, im Körper das, was gesetzt wird.
+    `state`/`readiness`/`oversized` sind hier zweimal da und meinen
+    zweierlei: in der Query die Sicht, die zurückkommen soll, im Körper das,
+    was gesetzt wird.
     """
     try:
         return set_state(
@@ -103,6 +108,7 @@ def change_state(
             query=q,
             state=state,
             readiness=readiness,
+            oversized=oversized,
             offset=offset,
             limit=limit,
         )

@@ -19,6 +19,7 @@ import type {
   MailEntry,
   MailState,
   ReadinessOptionInfo,
+  ScopeMarkerInfo,
 } from "@/api/mail_followup.api";
 
 const actions: MailActionInfo[] = [
@@ -33,6 +34,13 @@ const actions: MailActionInfo[] = [
   { id: "keine_antwort", label: "keine Antwort", description: "Von Hand.", tone: "neutral" },
   { id: "offen", label: "zurücksetzen", description: "Für den Fehlklick.", tone: "neutral" },
 ];
+
+/** Der Umfangs-Marker, wie das Backend ihn mitschickt. */
+const scopeMarker: ScopeMarkerInfo = {
+  label: "Bigger than expected",
+  description: "Mehr als ein Onepager.",
+  undo_description: "Zurück auf Umfang wie erwartet.",
+};
 
 /** Der Marker-Katalog, wie das Backend ihn mitschickt. */
 const readinessOptions: ReadinessOptionInfo[] = [
@@ -62,6 +70,7 @@ const entry: MailEntry = {
   state_label: "Mail noch nicht versendet",
   readiness: "unbewertet",
   readiness_label: "noch nicht eingeschätzt",
+  oversized: false,
   automatic: false,
   sent_at: null,
   answered_at: null,
@@ -90,6 +99,7 @@ function board(...entries: MailEntry[]): MailBoard {
       ready_to_mail: rows.filter((row) => row.readiness === "ready_to_mail").length,
       missing_content: rows.filter((row) => row.readiness === "missing_content").length,
       unbewertet: rows.filter((row) => row.readiness === "unbewertet").length,
+      oversized: rows.filter((row) => row.oversized).length,
     },
     entries: rows,
     total: rows.length,
@@ -98,6 +108,7 @@ function board(...entries: MailEntry[]): MailBoard {
     limit: 50,
     actions,
     readiness_options: readinessOptions,
+    scope_marker: scopeMarker,
     timeout_days: 30,
   };
 }
@@ -113,30 +124,35 @@ function mountList(
     filterBy?: FilterMock;
     stateFilter?: MailState | null;
     readinessFilter?: BuildReadiness | null;
+    oversizedFilter?: boolean | null;
   } = {},
 ) {
   const filterBy: FilterMock = extra.filterBy ?? vi.fn();
   const filterByReadiness: ReadinessFilterMock = vi.fn();
+  const filterByScope: Mock<() => void> = vi.fn();
 
   const wrapper = mount(MailFollowupList, {
     props: {
       board: board(...entries),
       actions,
       readinessOptions,
+      scopeMarker,
       timeoutDays: 30,
       isLoading: false,
       isSaving: false,
       filterBy,
       filterByReadiness,
+      filterByScope,
       goToPage: vi.fn(),
       save,
       query: "",
       stateFilter: extra.stateFilter ?? null,
       readinessFilter: extra.readinessFilter ?? null,
+      oversizedFilter: extra.oversizedFilter ?? null,
     },
   });
 
-  return { wrapper, save, filterBy, filterByReadiness };
+  return { wrapper, save, filterBy, filterByReadiness, filterByScope };
 }
 
 /** Die Knöpfe *einer* Zeile, ohne Reiter und Werkzeugleiste. */
@@ -283,16 +299,19 @@ describe("MailFollowupList", () => {
         board: empty,
         actions,
         readinessOptions,
+        scopeMarker,
         timeoutDays: 30,
         isLoading: false,
         isSaving: false,
         filterBy: vi.fn(),
         filterByReadiness: vi.fn(),
+        filterByScope: vi.fn(),
         goToPage: vi.fn(),
         save: vi.fn(),
         query: "",
         stateFilter: null,
         readinessFilter: null,
+        oversizedFilter: null,
       },
     });
 
@@ -431,6 +450,84 @@ describe("MailFollowupList", () => {
     expect(
       wrapper.find("[data-readiness-filter='ready_to_build']").attributes("aria-pressed"),
     ).toBe("false");
+  });
+
+  it("setzt den Umfang zusaetzlich zur Bau-Einschaetzung, nicht anstelle", async () => {
+    // Der ganze Grund fuer die eigene Groesse: „In Development" UND groesser
+    // als ein Onepager ist die Auskunft, fuer die es den Marker gibt. Der
+    // Klick schickt deshalb nur `oversized` – alles andere heisst
+    // „unveraendert".
+    const { wrapper, save } = mountList([{ ...entry, readiness: "in_development" }]);
+
+    const button = wrapper.find("li [data-scope-marker]");
+
+    expect(button.text()).toContain("Bigger than expected");
+    expect(button.attributes("title")).toBe("Mehr als ein Onepager.");
+
+    await button.trigger("click");
+
+    expect(save).toHaveBeenCalledWith("k1", { oversized: true });
+  });
+
+  it("nimmt den Umfangs-Marker beim zweiten Klick wieder zurueck", async () => {
+    // `false` ist hier der Rueckweg – bei zwei Werten braucht es kein
+    // „unbewertet" wie bei der Bau-Einschaetzung.
+    const { wrapper, save } = mountList([{ ...entry, oversized: true }]);
+
+    const button = wrapper.find("li [data-scope-marker]");
+
+    expect(button.attributes("aria-pressed")).toBe("true");
+    expect(button.attributes("title")).toBe("Zurück auf Umfang wie erwartet.");
+
+    await button.trigger("click");
+
+    expect(save).toHaveBeenCalledWith("k1", { oversized: false });
+  });
+
+  it("zeigt Umfang und Bau-Einschaetzung gleichzeitig in der Zeile", () => {
+    // Zwei Marken in einer Zeile: genau das kann die Bau-Spur allein nicht.
+    const { wrapper } = mountList([
+      {
+        ...entry,
+        readiness: "in_development",
+        readiness_label: "In Development",
+        oversized: true,
+      },
+    ]);
+
+    expect(wrapper.find("[data-readiness='in_development']").exists()).toBe(true);
+    expect(wrapper.find("[data-oversized]").exists()).toBe(true);
+
+    // Ohne Marker steht dort nichts – „hat niemand gesagt" ist keine Aussage.
+    expect(mountList().wrapper.find("[data-oversized]").exists()).toBe(false);
+  });
+
+  it("filtert nach dem Umfang, ohne die anderen Filter anzufassen", async () => {
+    const { wrapper, filterByScope, filterBy, filterByReadiness } = mountList([], undefined, {
+      stateFilter: "versendet",
+      readinessFilter: "in_development",
+    });
+
+    await wrapper.find("[data-scope-filter]").trigger("click");
+
+    expect(filterByScope).toHaveBeenCalled();
+    expect(filterBy).not.toHaveBeenCalled();
+    expect(filterByReadiness).not.toHaveBeenCalled();
+  });
+
+  it("zaehlt am Umfangs-Filter und markiert ihn fuer Screenreader", () => {
+    const counted = mountList([
+      { ...entry, oversized: true },
+      { ...entry, contact_id: "k2", oversized: true },
+      { ...entry, contact_id: "k3" },
+    ]);
+
+    expect(counted.wrapper.find("[data-scope-filter]").text()).toContain("2");
+    expect(counted.wrapper.find("[data-scope-filter]").attributes("aria-pressed")).toBe("false");
+
+    const active = mountList([], undefined, { oversizedFilter: true });
+
+    expect(active.wrapper.find("[data-scope-filter]").attributes("aria-pressed")).toBe("true");
   });
 
   it("laesst die Einschaetzung auch ohne E-Mail-Adresse zu", () => {

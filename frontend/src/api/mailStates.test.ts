@@ -118,6 +118,27 @@ describe("Versand-Zustaende", () => {
   });
 });
 
+describe("Umfangs-Marker", () => {
+  it("faehrt als Daten mit und hat in der Oberflaeche ein Symbol", () => {
+    // „Bigger than expected" ist die dritte Groesse und hat kein Enum: es
+    // gibt nur einen Marker. Gespiegelt werden muss deshalb nichts – aber
+    // beide Beschreibungen (setzen und zuruecknehmen) muessen aus dem
+    // Backend kommen, sonst steht der Titel des gesetzten Knopfes im
+    // Frontend und sagt dort etwas anderes als hier.
+    const schema = read(SCHEMA);
+
+    expect(schema).toContain("SCOPE_MARKER = ScopeMarkerInfo(");
+    expect(schema).toContain("undo_description=(");
+
+    const component = read("../components/mail/MailFollowupList.vue");
+
+    expect(component).toMatch(/const SCOPE_ICON = "[a-z_]+";/);
+    // Und die Beschriftung wird *nicht* im Frontend wiederholt, ausser als
+    // Fallback fuer den noch nicht geladenen Stand.
+    expect(component).toContain('scopeMarker?.label ?? "Bigger than expected"');
+  });
+});
+
 describe("Bau-Einschaetzung", () => {
   it("stimmt zwischen Backend und Frontend ueberein", () => {
     expect([...BUILD_READINESS].sort()).toEqual(backendReadiness().sort());

@@ -148,7 +148,14 @@ CREATE TABLE IF NOT EXISTS mail_status (
     -- Größe (`BuildReadiness`). NULL heißt „noch nicht eingeschätzt" —
     -- genauso wie eine fehlende Zeile `offen` heißt. Nachträglich
     -- hinzugekommen, siehe `_ADDED_COLUMNS`.
-    build_readiness TEXT
+    build_readiness TEXT,
+    -- „Bigger than expected": die *dritte* Größe, und die einzige, die mit
+    -- den anderen beiden kombinierbar ist — eine Seite kann gleichzeitig
+    -- „In Development" und größer als ein Onepager sein. Deshalb eine
+    -- eigene Spalte und kein weiterer Wert von `build_readiness`: der
+    -- Umfang soll über den ganzen Bau stehen bleiben. NULL wie 0 heißt
+    -- „niemand hat das gesagt". Nachträglich hinzugekommen.
+    oversized INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_mail_status_state ON mail_status (state, sent_at);
@@ -284,7 +291,10 @@ _ADDED_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {
             "corrects_event_id INTEGER REFERENCES events (id) ON DELETE SET NULL",
         ),
     ),
-    "mail_status": (("build_readiness", "build_readiness TEXT"),),
+    "mail_status": (
+        ("build_readiness", "build_readiness TEXT"),
+        ("oversized", "oversized INTEGER"),
+    ),
 }
 
 
@@ -1130,6 +1140,16 @@ _MAIL_STATE = (
 #: gezählt — deshalb heißt der Alias auch nicht wie die Spalte.
 _MAIL_READINESS = "COALESCE(m.build_readiness, 'unbewertet')"
 
+#: Der Umfangs-Marker, wie ihn jede Abfrage liest.
+#:
+#: Dritte Größe und die einzige, die *neben* den anderen beiden steht statt
+#: in ihnen: gefiltert und gezählt wird sie eigenständig, gesetzt wird sie
+#: unabhängig. NULL und 0 sind dasselbe („niemand hat das gesagt"), weil die
+#: Spalte nachträglich dazugekommen ist und jede Zeile von vorher NULL trägt.
+#:
+#: Der Alias heißt aus demselben Grund wie oben nicht wie die Spalte.
+_MAIL_OVERSIZED = "COALESCE(m.oversized, 0)"
+
 _MAIL_FROM = (
     " FROM contacts c"
     " JOIN lists l ON l.id = c.list_id"
@@ -1154,7 +1174,8 @@ _MAIL_SELECT = (
     "   WHERE e.contact_id = c.id AND e.outcome = 'zugesagt'"
     "   ORDER BY e.id DESC LIMIT 1) AS promised_by,"
     f" {_MAIL_STATE} AS mail_state,"
-    f" {_MAIL_READINESS} AS readiness"
+    f" {_MAIL_READINESS} AS readiness,"
+    f" {_MAIL_OVERSIZED} AS oversized_flag"
 )
 
 #: Reihenfolge der Liste: erst was zu tun ist, dann was wartet, dann was
@@ -1175,15 +1196,17 @@ def _mail_filter(
     query: str,
     state: str | None,
     readiness: str | None,
+    oversized: bool | None,
     cutoff: str,
 ) -> tuple[str, list[object]]:
-    """Suche, Versandstand und Bau-Einschätzung als SQL plus Parameter.
+    """Suche, Versandstand, Bau-Einschätzung und Umfang als SQL plus Parameter.
 
     Die Suche geht über Betrieb, Adresse und Nummer: gesucht wird mal nach dem
     Betrieb, von dem gerade eine Antwort kam, mal nach der Adresse aus dem
-    Postfach. Zustand und Einschätzung sind zwei *unabhängige* Filter — „was
-    ist verschickt" und „was können wir bauen" sind zwei Fragen, und beide
-    zusammen („verschickt und Ready to Build") ist die dritte.
+    Postfach. Zustand, Einschätzung und Umfang sind *unabhängige* Filter —
+    „was ist verschickt", „was können wir bauen" und „was ist größer als ein
+    Onepager" sind drei Fragen, und zusammen ergeben sie die vierte
+    („verschickt, in Arbeit und größer als gedacht").
 
     Gibt die Parameter **vollständig** und in der Reihenfolge der Bedingungen
     zurück, den Stichtag des Zustandsfilters eingeschlossen. Vorher hat der
@@ -1214,6 +1237,10 @@ def _mail_filter(
         where += f" AND {_MAIL_READINESS} = ?"
         params.append(readiness)
 
+    if oversized is not None:
+        where += f" AND {_MAIL_OVERSIZED} = ?"
+        params.append(1 if oversized else 0)
+
     return where, params
 
 
@@ -1224,6 +1251,7 @@ def mail_page(
     query: str = "",
     state: str | None = None,
     readiness: str | None = None,
+    oversized: bool | None = None,
     limit: int,
     offset: int,
 ) -> tuple[list[sqlite3.Row], int, int]:
@@ -1235,7 +1263,7 @@ def mail_page(
     sonst könnte eine Zeile zwischen zwei Abfragen derselben Antwort die
     Gruppe wechseln.
     """
-    where, filter_params = _mail_filter(query, state, readiness, cutoff)
+    where, filter_params = _mail_filter(query, state, readiness, oversized, cutoff)
 
     total = int(
         conn.execute("SELECT COUNT(*) AS total" + _MAIL_FROM, ()).fetchone()["total"]
@@ -1269,6 +1297,7 @@ def mail_totals(
     conn: sqlite3.Connection,
     cutoff: str,
     readiness: str | None = None,
+    oversized: bool | None = None,
 ) -> dict[str, tuple[int, int]]:
     """Pro Versandzustand: (Anzahl, davon ohne E-Mail-Adresse).
 
@@ -1276,15 +1305,15 @@ def mail_totals(
     ausdrücklich außen vor: die Reiter beantworten „wo stehe ich insgesamt",
     nicht „wie viele Zeilen sehe ich gerade".
 
-    Der Marker-Filter zählt dagegen mit. Die Oberfläche hat zwei
-    Filterreihen, und jede zeigt ihre Zahlen mit dem Filter der *anderen*,
+    Die *anderen* Filter zählen dagegen mit. Die Oberfläche hat drei
+    Filtergrößen, und jede zeigt ihre Zahlen mit den Filtern der anderen,
     aber ohne den eigenen — das ist der einzige Zuschnitt, in dem eine Reihe
     eine Aufteilung zeigt, deren Summe die Liste auch erreicht. Ohne den
     eigenen Filter, weil sonst auf allen Marken außer der angeklickten eine
-    Null stünde. Dieselbe Regel eine Funktion tiefer in
-    `mail_readiness_totals`.
+    Null stünde. Dieselbe Regel in `mail_readiness_totals` und
+    `mail_oversized_total`.
     """
-    where, params = _mail_filter("", None, readiness, cutoff)
+    where, params = _mail_filter("", None, readiness, oversized, cutoff)
 
     rows = conn.execute(
         f"SELECT {_MAIL_STATE} AS mail_state, COUNT(*) AS total,"
@@ -1307,6 +1336,7 @@ def mail_readiness_totals(
     conn: sqlite3.Connection,
     cutoff: str,
     state: str | None = None,
+    oversized: bool | None = None,
 ) -> dict[str, int]:
     """Pro Bau-Einschätzung: die Anzahl der Zusagen.
 
@@ -1321,7 +1351,7 @@ def mail_readiness_totals(
     hier gebraucht — gefiltert wird über den *gerechneten* Zustand, nicht
     über die Spalte.
     """
-    where, params = _mail_filter("", state, None, cutoff)
+    where, params = _mail_filter("", state, None, oversized, cutoff)
 
     rows = conn.execute(
         f"SELECT {_MAIL_READINESS} AS readiness, COUNT(*) AS total"
@@ -1332,6 +1362,32 @@ def mail_readiness_totals(
     ).fetchall()
 
     return {row["readiness"]: int(row["total"]) for row in rows}
+
+
+def mail_oversized_total(
+    conn: sqlite3.Connection,
+    cutoff: str,
+    state: str | None = None,
+    readiness: str | None = None,
+) -> int:
+    """Wie viele Zusagen größer als ein Onepager sind.
+
+    Eine Zahl und keine Aufteilung: der Marker ist gesetzt oder nicht, und
+    „nicht gesetzt" ist keine Aussage, sondern deren Fehlen — es gibt hier
+    also nichts zu gruppieren.
+
+    Wie die beiden Reihen über ihr zählt sie mit den Filtern der *anderen*
+    Größen und ohne den eigenen: sonst stünde auf der einen Marke, die es
+    gibt, entweder die Gesamtzahl oder die Zahl der Liste, und ein Rückweg
+    wäre es in beiden Fällen nicht.
+    """
+    where, params = _mail_filter("", state, readiness, True, cutoff)
+
+    return int(
+        conn.execute(
+            "SELECT COUNT(*) AS total" + _MAIL_FROM + where, params
+        ).fetchone()["total"]
+    )
 
 
 def find_mail_entry(
@@ -1367,6 +1423,7 @@ def set_mail_status(
     answered_at: str | None,
     note: str,
     readiness: str,
+    oversized: bool,
     updated_by: str,
 ) -> None:
     """Den Versandzustand setzen. Legt die Zeile an, wenn es noch keine gibt.
@@ -1377,22 +1434,23 @@ def set_mail_status(
     passiert" und „zurückgesetzt von Marie" ist genau das, wonach jemand
     fragt, der die Liste morgen ansieht.
 
-    Jedes Feld wird geschrieben, auch die Bau-Einschätzung: was „unverändert"
-    heißt, löst der Service auf. Diese Funktion kennt nur einen Endstand —
+    Jedes Feld wird geschrieben, auch Bau-Einschätzung und Umfang: was
+    „unverändert" heißt, löst der Service auf. Diese Funktion kennt nur einen Endstand —
     sonst gäbe es hier je Feld ein „oder so lassen", und ein Klick auf einen
     Versand-Knopf würde still einen Marker verwerfen.
     """
     conn.execute(
         "INSERT INTO mail_status"
         " (contact_id, state, sent_at, answered_at, note, build_readiness,"
-        "  updated_at, updated_by)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        "  oversized, updated_at, updated_by)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
         " ON CONFLICT(contact_id) DO UPDATE SET"
         "   state = excluded.state,"
         "   sent_at = excluded.sent_at,"
         "   answered_at = excluded.answered_at,"
         "   note = excluded.note,"
         "   build_readiness = excluded.build_readiness,"
+        "   oversized = excluded.oversized,"
         "   updated_at = excluded.updated_at,"
         "   updated_by = excluded.updated_by",
         (
@@ -1402,6 +1460,7 @@ def set_mail_status(
             answered_at,
             note,
             readiness,
+            1 if oversized else 0,
             now(),
             updated_by,
         ),

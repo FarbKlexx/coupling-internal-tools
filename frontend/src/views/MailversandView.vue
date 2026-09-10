@@ -5,8 +5,9 @@
       <p class="text-xs text-zinc-500">
         Jede Zusage aus der Telefonakquise mit dem, was daraus geworden ist. Ohne Antwort gilt eine
         versendete Mail nach {{ timeoutDays }} Tagen als unbeantwortet – das setzt niemand, das
-        ergibt sich aus dem Versanddatum. „Ready to Build“ und „Missing Content“ sagen daneben, ob
-        die bestehende Website Inhalt hat, den die neue übernehmen kann.
+        ergibt sich aus dem Versanddatum. Die Marker daneben sagen, wo die Website steht – und
+        „Bigger than expected“ als einziger von ihnen etwas über ihren Umfang, weshalb er sich mit
+        jedem anderen zusammen setzen lässt.
       </p>
     </div>
 
@@ -24,14 +25,17 @@
       v-model:query="query"
       v-model:state-filter="stateFilter"
       v-model:readiness-filter="readinessFilter"
+      v-model:oversized-filter="oversizedFilter"
       :board="board"
       :actions="actions"
       :readiness-options="readinessOptions"
+      :scope-marker="scopeMarker"
       :timeout-days="timeoutDays"
       :is-loading="isLoading"
       :is-saving="isSaving"
       :filter-by="filterBy"
       :filter-by-readiness="filterByReadiness"
+      :filter-by-scope="filterByScope"
       :go-to-page="goToPage"
       :save="save"
     />
@@ -47,16 +51,19 @@ const {
   board,
   actions,
   readinessOptions,
+  scopeMarker,
   timeoutDays,
   query,
   stateFilter,
   readinessFilter,
+  oversizedFilter,
   isLoading,
   isSaving,
   errorMessage,
   load,
   filterBy,
   filterByReadiness,
+  filterByScope,
   goToPage,
   save,
 } = useMailFollowup();

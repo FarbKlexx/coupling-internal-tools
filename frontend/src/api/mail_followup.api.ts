@@ -60,6 +60,25 @@ export interface ReadinessOptionInfo {
   description: string;
 }
 
+/**
+ * Der Umfangs-Marker („Bigger than expected"), wie ihn das Backend mitschickt.
+ *
+ * Dritte Größe neben Versandstand und Bau-Einschätzung – und die einzige, die
+ * mit beiden *kombinierbar* ist: eine Seite kann „In Development" und größer
+ * als ein Onepager sein, und genau dafür gibt es sie. Deshalb ein eigenes
+ * Feld und kein weiterer `BuildReadiness`-Wert, der beim nächsten Bauschritt
+ * wieder verschwände.
+ *
+ * Ein Eintrag statt eines Katalogs: der Marker ist gesetzt oder nicht.
+ * `undo_description` ist der Titel des gesetzten Knopfes – dieselbe Rolle wie
+ * „Einschätzung entfernen" im Katalog der Bau-Einschätzung.
+ */
+export interface ScopeMarkerInfo {
+  label: string;
+  description: string;
+  undo_description: string;
+}
+
 export interface MailActionInfo {
   /** Der Zustand, in dem die Zeile danach steht – die Aktion *ist* ihr Ziel. */
   id: MailState;
@@ -90,6 +109,11 @@ export interface MailEntry {
   /** Die Bau-Einschätzung – unabhängig vom Versandstand. */
   readiness: BuildReadiness;
   readiness_label: string;
+  /**
+   * „Bigger than expected" – die dritte Größe, kombinierbar mit den beiden
+   * anderen. `false` heißt „hat niemand gesagt", nicht „ist ein Onepager".
+   */
+  oversized: boolean;
   /** Der Zustand folgt aus der Frist und wurde nicht angeklickt. */
   automatic: boolean;
   sent_at: string | null;
@@ -145,6 +169,9 @@ export interface MailCounters {
   ready_to_mail: number;
   missing_content: number;
   unbewertet: number;
+  /** Zusagen, deren Seite größer als ein Onepager ist. Eine Zahl statt einer
+   *  Aufteilung: der Marker ist gesetzt oder nicht. */
+  oversized: number;
 }
 
 export interface MailBoard {
@@ -161,6 +188,8 @@ export interface MailBoard {
   actions: MailActionInfo[];
   /** Die Marker samt Beschriftung – wie `actions` Daten und nicht Code. */
   readiness_options: ReadinessOptionInfo[];
+  /** Der Umfangs-Marker. Einer statt einer Liste: gesetzt oder nicht. */
+  scope_marker: ScopeMarkerInfo;
   /** Die Frist, nach der ohne Antwort „keine Antwort" gilt. */
   timeout_days: number;
 }
@@ -172,6 +201,9 @@ export interface MailView {
   /** Zweiter, unabhängiger Filter: „was ist verschickt" und „was können wir
    *  bauen" sind zwei Fragen, zusammen ergeben sie die Bauliste. */
   readiness?: BuildReadiness | null;
+  /** Dritter Filter: „was ist größer als ein Onepager". `null` heißt „alle";
+   *  `false` ist eine echte Auswahl (die Seiten ohne Marker). */
+  oversized?: boolean | null;
   offset?: number;
   limit?: number;
 }
@@ -188,6 +220,9 @@ export interface MailUpdate {
   note?: string;
   /** `undefined` = unverändert; entfernt wird mit `"unbewertet"`. */
   readiness?: BuildReadiness;
+  /** `undefined` = unverändert. Bei zwei Werten ist `false` der Rückweg – ein
+   *  „unbewertet" wie bei der Bau-Einschätzung braucht es hier nicht. */
+  oversized?: boolean;
 }
 
 /** Query-Parameter aus einer Sicht – leere Felder bleiben weg. */
@@ -197,6 +232,11 @@ function params(view: MailView): Record<string, string | number> {
   if (view.q?.trim()) query.q = view.q.trim();
   if (view.state) query.state = view.state;
   if (view.readiness) query.readiness = view.readiness;
+  // Nicht `if (view.oversized)`: `false` ist hier eine Auswahl und kein
+  // „nicht gesetzt" – nur `null`/`undefined` heißt „alle".
+  if (view.oversized !== null && view.oversized !== undefined) {
+    query.oversized = String(view.oversized);
+  }
   if (view.offset) query.offset = view.offset;
   if (view.limit) query.limit = view.limit;
 

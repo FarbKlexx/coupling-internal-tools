@@ -36,12 +36,18 @@ export function useMailFollowup() {
   const stateFilter = ref<MailState | null>(null);
   /** Zweiter Filter, unabhängig vom ersten. `null` heißt „alle". */
   const readinessFilter = ref<BuildReadiness | null>(null);
+  /** Dritter Filter: der Umfang. `null` heißt „alle", `true` nur die großen.
+   *  `false` wäre „nur die erwarteten" – die Oberfläche schaltet aber nur
+   *  zwischen `null` und `true`, weil „ohne Marker" keine Frage ist, die
+   *  jemand stellt. */
+  const oversizedFilter = ref<boolean | null>(null);
   const offset = ref(0);
 
   const counters = computed(() => board.value?.counters ?? null);
   const entries = computed(() => board.value?.entries ?? []);
   const actions = computed(() => board.value?.actions ?? []);
   const readinessOptions = computed(() => board.value?.readiness_options ?? []);
+  const scopeMarker = computed(() => board.value?.scope_marker ?? null);
   const timeoutDays = computed(() => board.value?.timeout_days ?? 30);
 
   function view(): MailView {
@@ -49,6 +55,7 @@ export function useMailFollowup() {
       q: query.value,
       state: stateFilter.value,
       readiness: readinessFilter.value,
+      oversized: oversizedFilter.value,
       offset: offset.value,
     };
   }
@@ -117,6 +124,20 @@ export function useMailFollowup() {
     void load();
   }
 
+  /**
+   * Den Umfang filtern. Umschalter wie die Bau-Einschätzung.
+   *
+   * Nur zwischen „alle" und „nur die großen": „nur die, die niemand als groß
+   * markiert hat" ist keine Frage, die jemand stellt – das Fehlen des Markers
+   * ist keine Aussage. Das Backend kann es trotzdem (`oversized=false`), weil
+   * der Filter dort eine URL ist und keine Oberfläche.
+   */
+  function filterByScope() {
+    oversizedFilter.value = oversizedFilter.value ? null : true;
+    offset.value = 0;
+    void load();
+  }
+
   function goToPage(next: number) {
     if (!board.value) return;
     if (next < 0 || next >= board.value.matched) return;
@@ -157,9 +178,11 @@ export function useMailFollowup() {
     actions,
     timeoutDays,
     readinessOptions,
+    scopeMarker,
     query,
     stateFilter,
     readinessFilter,
+    oversizedFilter,
     isLoading,
     isSaving,
     errorMessage,
@@ -167,6 +190,7 @@ export function useMailFollowup() {
     load,
     filterBy,
     filterByReadiness,
+    filterByScope,
     goToPage,
     save,
   };

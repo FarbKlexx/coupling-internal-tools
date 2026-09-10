@@ -26,6 +26,14 @@ bestehenden eine neue bauen?" bis „ist gebaut und wartet auf den Versand".
 Sie beantwortet eine andere Frage als der Versandstand („was ist mit der
 Seite?") und hat deshalb eigene Marker statt weiterer Zustände.
 
+Und eine dritte: `oversized` („Bigger than expected"). Anders als die beiden
+anderen ist sie *kombinierbar* — eine Seite kann gleichzeitig „In
+Development" und größer als ein Onepager sein, und genau das ist der Fall,
+für den es sie gibt. Sie ist deshalb ein eigenes Feld und kein weiterer Wert
+von `BuildReadiness`: als Wert dieser Spur wäre der Umfang beim nächsten
+Bauschritt wieder verschwunden, und er ist die Auskunft, die über den ganzen
+Bau stehen bleiben soll.
+
 Der Zustand `keine_antwort` wird **nicht geschrieben, sondern gerechnet**:
 eine versendete Mail, auf die seit `MAIL_TIMEOUT_DAYS` Tagen nichts kam,
 erscheint als „keine Antwort". Es gibt in dieser Anwendung keinen
@@ -293,6 +301,41 @@ READINESS_OPTIONS: tuple[ReadinessOptionInfo, ...] = (
 )
 
 
+class ScopeMarkerInfo(BaseModel):
+    """Der Umfangs-Marker, wie ihn das Frontend rendert.
+
+    Kein Katalog wie `READINESS_OPTIONS`, sondern ein einzelner Eintrag: der
+    Marker ist gesetzt oder nicht, und „nicht gesetzt" braucht keine
+    Beschriftung. Zwei Beschreibungen trägt er trotzdem, weil ein Umschalter
+    zwei Bedeutungen hat — `undo_description` ist die des gesetzten Knopfes,
+    dieselbe Rolle wie `unbewertet` im Katalog der Bau-Einschätzung.
+
+    Ohne `tone`, wie die Bau-Marker: „größer als gedacht" ist keine schlechte
+    Nachricht, sondern mehr Arbeit.
+    """
+
+    label: str
+    description: str
+    undo_description: str
+
+
+#: Der eine Umfangs-Marker. Wie die Knöpfe und die Bau-Marker Daten und nicht
+#: Code: Beschriftung und Begründung stehen hier, Farbe und Symbol in der
+#: Oberfläche.
+SCOPE_MARKER = ScopeMarkerInfo(
+    label="Bigger than expected",
+    description=(
+        "Die Seite geht über einen einfachen Onepager hinaus – mehr Umfang, "
+        "als bei der Zusage angenommen. Bleibt neben jedem Bauschritt stehen "
+        "und ändert weder Versandstand noch Bau-Einschätzung."
+    ),
+    undo_description=(
+        "Zurück auf „Umfang wie erwartet“ – für den Fehlklick und für den "
+        "Fall, dass es am Ende doch ein Onepager wird."
+    ),
+)
+
+
 class MailEntry(BaseModel):
     """Eine Zusage in der Versandliste.
 
@@ -326,6 +369,10 @@ class MailEntry(BaseModel):
     #: `unbewertet`, solange niemand die Website angesehen hat.
     readiness: BuildReadiness
     readiness_label: str
+    #: „Bigger than expected" — die dritte Größe, kombinierbar mit den
+    #: beiden anderen. `False` heißt „niemand hat das gesagt", nicht „ist ein
+    #: Onepager": es ist eine Aussage, deren Fehlen keine ist.
+    oversized: bool
     #: Wahr, wenn dieser Zustand aus der Frist folgt und nicht angeklickt
     #: wurde. Die Oberfläche schreibt „automatisch" daneben — sonst sieht es
     #: aus, als hätte jemand die Zeile abgeschlossen.
@@ -352,8 +399,8 @@ class MailCounters(BaseModel):
     `offen` ist hier die Zahl, die auf null laufen soll: Zusagen, deren Mail
     noch nicht heraus ist. `versendet` ist das, was auf eine Antwort wartet.
 
-    Die Oberfläche zeigt sie in zwei Filterreihen (Versandstand, dann
-    Bau-Einschätzung), und **jede Reihe zählt innerhalb der Auswahl der
+    Die Oberfläche zeigt sie in drei Filtergrößen (Versandstand,
+    Bau-Einschätzung, Umfang), und **jede zählt innerhalb der Auswahl der
     anderen**: wer auf „Offen" filtert, bekommt in den Markern die offenen
     Zusagen, deren Zahlen zusammen die Zahl auf dem Reiter ergeben.
     Ihren *eigenen* Filter lässt eine Reihe dabei außen vor — sonst stünde
@@ -386,6 +433,10 @@ class MailCounters(BaseModel):
     #: Bau-Runde auf null laufen soll.
     ready_to_mail: int
     missing_content: int
+    #: Zusagen, deren Seite größer als ein Onepager ist. Eine Zahl statt
+    #: einer Aufteilung: der Marker ist gesetzt oder nicht. Zählt wie die
+    #: beiden Reihen mit den *anderen* Filtern und ohne den eigenen.
+    oversized: int
     #: Die noch nicht angesehenen. Ausdrücklich mitgeschickt und nicht als
     #: `gesamt` minus die übrigen gerechnet: sonst müsste die Oberfläche die
     #: Regel kennen, dass die Werte einander ausschließen.
@@ -416,6 +467,9 @@ class MailBoard(BaseModel):
     #: erlaubt (siehe `ReadinessOptionInfo`), deshalb hängt die Liste am Board
     #: und nicht an der Zeile.
     readiness_options: list[ReadinessOptionInfo]
+    #: Der Umfangs-Marker samt Beschriftung. Einer statt einer Liste: er ist
+    #: gesetzt oder nicht.
+    scope_marker: ScopeMarkerInfo = SCOPE_MARKER
     #: Die Frist, damit die Oberfläche sie nennen kann, ohne sie zu kennen.
     timeout_days: int = MAIL_TIMEOUT_DAYS
 
@@ -441,3 +495,7 @@ class MailUpdateRequest(BaseModel):
     #: Rückweg selbst einer, und ein Marker, den nur das *Fehlen* eines Feldes
     #: entfernt, wäre von „nicht mitgeschickt" nicht zu unterscheiden.
     readiness: BuildReadiness | None = None
+    #: „Bigger than expected". `None` = unverändert, `True`/`False` setzen
+    #: ihn — hier reicht das Feld selbst als Rückweg, weil es zwei Werte hat
+    #: und `False` deshalb kein „unbewertet" braucht.
+    oversized: bool | None = None
