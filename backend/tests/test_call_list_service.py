@@ -731,6 +731,96 @@ def test_the_decision_list_is_newest_first_and_marks_what_was_corrected():
     assert page.entries[2].betrieb == "Erster Betrieb"
 
 
+def test_the_decision_search_finds_every_entry_of_a_business():
+    """Die Suche der Seite geht durch die Entscheidungsliste.
+
+    Sie sitzt dort und nicht an einer eigenen Ansicht, weil an dieser Liste
+    auch das Richtigstellen hängt: gefragt wird „was war bei Klappschmidt?",
+    und die Antwort soll nicht nur zu lesen, sondern zu korrigieren sein.
+    Getroffen wird ein *Eintrag*, nicht ein Betrieb — die Reihe seiner
+    Eintragungen ist die Antwort.
+    """
+    state = _import().state
+    first = state.contact.id
+    _answer(first, CallOutcome.NICHT_ERREICHBAR, snooze_minutes=5)
+    second = get_state().contact.id
+    _answer(second, CallOutcome.ZUGESAGT, email="zwei@example.de")
+    _answer(first, CallOutcome.ZUGESAGT, email="eins@example.de")
+
+    page = get_decisions("Erster")
+
+    assert page.query == "Erster"
+    # `total` ist die Zahl der Treffer, nicht die des ganzen Protokolls.
+    assert page.total == 2
+    assert [entry.betrieb for entry in page.entries] == [
+        "Erster Betrieb",
+        "Erster Betrieb",
+    ]
+    # Reihenfolge wie in der Liste: die jüngste zuerst — und das ist die eine,
+    # an der noch etwas geht.
+    assert [entry.outcome.value for entry in page.entries] == [
+        "zugesagt",
+        "nicht_erreichbar",
+    ]
+    assert [entry.correctable for entry in page.entries] == [True, False]
+
+
+def test_the_decision_search_finds_a_business_by_its_number():
+    """Nummer wie in der Kontaktsuche: über den Ziffernschlüssel.
+
+    „+49 5221 111" ist dieselbe Nummer wie „05221 111", und wer sie aus dem
+    Telefon abliest, tippt sie so ein.
+    """
+    state = _import().state
+    _answer(state.contact.id, CallOutcome.ZUGESAGT, email="eins@example.de")
+    _answer(get_state().contact.id, CallOutcome.ABGELEHNT)
+
+    assert [e.betrieb for e in get_decisions("+49 5221 111").entries] == [
+        "Erster Betrieb"
+    ]
+    # Und über die Adresse, die im Protokoll steht — das ist der Stand von
+    # damals, also genau die Auskunft, nach der gesucht wird.
+    assert [e.betrieb for e in get_decisions("eins@example.de").entries] == [
+        "Erster Betrieb"
+    ]
+
+
+def test_an_empty_search_term_is_the_ordinary_decision_list():
+    """Kein Begriff heißt nicht „keine Treffer".
+
+    Anders als bei der Kontaktsuche ist das hier keine eigene Ansicht: die
+    Liste steht schon da, die Suche grenzt sie ein. Ein leeres Feld muss
+    deshalb wieder die letzten Eintragungen zeigen.
+    """
+    state = _import().state
+    _answer(state.contact.id, CallOutcome.ZUGESAGT, email="eins@example.de")
+    _answer(get_state().contact.id, CallOutcome.ABGELEHNT)
+
+    for term in ("", "   "):
+        page = get_decisions(term)
+        assert page.total == 2
+        assert page.query == ""
+        assert len(page.entries) == 2
+
+
+def test_the_decision_search_reaches_into_archived_lists():
+    """Nachgesehen wird gerade dann, wenn eine Runde vorbei ist.
+
+    Das Protokoll bleibt beim Archivieren stehen, also findet die Suche es
+    weiter — nur ändern lässt sich daran nichts mehr, und der Grund steht in
+    der Zeile.
+    """
+    result = _import()
+    _answer(result.state.contact.id, CallOutcome.ZUGESAGT, email="eins@example.de")
+    update_list(result.list_id, ListUpdateRequest(archived=True))
+
+    page = get_decisions("Erster")
+
+    assert page.total == 1
+    assert page.entries[0].correctable is False
+    assert "archiviert" in page.entries[0].locked_reason
+
+
 def test_the_decision_list_pages():
     state = _import().state
     _answer(state.contact.id, CallOutcome.ZUGESAGT)

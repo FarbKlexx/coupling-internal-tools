@@ -6,6 +6,12 @@
  * Hinweis statt gar nichts), dass eine Richtigstellung Anmerkung und Adresse
  * mitschickt, und dass auch beim Korrigieren erst nach dem Zeitpunkt gefragt
  * wird — sonst läge der Betrieb danach ohne Wiedervorlage da.
+ *
+ * Dazu der Suchbetrieb: dieselbe Liste, auf einen Betrieb eingegrenzt. Zwei
+ * Dinge müssen sich dabei ändern, und beide hängen an `page.query` —
+ * „weitere anzeigen" fällt weg (es zieht das Fenster der Standardliste auf,
+ * gesucht wird aber im ganzen Protokoll), und die Zeile bekommt Nummer und
+ * jetzigen Zustand dazu, weil den Betrieb dann niemand mehr im Kopf hat.
  */
 import { describe, expect, it } from "vitest";
 import { mount } from "@vue/test-utils";
@@ -53,18 +59,19 @@ const decision: CallDecision = {
   locked_reason: "",
 };
 
-function page(...entries: CallDecision[]): CallDecisionPage {
-  return { entries, total: entries.length, offset: 0, limit: 20 };
+function page(entries: CallDecision[], query = ""): CallDecisionPage {
+  return { entries, total: entries.length, offset: 0, limit: 20, query };
 }
 
 function mountLog(...entries: CallDecision[]) {
   return mount(CallDecisionLog, {
     props: {
-      page: page(...(entries.length ? entries : [decision])),
+      page: page(entries.length ? entries : [decision]),
       outcomes,
       isLoading: false,
       isSaving: false,
       loadMore: () => {},
+      search: () => {},
     },
   });
 }
@@ -132,6 +139,62 @@ describe("CallDecisionLog", () => {
     expect(payload.snooze_minutes).toBe(60);
   });
 
+  it("gibt jede Eingabe an die Suche weiter", async () => {
+    const terms: string[] = [];
+    const wrapper = mount(CallDecisionLog, {
+      props: {
+        page: page([decision]),
+        outcomes,
+        isLoading: false,
+        isSaving: false,
+        loadMore: () => {},
+        search: (term: string) => terms.push(term),
+      },
+    });
+
+    await wrapper.get("input[type=search]").setValue("klappschmidt");
+
+    // Gewartet wird im Composable, nicht hier: die Komponente gibt jeden
+    // Anschlag weiter.
+    expect(terms).toEqual(["klappschmidt"]);
+  });
+
+  it("nennt im Suchbetrieb die Treffer und lässt „weitere anzeigen“ weg", async () => {
+    const wrapper = mountLog();
+
+    await wrapper.setProps({
+      page: { ...page([decision], "tayfun"), total: 3 },
+    });
+
+    expect(wrapper.text()).toContain("3 Eintragungen für „tayfun“");
+    // Mehr Treffer als Zeilen: der Grund ist die zu weite Suche, nicht ein zu
+    // kleines Fenster — also ein Hinweis und kein Knopf.
+    expect(wrapper.text()).toContain("bitte den Begriff verengen");
+    expect(wrapper.text()).not.toContain("weitere anzeigen");
+    // Nummer und jetziger Zustand stehen nur am Treffer.
+    expect(wrapper.text()).toContain("+49 5224 79473");
+    expect(wrapper.text()).toContain("steht jetzt auf");
+  });
+
+  it("sagt bei einer erfolglosen Suche, wonach gesucht wurde", async () => {
+    const wrapper = mountLog();
+
+    await wrapper.setProps({ page: page([], "klappschmidt") });
+
+    expect(wrapper.text()).toContain("Keine Eintragung passt zu „klappschmidt“");
+    // Nicht die Meldung des leeren Anfangszustands: die behauptete, es sei
+    // überhaupt noch nichts eingetragen.
+    expect(wrapper.text()).not.toContain("Noch nichts eingetragen");
+  });
+
+  it("zeigt „weitere anzeigen“, solange nicht gesucht wird", async () => {
+    const wrapper = mountLog();
+
+    await wrapper.setProps({ page: { ...page([decision]), total: 42 } });
+
+    expect(wrapper.text()).toContain("weitere anzeigen");
+  });
+
   it("schließt den Kasten, sobald die Zeile nicht mehr änderbar ist", async () => {
     const wrapper = mountLog();
 
@@ -141,7 +204,7 @@ describe("CallDecisionLog", () => {
     // So kommt die Zeile nach einer erfolgreichen Korrektur zurück: die
     // Korrektur ist jetzt die jüngste Eintragung.
     await wrapper.setProps({
-      page: page({ ...decision, correctable: false, corrected: true }),
+      page: page([{ ...decision, correctable: false, corrected: true }]),
     });
 
     expect(wrapper.find("button.outcome").exists()).toBe(false);

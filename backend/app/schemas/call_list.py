@@ -42,6 +42,13 @@ MAX_SNOOZE_MINUTES = 90 * 24 * 60
 DECISION_PAGE_SIZE = 20
 MAX_DECISION_PAGE_SIZE = 100
 
+#: Seitengröße, mit der die *Suche* in dieser Liste arbeitet. Größer als die
+#: Liste selbst, weil im Suchbetrieb kein „weitere anzeigen" mehr steht: eine
+#: Seite muss halten, was ein sinnvoller Begriff trifft (ein Betrieb hat
+#: selten mehr als eine Handvoll Eintragungen). Wer mehr trifft, hat einen zu
+#: weiten Begriff — die Seite sagt es ihm dann.
+DECISION_SEARCH_PAGE_SIZE = MAX_DECISION_PAGE_SIZE
+
 #: Seitengröße der Kontaktsuche. Wie bei den Entscheidungen klein gehalten:
 #: gesucht wird ein bestimmter Betrieb, nicht geblättert.
 SEARCH_PAGE_SIZE = 10
@@ -553,12 +560,25 @@ class CallDecision(BaseModel):
 
 
 class CallDecisionPage(BaseModel):
-    """Ein Ausschnitt der Entscheidungsliste, jüngste zuerst."""
+    """Ein Ausschnitt der Entscheidungsliste, jüngste zuerst.
+
+    Mit `query` ist es dieselbe Liste, auf einen Betrieb eingegrenzt: die
+    Suche der Seite geht durch dieses Fenster, weil an ihm auch das Ändern
+    hängt. Ein Treffer ist deshalb eine *Eintragung* und kein Betrieb — die
+    Frage „was war bei Klappschmidt?" beantwortet die Reihe seiner
+    Eintragungen, und die jüngste davon lässt sich gleich richtigstellen.
+    """
 
     entries: list[CallDecision]
+    #: Eintragungen insgesamt — mit `query` die Zahl der Treffer. `entries`
+    #: ist nur die aktuelle Seite.
     total: int
     offset: int
     limit: int
+    #: Der Begriff, zu dem diese Seite gehört; leer für die letzten
+    #: Eintragungen. Das Frontend verwirft damit die Antwort auf eine Suche,
+    #: die der Anwender schon weitergetippt hat — wie bei `CallContactPage`.
+    query: str = ""
 
 
 # --------------------------------------------------------------------------

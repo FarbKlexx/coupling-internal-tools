@@ -88,23 +88,6 @@ export interface CallContact {
   history: CallEvent[];
 }
 
-/**
- * Treffer der Kontaktsuche.
- *
- * Die Einträge sind ganze Kontakte samt Protokoll – die Frage hinter der Suche
- * ist „was war bei diesem Betrieb schon?", und die Antwort ist dieselbe, die am
- * Arbeitsplatz steht.
- */
-export interface CallContactPage {
-  entries: CallContact[];
-  /** Treffer insgesamt; `entries` ist nur die aktuelle Seite. */
-  matched: number;
-  offset: number;
-  limit: number;
-  /** Der Begriff, zu dem diese Seite gehört – siehe `searchContacts`. */
-  query: string;
-}
-
 export interface CallCounters {
   gesamt: number;
   offen: number;
@@ -243,11 +226,25 @@ export interface CallDecision {
   locked_reason: string;
 }
 
+/**
+ * Ein Ausschnitt der Entscheidungsliste – oder die Treffer einer Suche darin.
+ *
+ * Beides dieselbe Liste: die Suche der Seite grenzt sie auf einen Betrieb
+ * ein, weil an dieser Liste auch das Richtigstellen hängt. Ein Treffer ist
+ * deshalb eine *Eintragung* und kein Betrieb – die Frage „was war bei
+ * Klappschmidt?" beantwortet die Reihe seiner Eintragungen, und die jüngste
+ * davon lässt sich gleich korrigieren.
+ */
 export interface CallDecisionPage {
   entries: CallDecision[];
+  /** Eintragungen insgesamt – mit `query` die Zahl der Treffer. */
   total: number;
   offset: number;
   limit: number;
+  /** Der Begriff, zu dem diese Seite gehört; leer für die letzten
+   *  Eintragungen. Damit verwirft das Frontend die Antwort auf eine Suche,
+   *  die der Anwender schon weitergetippt hat. */
+  query: string;
 }
 
 /** Woher eine Sperre stammt. Spiegel von `BlacklistSource` im Backend. */
@@ -309,32 +306,18 @@ export async function submitOutcome(
  *
  * Eigener Aufruf und nicht Teil von `CallState`: die Liste wird geblättert,
  * und der Arbeitsstand wird alle 30 Sekunden geholt.
+ *
+ * Mit `q` ist es die Suche der Seite: dieselbe Liste, auf einen Betrieb
+ * eingegrenzt – über Name, Adresse oder Nummer, wie die anderen Suchen der
+ * Anwendung. Gesucht wird im ganzen Protokoll und nicht im geladenen Fenster,
+ * deshalb braucht der Suchbetrieb kein „weitere anzeigen".
  */
 export async function fetchDecisions(params: {
+  q?: string;
   offset?: number;
   limit?: number;
 }): Promise<CallDecisionPage> {
   const response = await http.get<CallDecisionPage>("/telefonakquise/decisions", { params });
-  return response.data;
-}
-
-/**
- * Sucht Betriebe nach Name, Adresse oder Nummer.
- *
- * Lesend – eingetragen wird am Arbeitsplatz, richtiggestellt in der
- * Entscheidungsliste. Archivierte Listen sind eingeschlossen: nachgesehen wird
- * gerade dann, wenn eine Runde vorbei ist.
- *
- * Die Antwort trägt den Begriff mit, zu dem sie gehört – gekürzt auf das, was
- * das Backend annimmt. Er steht in der Meldung „kein Betrieb passt zu …“, damit
- * dort nicht der Begriff steht, der inzwischen im Feld gelandet ist.
- */
-export async function searchContacts(params: {
-  q: string;
-  offset?: number;
-  limit?: number;
-}): Promise<CallContactPage> {
-  const response = await http.get<CallContactPage>("/telefonakquise/contacts", { params });
   return response.data;
 }
 

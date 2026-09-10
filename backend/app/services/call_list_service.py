@@ -499,34 +499,42 @@ def _decision(row: sqlite3.Row) -> CallDecision:
 
 
 def _decision_page(
-    conn: sqlite3.Connection, *, offset: int, limit: int
+    conn: sqlite3.Connection, *, query: str, offset: int, limit: int
 ) -> CallDecisionPage:
     return CallDecisionPage(
         entries=[
-            _decision(row) for row in db.recent_events(conn, limit=limit, offset=offset)
+            _decision(row)
+            for row in db.recent_events(conn, limit=limit, offset=offset, query=query)
         ],
-        total=db.events_total(conn),
+        total=db.events_total(conn, query),
         offset=offset,
         limit=limit,
+        query=query.strip(),
     )
 
 
 def get_decisions(
-    *, offset: int = 0, limit: int = DECISION_PAGE_SIZE
+    query: str = "", *, offset: int = 0, limit: int = DECISION_PAGE_SIZE
 ) -> CallDecisionPage:
-    """Die zuletzt eingetragenen Entscheidungen.
+    """Die zuletzt eingetragenen Entscheidungen — oder die eines Betriebs.
 
     Steht bewusst *neben* `CallState` und nicht darin: die Liste wird
     geblättert, und der Arbeitsstand wird alle 30 Sekunden geholt — sie bei
     jedem Poll mitzuschicken hieße, den Nachweis für ein Stück Anzeige immer
     wieder zu übertragen. Grenzen werden geklemmt statt abgelehnt, wie bei der
     Blacklist: das ist eine URL, keine Eingabe des Anwenders.
+
+    `query` grenzt dieselbe Liste auf einen Betrieb ein. Es ist die Suche der
+    Seite, und sie sitzt an *dieser* Liste, weil hier auch das Richtigstellen
+    hängt: gesucht wird „was war bei Klappschmidt?", und die Antwort soll
+    nicht nur zu lesen, sondern auch zu korrigieren sein. Ein leerer Begriff
+    ist keine leere Trefferliste, sondern die gewöhnliche Ansicht.
     """
     limit = max(1, min(limit, MAX_DECISION_PAGE_SIZE))
     offset = max(0, offset)
 
     with db.connect() as conn:
-        return _decision_page(conn, offset=offset, limit=limit)
+        return _decision_page(conn, query=query, offset=offset, limit=limit)
 
 
 def search_contacts(

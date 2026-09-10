@@ -803,21 +803,60 @@ def events_of_contact(conn: sqlite3.Connection, contact_id: str) -> list[sqlite3
 #: * `correction_count` — ob diese Zeile bereits richtiggestellt wurde.
 #: * `contact_state` / `list_archived` — der Stand, auf den eine Korrektur
 #:   trifft.
+#: Die Tabellen dahinter. `lists` und `contacts` hängen per LEFT JOIN daran:
+#: eine Protokollzeile liest sich aus sich selbst (`betrieb`/`telefon` stehen
+#: darin), die beiden Joins liefern nur das Umfeld — und der Ziffernschlüssel,
+#: über den die Suche eine Nummer findet.
+_EVENT_FROM = (
+    " FROM events e"
+    " LEFT JOIN lists l ON l.id = e.list_id"
+    " LEFT JOIN contacts c ON c.id = e.contact_id"
+)
+
 _EVENT_CONTEXT = (
     " e.*, l.name AS list_name, l.archived AS list_archived,"
     " c.state AS contact_state,"
     " (SELECT MAX(later.id) FROM events later"
     "   WHERE later.contact_id = e.contact_id) AS latest_event_id,"
     " (SELECT COUNT(*) FROM events fix"
-    "   WHERE fix.corrects_event_id = e.id) AS correction_count"
-    " FROM events e"
-    " LEFT JOIN lists l ON l.id = e.list_id"
-    " LEFT JOIN contacts c ON c.id = e.contact_id"
+    "   WHERE fix.corrects_event_id = e.id) AS correction_count" + _EVENT_FROM
 )
 
 
+def _event_filter(query: str) -> tuple[str, list[object]]:
+    """Ein Suchbegriff als WHERE über das Protokoll, plus seine Parameter.
+
+    Dieselben Felder wie die Kontakt- und die Versandsuche — Betrieb, Adresse,
+    Nummer —, damit sich die Suchen dieser Anwendung nicht unterschiedlich
+    verhalten. Gesucht wird in der *Protokollzeile*: `betrieb`, `telefon` und
+    `email` stehen darin und sind der Stand von damals, was hier genau richtig
+    ist (unter welcher Nummer wurde angerufen, an welche Adresse ging die
+    Zusage). Nur der Ziffernschlüssel kommt vom Kontakt, weil er dort schon
+    normalisiert liegt.
+
+    Ein leerer Begriff filtert nicht — dann ist es die gewöhnliche Liste der
+    letzten Eintragungen und keine Suche.
+    """
+    term = query.strip()
+
+    if not term:
+        return "", []
+
+    # Der Ziffernschlüssel wie in der Kontaktsuche, damit „+49 5221 111"
+    # dieselbe Nummer findet wie „05221111".
+    digits = phone_key(term)
+    conditions = ["e.betrieb LIKE ?", "e.email LIKE ?", "e.telefon LIKE ?"]
+    params: list[object] = [f"%{term}%", f"%{term}%", f"%{term}%"]
+
+    if digits:
+        conditions.append("c.telefon_key LIKE ?")
+        params.append(f"%{digits}%")
+
+    return " WHERE (" + " OR ".join(conditions) + ")", params
+
+
 def recent_events(
-    conn: sqlite3.Connection, *, limit: int, offset: int
+    conn: sqlite3.Connection, *, limit: int, offset: int, query: str = ""
 ) -> list[sqlite3.Row]:
     """Die zuletzt eingetragenen Entscheidungen, jüngste zuerst.
 
@@ -825,17 +864,34 @@ def recent_events(
     Einträge derselben Sekunde hätten denselben Zeitstempel, und eine
     Korrektur würde dann womöglich *über* der Zeile stehen, die sie
     richtigstellt.
+
+    Mit `query` ist es dieselbe Liste, nur auf einen Betrieb eingegrenzt: die
+    Suche der Seite geht durch *dieses* Fenster, weil hier auch das Ändern
+    hängt. Die Sortierung bleibt die gleiche — die jüngste Eintragung eines
+    Betriebs ist die, an der noch etwas geht, und sie steht damit oben.
     """
+    where, params = _event_filter(query)
+
     return list(
         conn.execute(
-            "SELECT" + _EVENT_CONTEXT + " ORDER BY e.id DESC LIMIT ? OFFSET ?",
-            (limit, offset),
+            "SELECT" + _EVENT_CONTEXT + where + " ORDER BY e.id DESC LIMIT ? OFFSET ?",
+            params + [limit, offset],
         ).fetchall()
     )
 
 
-def events_total(conn: sqlite3.Connection) -> int:
-    row = conn.execute("SELECT COUNT(*) AS total FROM events").fetchone()
+def events_total(conn: sqlite3.Connection, query: str = "") -> int:
+    """Wie viele Eintragungen es gibt — mit `query` die Zahl der Treffer.
+
+    Zählt über dieselben Joins wie `recent_events`, weil der Ziffernschlüssel
+    am Kontakt hängt. Ohne Begriff ist es das ganze Protokoll.
+    """
+    where, params = _event_filter(query)
+
+    row = conn.execute(
+        "SELECT COUNT(*) AS total" + _EVENT_FROM + where, params
+    ).fetchone()
+
     return int(row["total"])
 
 

@@ -151,6 +151,7 @@ def search_contacts_endpoint(
 
 @router.get("/decisions", response_model=CallDecisionPage)
 def read_decisions(
+    q: str = Query(default="", max_length=MAX_SEARCH_TERM),
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=DECISION_PAGE_SIZE, ge=1, le=MAX_DECISION_PAGE_SIZE),
     _: CurrentUser = Depends(current_user),
@@ -159,8 +160,12 @@ def read_decisions(
 
     Geblättert und deshalb nicht Teil von `CallState`: der Arbeitsstand wird
     alle 30 Sekunden geholt.
+
+    Mit `q` ist es die Suche der Seite: dieselbe Liste, auf einen Betrieb
+    eingegrenzt. Sie hängt an dieser Liste, weil hier auch das Richtigstellen
+    hängt — und aus demselben Grund ohne `require_admin`.
     """
-    return get_decisions(offset=offset, limit=limit)
+    return get_decisions(q, offset=offset, limit=limit)
 
 
 @router.post("/decisions/{event_id}/correct", response_model=CallState)

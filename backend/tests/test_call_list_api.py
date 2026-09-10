@@ -182,6 +182,44 @@ def test_searching_without_a_term_returns_no_contacts(client):
     assert page["entries"] == []
 
 
+def test_a_caller_may_search_the_decision_list_without_being_an_admin(
+    client, make_user
+):
+    """Die Suche der Seite hängt an der Entscheidungsliste.
+
+    Sie liegt damit dort, wo auch das Richtigstellen liegt — und deshalb, wie
+    dieses, hinter der Sitzung und nicht hinter `require_admin`: es ist der
+    Weg zurück zu einem Betrieb, den man selbst angerufen hat.
+    """
+    _upload(client)
+    user_client, _ = make_user("anruferin", pages=[Page.TELEFONAKQUISE])
+
+    contact = user_client.get("/telefonakquise/state").json()["contact"]
+    user_client.post(
+        f"/telefonakquise/contacts/{contact['id']}/outcome",
+        json={"outcome": "abgelehnt"},
+    )
+    zweiter = user_client.get("/telefonakquise/state").json()["contact"]
+    user_client.post(
+        f"/telefonakquise/contacts/{zweiter['id']}/outcome",
+        json={"outcome": "zugesagt", "email": "zwei@example.de"},
+    )
+
+    response = user_client.get("/telefonakquise/decisions", params={"q": "zweiter"})
+
+    assert response.status_code == 200
+    page = response.json()
+    assert page["query"] == "zweiter"
+    assert page["total"] == 1
+    assert [entry["betrieb"] for entry in page["entries"]] == ["Zweiter Betrieb"]
+    # Der Treffer ist eine Eintragung und bleibt änderbar — das ist der Punkt
+    # dieser Suche gegenüber einer, die nur liest.
+    assert page["entries"][0]["correctable"] is True
+
+    # Ohne Begriff wieder die ganze Liste, nicht null Treffer.
+    assert client.get("/telefonakquise/decisions").json()["total"] == 2
+
+
 def test_correcting_an_entry_that_is_no_longer_the_latest_is_a_400(client):
     _upload(client)
     contact = client.get("/telefonakquise/state").json()["contact"]

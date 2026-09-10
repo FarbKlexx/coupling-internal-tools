@@ -15,11 +15,24 @@
  * hier sichtbar (durchgestrichen) – ein Eintrag, der bei einer Korrektur
  * stillschweigend verschwindet, wäre genau die Sorte Protokoll, die als
  * Nachweis nichts taugt.
+ *
+ * **Die Suche der Seite sitzt hier.** „Was war eigentlich bei Klappschmidt?"
+ * ist dieselbe Frage wie „welche Eintragungen hat er?", und die Antwort soll
+ * nicht nur zu lesen, sondern gleich zu korrigieren sein – die jüngste Zeile
+ * eines Treffers trägt denselben Knopf wie die von vorhin. Vorher stand die
+ * Suche als eigene Sektion darunter und lieferte Betriebe: derselbe Weg, nur
+ * am falschen Platz und ohne den Knopf, um den es meistens geht.
+ *
+ * Im Suchbetrieb fällt „weitere anzeigen" weg. Es zieht das Fenster der
+ * *Standardliste* auf; gesucht wird dagegen im ganzen Protokoll, und was ein
+ * sinnvoller Begriff trifft, passt auf eine Seite. Steht doch mehr an, sagt
+ * die Liste es und bittet um einen engeren Begriff.
  */
 import { ref, watch } from "vue";
 import type {
   CallDecision,
   CallDecisionPage,
+  ContactState,
   OutcomeInfo,
   OutcomePayload,
 } from "@/api/call_list.api";
@@ -32,11 +45,37 @@ const props = defineProps<{
   isLoading: boolean;
   isSaving: boolean;
   loadMore: () => void;
+  /** Sucht nach kurzer Pause – die Verzögerung liegt im Composable. */
+  search: (term: string) => void;
 }>();
 
 const emit = defineEmits<{
   (event: "correct", eventId: number, payload: OutcomePayload): void;
 }>();
+
+const query = ref("");
+
+// Jede Eingabe geht an die Suche des Composables, die selbst wartet, bevor sie
+// einen Request stellt. Ein Watcher und kein `@input`, weil neben `v-model` am
+// selben Feld sonst die Reihenfolge zweier Listener entscheidet, ob `query`
+// beim Aufruf schon den neuen Wert trägt.
+watch(query, (term) => props.search(term));
+
+/**
+ * Farbe des *jetzigen* Zustands eines Betriebs – dieselbe Sprache wie in der
+ * Versandliste: grün heißt Zusage, rot Widerspruch, bernstein „hier ist noch
+ * etwas zu tun". Steht nur an einem Suchtreffer: in der Standardliste ist der
+ * Zustand von eben gerade das, was die Zeile ohnehin sagt.
+ */
+const STATE_CLASSES: Record<ContactState, string> = {
+  offen: "light-grey-text",
+  wiedervorlage: "text-amber-400",
+  rueckruf: "text-blue-300",
+  zugesagt: "text-emerald-400",
+  kein_bedarf: "text-zinc-500",
+  abgelehnt: "text-red-400",
+  ungueltig: "text-zinc-500",
+};
 
 /** Welche Zeile gerade geändert wird – immer höchstens eine. */
 const editing = ref<number | null>(null);
@@ -97,7 +136,7 @@ function stateClass(entry: CallDecision): string {
 
 <template>
   <section class="max-w-3xl space-y-2">
-    <div class="flex items-baseline justify-between gap-3">
+    <div class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
       <h3 class="text-sm font-semibold">Zuletzt eingetragen</h3>
       <p class="text-xs text-zinc-500">
         Falscher Knopf erwischt? Hier lässt sich die jeweils letzte Eintragung eines Betriebs
@@ -105,13 +144,47 @@ function stateClass(entry: CallDecision): string {
       </p>
     </div>
 
+    <!-- Die Suche gehört über diese Liste, weil sie in ihr sucht: ein Begriff
+         zeigt die Eintragungen des Betriebs statt der letzten überhaupt –
+         auch aus beendeten Listen. -->
+    <div class="relative">
+      <span
+        class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500"
+        style="font-size: 18px"
+      >
+        search
+      </span>
+      <input
+        v-model="query"
+        type="search"
+        placeholder="Betrieb, Adresse oder Nummer suchen"
+        aria-label="Eintragungen durchsuchen"
+        class="w-full rounded-md light-grey-background light-grey-stroke py-2 pl-10 pr-3 text-sm outline-none focus:border-blue-500 transition-colors"
+      />
+    </div>
+
     <p v-if="isLoading && !page" class="text-xs light-grey-text">wird geladen …</p>
+
+    <!-- Zwei leere Listen mit zwei Gründen: nichts eingetragen ist der
+         Anfangszustand der Seite, kein Treffer die Auskunft zu einer Suche. -->
+    <p v-else-if="page?.query && !page.entries.length" class="text-xs light-grey-text">
+      Keine Eintragung passt zu „{{ page.query }}“. Gesucht wird über Betrieb, Adresse und Nummer.
+    </p>
 
     <p v-else-if="!page?.entries.length" class="text-xs light-grey-text">
       Noch nichts eingetragen. Was hier angeklickt wird, erscheint gleich darunter.
     </p>
 
-    <ul v-else class="space-y-1">
+    <p v-else-if="page.query" class="text-xs text-zinc-500">
+      {{ page.total }} {{ page.total === 1 ? "Eintragung" : "Eintragungen" }} für „{{ page.query }}“
+      <!-- Statt eines „weitere anzeigen": im Suchbetrieb ist eine zu weite
+           Suche der Grund, nicht ein zu kleines Fenster. -->
+      <template v-if="page.total > page.entries.length">
+        – die ersten {{ page.entries.length }} stehen hier, bitte den Begriff verengen.
+      </template>
+    </p>
+
+    <ul v-if="page?.entries.length" class="space-y-1">
       <li
         v-for="entry in page.entries"
         :key="entry.event_id"
@@ -144,6 +217,28 @@ function stateClass(entry: CallDecision): string {
             </span>
           </div>
         </div>
+
+        <!-- Nur am Suchtreffer: wer nachsieht, hat den Betrieb nicht mehr im
+             Kopf und braucht Nummer, Liste und den Stand von *jetzt*. In der
+             Standardliste ist das die Zeile, die man gerade selbst
+             eingetragen hat – dort wäre es Rauschen. -->
+        <p v-if="page.query" class="mt-0.5 text-xs light-grey-text">
+          <a
+            :href="`tel:${entry.telefon.replace(/\s+/g, '')}`"
+            class="hover:text-white transition-colors"
+          >
+            {{ entry.telefon }}
+          </a>
+          <template v-if="entry.email">
+            ·
+            <a :href="`mailto:${entry.email}`" class="hover:text-white transition-colors">
+              {{ entry.email }}
+            </a>
+          </template>
+          <template v-if="entry.list_name"> · {{ entry.list_name }}</template>
+          · steht jetzt auf
+          <span :class="STATE_CLASSES[entry.state]">{{ entry.state_label }}</span>
+        </p>
 
         <p v-if="entry.note" class="mt-0.5 text-xs text-zinc-500 break-words whitespace-pre-line">
           „{{ entry.note }}“
@@ -197,8 +292,10 @@ function stateClass(entry: CallDecision): string {
       </li>
     </ul>
 
+    <!-- Zieht das Fenster der Standardliste auf. Im Suchbetrieb gibt es
+         nichts aufzuziehen: gesucht wird im ganzen Protokoll. -->
     <button
-      v-if="page && page.entries.length < page.total"
+      v-if="page && !page.query && page.entries.length < page.total"
       class="text-xs light-grey-text hover:text-white transition-colors"
       :disabled="isLoading"
       @click="loadMore()"

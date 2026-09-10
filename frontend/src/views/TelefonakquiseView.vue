@@ -36,24 +36,21 @@
       <!-- Steht bewusst *nicht* hinter `isAdmin`: der Fehlklick passiert dem,
            der telefoniert, und ihn dafür auf einen Administrator warten zu
            lassen hieße, dass die falsche Angabe so lange im Nachweis steht.
-           Das Backend hält den Endpunkt entsprechend nur hinter der Sitzung. -->
+           Das Backend hält den Endpunkt entsprechend nur hinter der Sitzung.
+
+           Die Suche der Seite sitzt in dieser Liste und hatte vorher eine
+           eigene Sektion darunter: „was war bei diesem Betrieb?" ist die
+           Frage nach seinen Eintragungen, und die jüngste davon ist die, die
+           man dann meistens richtigstellen will. Sie hängt damit an
+           derselben Berechtigung wie die Liste selbst. -->
       <CallDecisionLog
         :page="decisions"
         :outcomes="outcomes"
         :is-loading="isDecisionsLoading"
         :is-saving="isSaving"
         :load-more="loadMoreDecisions"
+        :search="searchDecisions"
         @correct="correctDecision"
-      />
-
-      <!-- Die Suche steht unter der Entscheidungsliste und wie diese hinter
-           der Sitzung, nicht hinter `isAdmin`: sie ist der Weg zurück zu
-           einem Betrieb, den man selbst angerufen hat. Sie liest nur. -->
-      <CallContactSearch
-        :page="searchResults"
-        :is-searching="isSearching"
-        :search="search"
-        :go-to-page="goToSearchPage"
       />
 
       <!-- Die Listenpflege liegt auf derselben Seite, ist aber nur für
@@ -81,7 +78,6 @@
 
 <script setup lang="ts">
 import { onMounted } from "vue";
-import CallContactSearch from "@/components/calls/CallContactSearch.vue";
 import CallDecisionLog from "@/components/calls/CallDecisionLog.vue";
 import CallListManager from "@/components/calls/CallListManager.vue";
 import CallWorkbench from "@/components/calls/CallWorkbench.vue";
@@ -103,8 +99,6 @@ const {
   isBlacklistLoading,
   decisions,
   isDecisionsLoading,
-  searchResults,
-  isSearching,
   isLoading,
   isSaving,
   isWaiting,
@@ -114,8 +108,7 @@ const {
   loadBlacklist,
   loadDecisions,
   loadMoreDecisions,
-  search,
-  goToSearchPage,
+  searchDecisions,
   startPolling,
   recordOutcome,
   correctDecision,

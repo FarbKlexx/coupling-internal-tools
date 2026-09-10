@@ -10,12 +10,10 @@ import {
   importBlacklist,
   importList,
   removeBlacklistEntry,
-  searchContacts,
   submitOutcome,
   updateList,
   type BlacklistMutation,
   type BlacklistPage,
-  type CallContactPage,
   type CallDecisionPage,
   type CallState,
   type OutcomePayload,
@@ -39,6 +37,14 @@ const POLL_INTERVAL_MS = 30_000;
  */
 const DECISION_PAGE_SIZE = 20;
 const MAX_DECISIONS = 100;
+
+/**
+ * Seitengröße im Suchbetrieb. Größer als das Fenster der Liste, weil dort
+ * kein „weitere anzeigen" mehr steht: eine Seite muss halten, was ein
+ * sinnvoller Begriff trifft. Spiegel von `DECISION_SEARCH_PAGE_SIZE` im
+ * Backend; wer mehr trifft, bekommt den Hinweis, den Begriff zu verengen.
+ */
+const DECISION_SEARCH_LIMIT = MAX_DECISIONS;
 
 /**
  * Wartezeit, bevor eine Sucheingabe zum Request wird — wie in der Blacklist
@@ -217,21 +223,50 @@ export function useCallList() {
   }
 
   /**
-   * Die zuletzt eingetragenen Entscheidungen.
+   * Die zuletzt eingetragenen Entscheidungen – und die Suche darin.
    *
    * Wie die Blacklist neben dem Arbeitsstand und nicht darin: sie wird
    * geblättert, und der Stand wird alle 30 Sekunden geholt. „Weitere anzeigen"
    * vergrößert bewusst das Fenster statt zu blättern – gesucht wird darin der
    * eigene Fehlklick von vorhin, und der steht selten auf Seite 2.
+   *
+   * **Die Suche der Seite hängt an dieser Liste.** Wer nachsieht, was bei
+   * einem Betrieb war, will die Eintragungen sehen – und die jüngste davon
+   * meistens gleich richtigstellen. Ein Begriff hebt deshalb das aufgezogene
+   * Fenster auf: gesucht wird im ganzen Protokoll, nicht in den zuletzt
+   * geladenen zwanzig Zeilen, und „weitere anzeigen" hat darin keinen Sinn
+   * mehr (eine Seite fasst, was ein sinnvoller Begriff trifft).
    */
   const decisions = shallowRef<CallDecisionPage | null>(null);
   const isDecisionsLoading = ref(false);
   const decisionLimit = ref(DECISION_PAGE_SIZE);
+  const decisionQuery = ref("");
+  let searchTimer: ReturnType<typeof setTimeout> | null = null;
 
+  /**
+   * Lädt die Liste in ihrem aktuellen Zuschnitt – mit Begriff die Treffer,
+   * ohne die letzten Eintragungen.
+   *
+   * Einziger Ladeweg, absichtlich: der Poll und jede Eintragung rufen ihn
+   * auch, und die dürfen eine laufende Suche nicht durch die Standardliste
+   * ersetzen.
+   */
   async function loadDecisions() {
+    const term = decisionQuery.value.trim();
+
     isDecisionsLoading.value = true;
     try {
-      decisions.value = await fetchDecisions({ limit: decisionLimit.value });
+      const page = await fetchDecisions({
+        q: term || undefined,
+        limit: term ? DECISION_SEARCH_LIMIT : decisionLimit.value,
+      });
+      // Inzwischen weitergetippt: diese Antwort gehört nicht mehr zur
+      // Eingabe. Verglichen wird mit dem Begriff, mit dem *diese* Anfrage
+      // losgeschickt wurde – nicht mit dem, den die Antwort mitbringt: den
+      // kürzt das Backend, und ein überlanger Begriff würde sonst jede eigene
+      // Antwort verwerfen.
+      if (term !== decisionQuery.value.trim()) return;
+      decisions.value = page;
     } catch (e) {
       // Kein Fehler, den der Anrufer sehen muss: die Liste ist eine Zugabe,
       // der Arbeitsplatz darüber funktioniert ohne sie.
@@ -247,65 +282,27 @@ export function useCallList() {
   }
 
   /**
-   * Die Kontaktsuche — der Weg zurück zu einem Betrieb.
+   * Sucht in der Liste, nach kurzer Pause – an das Eingabefeld gebunden.
    *
-   * Der Arbeitsplatz zeigt immer nur den *nächsten* Betrieb, und die
-   * Entscheidungsliste reicht absichtlich nur ein Stück zurück; ohne Suche ist
-   * „was war eigentlich bei Klappschmidt?" nicht beantwortbar.
-   *
-   * Ergebnisse aus einer Antwort, die zu einem schon weitergetippten Begriff
-   * gehört, werden verworfen: das Backend schickt den Begriff mit, zu dem sie
-   * gehören. Das ist billiger und ehrlicher als das Verwalten von
-   * Reihenfolgen — eine langsame erste Antwort darf die schnelle zweite nicht
-   * überschreiben.
+   * Ein geleertes Feld lädt sofort und ohne Wartezeit zurück auf die letzten
+   * Eintragungen: das ist kein Suchbegriff, auf den man tippen könnte.
    */
-  const searchQuery = ref("");
-  const searchResults = shallowRef<CallContactPage | null>(null);
-  const isSearching = ref(false);
-  let searchTimer: ReturnType<typeof setTimeout> | null = null;
-
-  async function runSearch(options: { offset?: number } = {}) {
-    const term = searchQuery.value.trim();
-
-    if (!term) {
-      searchResults.value = null;
-      return;
-    }
-
-    isSearching.value = true;
-    try {
-      const page = await searchContacts({ q: term, offset: options.offset ?? 0 });
-      // Inzwischen weitergetippt: diese Antwort gehört nicht mehr zur Eingabe.
-      // Verglichen wird mit dem Begriff, mit dem *diese* Anfrage losgeschickt
-      // wurde — nicht mit dem, den die Antwort mitbringt: den kürzt das
-      // Backend, und ein überlanger Begriff würde sonst jede eigene Antwort
-      // verwerfen.
-      if (term !== searchQuery.value.trim()) return;
-      searchResults.value = page;
-    } catch (e) {
-      console.error(e);
-      errorMessage.value = readDetail(e, "Die Suche ist fehlgeschlagen.");
-    } finally {
-      isSearching.value = false;
-    }
-  }
-
-  /** Sucht nach kurzer Pause — an das Eingabefeld gebunden. */
-  function search(term: string) {
-    searchQuery.value = term;
+  function searchDecisions(term: string) {
+    decisionQuery.value = term;
 
     if (searchTimer !== null) clearTimeout(searchTimer);
 
+    // Das aufgezogene Fenster gehört zur Standardliste. Es hier
+    // zurückzusetzen heißt: nach der Suche steht wieder die gewöhnliche
+    // Seitengröße da, nicht ein Rest von vorher.
+    decisionLimit.value = DECISION_PAGE_SIZE;
+
     if (!term.trim()) {
-      searchResults.value = null;
+      void loadDecisions();
       return;
     }
 
-    searchTimer = setTimeout(() => void runSearch(), SEARCH_DEBOUNCE_MS);
-  }
-
-  function goToSearchPage(offset: number) {
-    void runSearch({ offset });
+    searchTimer = setTimeout(() => void loadDecisions(), SEARCH_DEBOUNCE_MS);
   }
 
   // Ein noch nicht abgelaufener Suchtimer würde nach dem Verlassen der Seite
@@ -326,10 +323,10 @@ export function useCallList() {
       // Jede Eintragung erscheint sofort in der Liste darunter – sonst müsste
       // man auf den nächsten Poll warten, um den Fehlklick zu finden, den man
       // gerade gemacht hat.
+      // Läuft eine Suche, kommt sie in ihrem Zuschnitt zurück: die geänderte
+      // Zeile ist gerade die, um die es ging, und sie soll nicht in die
+      // Standardliste zurückspringen.
       void loadDecisions();
-      // Eine offene Trefferliste zeigt sonst den Zustand von vor dem Klick —
-      // gerade bei dem Betrieb, um den es eben ging.
-      if (searchResults.value) void runSearch({ offset: searchResults.value.offset });
       return true;
     } catch (e) {
       console.error(e);
@@ -353,9 +350,7 @@ export function useCallList() {
     isBlacklistLoading,
     decisions,
     isDecisionsLoading,
-    searchQuery,
-    searchResults,
-    isSearching,
+    decisionQuery,
     isLoading,
     isSaving,
     isWaiting,
@@ -366,8 +361,7 @@ export function useCallList() {
     loadBlacklist,
     loadDecisions,
     loadMoreDecisions,
-    search,
-    goToSearchPage,
+    searchDecisions,
     startPolling,
     stopPolling,
 
