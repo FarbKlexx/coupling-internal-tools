@@ -246,13 +246,19 @@ def test_the_company_sits_on_the_baseline_the_role_used_to_have():
     assert firma.baseline_mm == 29.0
 
 
-def test_surname_is_the_largest_and_the_only_bold_field():
+def test_surname_is_the_largest_field_and_nothing_is_bold():
+    """Die Hierarchie traegt die Groesse, nicht der Fettdruck.
+
+    Fett gedruckt schmiert der Nachname auf dem Karton ineinander — deshalb
+    ist kein Feld mehr fett, und die Hauptzeile bleibt allein ueber ihre
+    Schriftgroesse erkennbar.
+    """
     layout = get_layout(DEFAULT_FORMAT_ID)
     surname = next(f for f in layout.fields if f.field == "nachname")
 
-    assert surname.bold
     assert all(f.size_pt <= surname.size_pt for f in layout.fields)
-    assert [f.field for f in layout.fields if f.bold] == ["nachname"]
+    assert all(f.size_pt < surname.size_pt for f in layout.fields if f is not surname)
+    assert [f.field for f in layout.fields if f.bold] == []
 
 
 def test_baselines_keep_their_order_from_top_to_bottom():

@@ -100,11 +100,16 @@ class CardLayout:
                 )
 
 
-# Standardlayout für 75 × 40 mm: Vorname klein darüber, Nachname groß und fett,
+# Standardlayout für 75 × 40 mm: Vorname klein darüber, Nachname groß,
 # darunter die Firma. Alles zentriert, weil die Karte im Steckrahmen mittig
 # sitzt. Die Firma sitzt auf der Grundlinie, auf der vorher die Funktion stand
 # — bewusst nicht auf ihrer alten, weiter unten: eine Zeile weniger soll den
 # Block nicht auseinanderziehen.
+#
+# **Kein Feld ist fett.** Der Nachname war es, weil er die Hauptzeile ist —
+# gedruckt schmiert die fette Schrift auf dem Karton aber ineinander. Die
+# Hierarchie trägt allein die Schriftgröße (18 pt gegen 13 und 9,5), die auf
+# dem Papier hält.
 CARD_LAYOUTS: dict[str, CardLayout] = {
     "a4_75x40": CardLayout(
         fields=(
@@ -119,7 +124,6 @@ CARD_LAYOUTS: dict[str, CardLayout] = {
                 baseline_mm=22.5,
                 size_pt=18.0,
                 min_size_pt=11.0,
-                bold=True,
             ),
             LayoutField(
                 field="firma",
