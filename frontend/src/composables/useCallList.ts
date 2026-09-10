@@ -10,10 +10,12 @@ import {
   importBlacklist,
   importList,
   removeBlacklistEntry,
+  searchContacts,
   submitOutcome,
   updateList,
   type BlacklistMutation,
   type BlacklistPage,
+  type CallContactPage,
   type CallDecisionPage,
   type CallState,
   type OutcomePayload,
@@ -37,6 +39,13 @@ const POLL_INTERVAL_MS = 30_000;
  */
 const DECISION_PAGE_SIZE = 20;
 const MAX_DECISIONS = 100;
+
+/**
+ * Wartezeit, bevor eine Sucheingabe zum Request wird — wie in der Blacklist
+ * und der Versandliste: kurz genug, dass es sich wie Tippen anfühlt, lang
+ * genug für einen Request statt zehn.
+ */
+const SEARCH_DEBOUNCE_MS = 300;
 
 /** Fehlermeldung aus einer JSON-Fehlerantwort des Backends lesen. */
 function readDetail(error: unknown, fallback: string): string {
@@ -237,6 +246,74 @@ export function useCallList() {
     void loadDecisions();
   }
 
+  /**
+   * Die Kontaktsuche — der Weg zurück zu einem Betrieb.
+   *
+   * Der Arbeitsplatz zeigt immer nur den *nächsten* Betrieb, und die
+   * Entscheidungsliste reicht absichtlich nur ein Stück zurück; ohne Suche ist
+   * „was war eigentlich bei Klappschmidt?" nicht beantwortbar.
+   *
+   * Ergebnisse aus einer Antwort, die zu einem schon weitergetippten Begriff
+   * gehört, werden verworfen: das Backend schickt den Begriff mit, zu dem sie
+   * gehören. Das ist billiger und ehrlicher als das Verwalten von
+   * Reihenfolgen — eine langsame erste Antwort darf die schnelle zweite nicht
+   * überschreiben.
+   */
+  const searchQuery = ref("");
+  const searchResults = shallowRef<CallContactPage | null>(null);
+  const isSearching = ref(false);
+  let searchTimer: ReturnType<typeof setTimeout> | null = null;
+
+  async function runSearch(options: { offset?: number } = {}) {
+    const term = searchQuery.value.trim();
+
+    if (!term) {
+      searchResults.value = null;
+      return;
+    }
+
+    isSearching.value = true;
+    try {
+      const page = await searchContacts({ q: term, offset: options.offset ?? 0 });
+      // Inzwischen weitergetippt: diese Antwort gehört nicht mehr zur Eingabe.
+      // Verglichen wird mit dem Begriff, mit dem *diese* Anfrage losgeschickt
+      // wurde — nicht mit dem, den die Antwort mitbringt: den kürzt das
+      // Backend, und ein überlanger Begriff würde sonst jede eigene Antwort
+      // verwerfen.
+      if (term !== searchQuery.value.trim()) return;
+      searchResults.value = page;
+    } catch (e) {
+      console.error(e);
+      errorMessage.value = readDetail(e, "Die Suche ist fehlgeschlagen.");
+    } finally {
+      isSearching.value = false;
+    }
+  }
+
+  /** Sucht nach kurzer Pause — an das Eingabefeld gebunden. */
+  function search(term: string) {
+    searchQuery.value = term;
+
+    if (searchTimer !== null) clearTimeout(searchTimer);
+
+    if (!term.trim()) {
+      searchResults.value = null;
+      return;
+    }
+
+    searchTimer = setTimeout(() => void runSearch(), SEARCH_DEBOUNCE_MS);
+  }
+
+  function goToSearchPage(offset: number) {
+    void runSearch({ offset });
+  }
+
+  // Ein noch nicht abgelaufener Suchtimer würde nach dem Verlassen der Seite
+  // eine Anfrage stellen, deren Antwort niemand mehr liest.
+  onScopeDispose(() => {
+    if (searchTimer !== null) clearTimeout(searchTimer);
+  });
+
   /** Führt eine Mutation aus und übernimmt den zurückgegebenen Stand. */
   async function mutate(
     action: () => Promise<CallState>,
@@ -250,6 +327,9 @@ export function useCallList() {
       // man auf den nächsten Poll warten, um den Fehlklick zu finden, den man
       // gerade gemacht hat.
       void loadDecisions();
+      // Eine offene Trefferliste zeigt sonst den Zustand von vor dem Klick —
+      // gerade bei dem Betrieb, um den es eben ging.
+      if (searchResults.value) void runSearch({ offset: searchResults.value.offset });
       return true;
     } catch (e) {
       console.error(e);
@@ -273,6 +353,9 @@ export function useCallList() {
     isBlacklistLoading,
     decisions,
     isDecisionsLoading,
+    searchQuery,
+    searchResults,
+    isSearching,
     isLoading,
     isSaving,
     isWaiting,
@@ -283,6 +366,8 @@ export function useCallList() {
     loadBlacklist,
     loadDecisions,
     loadMoreDecisions,
+    search,
+    goToSearchPage,
     startPolling,
     stopPolling,
 

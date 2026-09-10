@@ -504,6 +504,63 @@ def find_contact(conn: sqlite3.Connection, contact_id: str) -> sqlite3.Row | Non
     ).fetchone()
 
 
+def search_contacts(
+    conn: sqlite3.Connection, *, query: str, limit: int, offset: int
+) -> tuple[list[sqlite3.Row], int]:
+    """Kontakte zu einem Suchbegriff, plus die Zahl der Treffer.
+
+    Gesucht wird über Betrieb, Adresse und Nummer — dieselben drei Felder wie
+    in der Versandliste (`_mail_filter`), damit sich die beiden Suchen der
+    Anwendung nicht unterschiedlich verhalten.
+
+    **Archivierte Listen sind eingeschlossen.** Das ist der Unterschied zum
+    Anrufvorrat: hier wird nachgesehen, was bei einem Betrieb war, und die
+    Antwort „stand mal in einer Liste, die inzwischen beendet ist" ist genau
+    die, nach der gefragt wurde. Die Reihenfolge stellt die aktiven Listen
+    voran und sortiert darin nach Betrieb — alphabetisch, weil in einer
+    Trefferliste gesucht *gelesen* wird.
+
+    Ein leerer Begriff liefert nichts: das ist eine Suche und keine zweite
+    Ansicht auf alle Kontakte.
+    """
+    term = query.strip()
+
+    if not term:
+        return [], 0
+
+    # Der Ziffernschlüssel wie in der Blacklist-Suche, damit „+49 5221 111"
+    # dieselbe Nummer findet wie „05221111".
+    digits = phone_key(term)
+    conditions = ["c.betrieb LIKE ?", "c.email LIKE ?", "c.telefon LIKE ?"]
+    params: list[object] = [f"%{term}%", f"%{term}%", f"%{term}%"]
+
+    if digits:
+        conditions.append("c.telefon_key LIKE ?")
+        params.append(f"%{digits}%")
+
+    where = " WHERE (" + " OR ".join(conditions) + ")"
+    source = " FROM contacts c JOIN lists l ON l.id = c.list_id"
+
+    matched = int(
+        conn.execute("SELECT COUNT(*) AS total" + source + where, params).fetchone()[
+            "total"
+        ]
+    )
+
+    rows = list(
+        conn.execute(
+            "SELECT c.*, l.name AS list_name, l.archived AS list_archived"
+            + source
+            + where
+            + " ORDER BY l.archived, c.betrieb, c.id"
+            " LIMIT ? OFFSET ?",
+            params + [limit, offset],
+        ).fetchall()
+    )
+
+    return rows, matched
+
+
 # Die Vorrats-Zustände stehen hier als Text, weil dieses Modul die Schemata
 # nicht kennt (`POOL_STATES` in `schemas/call_list.py` ist dieselbe Menge, und
 # `test_call_list_service.py` hält beide zusammen). Die Rangfolge zwischen

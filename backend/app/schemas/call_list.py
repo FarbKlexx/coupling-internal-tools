@@ -42,6 +42,12 @@ MAX_SNOOZE_MINUTES = 90 * 24 * 60
 DECISION_PAGE_SIZE = 20
 MAX_DECISION_PAGE_SIZE = 100
 
+#: Seitengröße der Kontaktsuche. Wie bei den Entscheidungen klein gehalten:
+#: gesucht wird ein bestimmter Betrieb, nicht geblättert.
+SEARCH_PAGE_SIZE = 10
+MAX_SEARCH_PAGE_SIZE = 50
+MAX_SEARCH_TERM = 200
+
 # Seitengröße der Blacklist-Ansicht. Sie kann zehntausende Nummern enthalten,
 # also wird geblättert statt alles zu schicken.
 BLACKLIST_PAGE_SIZE = 50
@@ -103,6 +109,13 @@ class CallOutcome(str, Enum):
 
     ZUGESAGT = "zugesagt"
     NICHT_ERREICHBAR = "nicht_erreichbar"
+    #: Jemand war am Apparat, aber nicht der, mit dem zu reden ist — und ein
+    #: Termin kam auch nicht heraus. Bewusst nicht `nicht_erreichbar`: dort
+    #: hat niemand abgenommen, hier ist der Betrieb erreicht und nur der
+    #: Ansprechpartner nicht da. Für den nächsten Anruf ist das ein
+    #: Unterschied („Frau Meier ist ab Montag wieder da"), und das Protokoll
+    #: ist die Stelle, an der er nachlesbar bleibt.
+    AP_NICHT_DA = "ap_nicht_da"
     RUECKRUF = "rueckruf"
     KEIN_BEDARF = "kein_bedarf"
     ABGELEHNT = "abgelehnt"
@@ -114,6 +127,7 @@ class CallOutcome(str, Enum):
 OUTCOME_STATES: dict[CallOutcome, ContactState] = {
     CallOutcome.ZUGESAGT: ContactState.ZUGESAGT,
     CallOutcome.NICHT_ERREICHBAR: ContactState.WIEDERVORLAGE,
+    CallOutcome.AP_NICHT_DA: ContactState.WIEDERVORLAGE,
     CallOutcome.RUECKRUF: ContactState.RUECKRUF,
     CallOutcome.KEIN_BEDARF: ContactState.KEIN_BEDARF,
     CallOutcome.ABGELEHNT: ContactState.ABGELEHNT,
@@ -186,6 +200,18 @@ OUTCOMES: tuple[OutcomeInfo, ...] = (
         resulting_state=ContactState.WIEDERVORLAGE,
     ),
     OutcomeInfo(
+        id=CallOutcome.AP_NICHT_DA,
+        label="Ansprechpartner nicht da",
+        description=(
+            "Der Betrieb war erreichbar, der Ansprechpartner nicht – und ein "
+            "Termin kam nicht dabei heraus. Der Kontakt kommt nach der "
+            "gewählten Zeit zurück."
+        ),
+        tone=OutcomeTone.NEUTRAL,
+        time_input=TimeInput.SNOOZE,
+        resulting_state=ContactState.WIEDERVORLAGE,
+    ),
+    OutcomeInfo(
         id=CallOutcome.RUECKRUF,
         label="Rückruf vereinbart",
         description=(
@@ -227,6 +253,13 @@ OUTCOMES: tuple[OutcomeInfo, ...] = (
 )
 
 
+#: Ein Knopf zu seiner ID. Damit der Service den Zeitbedarf eines Ergebnisses
+#: *nachschlägt*, statt die Fälle ein zweites Mal aufzuzählen — sonst hätte ein
+#: weiteres Ergebnis mit Wiedervorlage zwei Stellen, und die zweite fällt erst
+#: auf, wenn sie fehlt.
+OUTCOME_BY_ID: dict[CallOutcome, OutcomeInfo] = {info.id: info for info in OUTCOMES}
+
+
 class ContactField(BaseModel):
     """Eine Zusatzspalte der CSV, wie sie unter „Details" erscheint."""
 
@@ -258,6 +291,11 @@ class CallContact(BaseModel):
     id: str
     list_id: str
     list_name: str
+    #: Ob diese Liste beendet ist. Im Anrufvorrat immer `False` (archivierte
+    #: Listen kommen dort nicht vor) und deshalb mit Standardwert — gebraucht
+    #: wird es von der Kontaktsuche, die absichtlich auch in beendeten Listen
+    #: nachsieht.
+    list_archived: bool = False
     betrieb: str
     telefon: str
     email: str
@@ -277,6 +315,26 @@ class CallContact(BaseModel):
     #: Alle bisherigen Versuche, jüngster zuerst. Erspart einen zweiten Aufruf
     #: und ist die Antwort auf „habe ich hier schon mal angerufen?".
     history: list[CallEventInfo]
+
+
+class CallContactPage(BaseModel):
+    """Treffer der Kontaktsuche.
+
+    Trägt ganze `CallContact`-Objekte samt Protokoll und nicht eine eigene,
+    kürzere Zeile: die Frage hinter der Suche ist „was war bei diesem Betrieb
+    schon?", und die Antwort darauf ist genau das, was auch am Arbeitsplatz
+    steht. Ein zweites, abgespecktes DTO wäre eine zweite Stelle, an der ein
+    neues Kontaktfeld nachgetragen werden müsste.
+    """
+
+    entries: list[CallContact]
+    #: Treffer insgesamt — `entries` ist nur die aktuelle Seite.
+    matched: int
+    offset: int
+    limit: int
+    #: Der Begriff, zu dem diese Seite gehört. Das Frontend verwirft damit die
+    #: Antwort auf eine Suche, die der Anwender schon weitergetippt hat.
+    query: str
 
 
 class CallCounters(BaseModel):

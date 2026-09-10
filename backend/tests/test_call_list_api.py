@@ -155,6 +155,33 @@ def test_correcting_an_entry_of_someone_else_is_allowed_but_named(client, make_u
     )
 
 
+def test_a_caller_may_search_contacts_without_being_an_admin(client, make_user):
+    """Der Weg zurueck zu einem Betrieb gehoert dem, der telefoniert.
+
+    Die Suche steht deshalb neben der Richtigstellung und nicht bei der
+    Listenpflege — sie liest nur.
+    """
+    _upload(client)
+    user_client, _ = make_user("anruferin", pages=[Page.TELEFONAKQUISE])
+
+    response = user_client.get("/telefonakquise/contacts", params={"q": "zweiter"})
+
+    assert response.status_code == 200
+    page = response.json()
+    assert page["matched"] == 1
+    assert page["entries"][0]["betrieb"] == "Zweiter Betrieb"
+    assert page["entries"][0]["list_archived"] is False
+
+
+def test_searching_without_a_term_returns_no_contacts(client):
+    _upload(client)
+
+    page = client.get("/telefonakquise/contacts").json()
+
+    assert page["matched"] == 0
+    assert page["entries"] == []
+
+
 def test_correcting_an_entry_that_is_no_longer_the_latest_is_a_400(client):
     _upload(client)
     contact = client.get("/telefonakquise/state").json()["contact"]

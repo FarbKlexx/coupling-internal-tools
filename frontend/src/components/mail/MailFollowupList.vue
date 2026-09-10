@@ -404,7 +404,7 @@ function waiting(entry: MailEntry): string {
           </div>
         </div>
 
-        <p v-if="entry.note" class="text-xs text-zinc-500 break-words">
+        <p v-if="entry.note" class="text-xs text-zinc-500 break-words whitespace-pre-line">
           Telefonat: „{{ entry.note }}“
         </p>
 
@@ -462,7 +462,7 @@ function waiting(entry: MailEntry): string {
 
         <p
           v-if="entry.mail_note && editing !== entry.contact_id"
-          class="text-xs light-grey-text break-words"
+          class="text-xs light-grey-text break-words whitespace-pre-line"
         >
           Versand: „{{ entry.mail_note }}“
         </p>
@@ -475,12 +475,16 @@ function waiting(entry: MailEntry): string {
             <label class="text-xs text-zinc-500" :for="`mail-note-${entry.contact_id}`">
               Anmerkung zum Versand – ändert den Zustand nicht
             </label>
-            <input
+            <!-- Mehrzeilig: hier steht, was in der Antwort stand, und das ist
+                 selten ein Satz. Enter macht deshalb eine neue Zeile;
+                 gespeichert wird mit dem Knopf oder Strg/⌘+Enter. -->
+            <textarea
               :id="`mail-note-${entry.contact_id}`"
               v-model="note"
-              type="text"
-              class="rounded-md light-grey-background light-grey-stroke px-3 py-2 text-sm outline-none focus:border-blue-500 transition-colors"
-              @keyup.enter="saveNote(entry)"
+              rows="4"
+              class="rounded-md light-grey-background light-grey-stroke px-3 py-2 text-sm outline-none focus:border-blue-500 transition-colors resize-y"
+              @keydown.enter.ctrl.prevent="saveNote(entry)"
+              @keydown.enter.meta.prevent="saveNote(entry)"
             />
           </div>
           <button

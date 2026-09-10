@@ -25,6 +25,7 @@ export type ContactState =
 export const CALL_OUTCOMES = [
   "zugesagt",
   "nicht_erreichbar",
+  "ap_nicht_da",
   "rueckruf",
   "kein_bedarf",
   "abgelehnt",
@@ -65,6 +66,8 @@ export interface CallContact {
   id: string;
   list_id: string;
   list_name: string;
+  /** Ob die Liste beendet ist. Im Anrufvorrat immer `false`. */
+  list_archived: boolean;
   betrieb: string;
   telefon: string;
   email: string;
@@ -83,6 +86,23 @@ export interface CallContact {
   appointment_at: string | null;
   note: string;
   history: CallEvent[];
+}
+
+/**
+ * Treffer der Kontaktsuche.
+ *
+ * Die Einträge sind ganze Kontakte samt Protokoll – die Frage hinter der Suche
+ * ist „was war bei diesem Betrieb schon?", und die Antwort ist dieselbe, die am
+ * Arbeitsplatz steht.
+ */
+export interface CallContactPage {
+  entries: CallContact[];
+  /** Treffer insgesamt; `entries` ist nur die aktuelle Seite. */
+  matched: number;
+  offset: number;
+  limit: number;
+  /** Der Begriff, zu dem diese Seite gehört – siehe `searchContacts`. */
+  query: string;
 }
 
 export interface CallCounters {
@@ -295,6 +315,26 @@ export async function fetchDecisions(params: {
   limit?: number;
 }): Promise<CallDecisionPage> {
   const response = await http.get<CallDecisionPage>("/telefonakquise/decisions", { params });
+  return response.data;
+}
+
+/**
+ * Sucht Betriebe nach Name, Adresse oder Nummer.
+ *
+ * Lesend – eingetragen wird am Arbeitsplatz, richtiggestellt in der
+ * Entscheidungsliste. Archivierte Listen sind eingeschlossen: nachgesehen wird
+ * gerade dann, wenn eine Runde vorbei ist.
+ *
+ * Die Antwort trägt den Begriff mit, zu dem sie gehört – gekürzt auf das, was
+ * das Backend annimmt. Er steht in der Meldung „kein Betrieb passt zu …“, damit
+ * dort nicht der Begriff steht, der inzwischen im Feld gelandet ist.
+ */
+export async function searchContacts(params: {
+  q: string;
+  offset?: number;
+  limit?: number;
+}): Promise<CallContactPage> {
+  const response = await http.get<CallContactPage>("/telefonakquise/contacts", { params });
   return response.data;
 }
 

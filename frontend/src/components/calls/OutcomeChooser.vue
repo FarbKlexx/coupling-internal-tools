@@ -48,6 +48,7 @@ const emit = defineEmits<{
 const ICONS: Record<CallOutcome, string> = {
   zugesagt: "mark_email_read",
   nicht_erreichbar: "phone_missed",
+  ap_nicht_da: "person_off",
   rueckruf: "event",
   kein_bedarf: "do_not_disturb_on",
   abgelehnt: "block",
@@ -75,8 +76,18 @@ function pick(outcome: OutcomeInfo) {
   );
 }
 
+/**
+ * Wiedervorlage über eine Dauer („in 1 Stunde").
+ *
+ * Das Ergebnis kommt aus `pending`, nicht als festes `nicht_erreichbar`: seit
+ * „Ansprechpartner nicht da" gibt es zwei Ergebnisse mit Wiedervorlage, und
+ * verdrahtet würden die Schnell-Knöpfe des zweiten das erste eintragen — ein
+ * Protokoll, das etwas anderes behauptet als der Klick.
+ */
 function submitSnooze(minutes: number) {
-  emit("submit", { outcome: "nicht_erreichbar", snooze_minutes: minutes });
+  if (!pending.value) return;
+
+  emit("submit", { outcome: pending.value.id, snooze_minutes: minutes });
 }
 
 function submitMoment(stamp: Date) {

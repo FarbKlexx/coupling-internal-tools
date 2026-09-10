@@ -60,11 +60,15 @@ from app.schemas.call_list import (
     MAX_EMAIL,
     MAX_LIST_NAME,
     MAX_PASTED_NUMBERS,
+    MAX_SEARCH_PAGE_SIZE,
+    MAX_SEARCH_TERM,
     MAX_SNOOZE_MINUTES,
     MIN_SNOOZE_MINUTES,
     NO_PRIO_VALUE,
+    OUTCOME_BY_ID,
     OUTCOME_STATES,
     OUTCOMES,
+    SEARCH_PAGE_SIZE,
     STATE_LABELS,
     BlacklistAddRequest,
     BlacklistEntry,
@@ -72,6 +76,7 @@ from app.schemas.call_list import (
     BlacklistPage,
     BlacklistSource,
     CallContact,
+    CallContactPage,
     CallCounters,
     CallDecision,
     CallDecisionPage,
@@ -88,6 +93,7 @@ from app.schemas.call_list import (
     OutcomeRequest,
     PrioOption,
     SkippedRowInfo,
+    TimeInput,
 )
 
 
@@ -171,6 +177,7 @@ def _contact(conn: sqlite3.Connection, row: sqlite3.Row) -> CallContact:
         id=row["id"],
         list_id=row["list_id"],
         list_name=row["list_name"],
+        list_archived=bool(row["list_archived"]),
         betrieb=row["betrieb"],
         telefon=row["telefon"],
         email=row["email"],
@@ -266,11 +273,18 @@ def _resolve_times(
     Liefert `(due_at, appointment_at)`. `due_at` ist der Zeitpunkt, zu dem der
     Kontakt wieder im Vorrat auftaucht; `appointment_at` der abgesprochene
     Termin, der nur angezeigt wird.
+
+    Welcher Zweig gilt, entscheidet `time_input` aus der Knopftabelle und nicht
+    das Ergebnis selbst: „nicht erreichbar" und „Ansprechpartner nicht da"
+    brauchen beide eine Wiedervorlage, und ein drittes Ergebnis dieser Art
+    soll hier nichts zu ändern haben.
     """
     now = datetime.now(timezone.utc)
     horizon = now + timedelta(minutes=MAX_SNOOZE_MINUTES)
 
-    if outcome is CallOutcome.NICHT_ERREICHBAR:
+    info = OUTCOME_BY_ID[outcome]
+
+    if info.time_input is TimeInput.SNOOZE:
         if request.snooze_minutes is not None:
             minutes = request.snooze_minutes
             if not MIN_SNOOZE_MINUTES <= minutes <= MAX_SNOOZE_MINUTES:
@@ -292,10 +306,10 @@ def _resolve_times(
             return _format(max(due, now)), None
 
         raise CallListError(
-            "Für „nicht erreichbar“ fehlt der Zeitpunkt der Wiedervorlage."
+            f"Für „{info.label}“ fehlt der Zeitpunkt der Wiedervorlage."
         )
 
-    if outcome is CallOutcome.RUECKRUF:
+    if info.time_input is TimeInput.APPOINTMENT:
         if not request.appointment_at:
             raise CallListError("Für einen vereinbarten Rückruf fehlt der Termin.")
 
@@ -513,6 +527,40 @@ def get_decisions(
 
     with db.connect() as conn:
         return _decision_page(conn, offset=offset, limit=limit)
+
+
+def search_contacts(
+    query: str, *, offset: int = 0, limit: int = SEARCH_PAGE_SIZE
+) -> CallContactPage:
+    """Betriebe zu einem Suchbegriff — der Weg zurück zu einem Kontakt.
+
+    Ohne sie ist ein Betrieb, der einmal durch den Arbeitsplatz gelaufen ist,
+    nicht mehr auffindbar: der Vorrat zeigt immer nur den *nächsten*, und die
+    Entscheidungsliste reicht bewusst nur ein Stück zurück. Gefragt wird nach
+    „was war eigentlich bei Klappschmidt?", und die Antwort ist der Kontakt mit
+    seinem Protokoll.
+
+    Lesend, mit Absicht. Eingetragen wird ein Ergebnis am Arbeitsplatz und
+    richtiggestellt in der Entscheidungsliste; ein dritter Schreibweg auf
+    denselben Nachweis hieße, dieselbe Regel an drei Stellen zu prüfen.
+
+    Grenzen werden geklemmt statt abgelehnt, wie bei den Entscheidungen und
+    der Blacklist: das ist eine URL, keine Eingabe des Anwenders.
+    """
+    limit = max(1, min(limit, MAX_SEARCH_PAGE_SIZE))
+    offset = max(0, offset)
+    term = query.strip()[:MAX_SEARCH_TERM]
+
+    with db.connect() as conn:
+        rows, matched = db.search_contacts(conn, query=term, limit=limit, offset=offset)
+
+        return CallContactPage(
+            entries=[_contact(conn, row) for row in rows],
+            matched=matched,
+            offset=offset,
+            limit=limit,
+            query=term,
+        )
 
 
 def correct_outcome(

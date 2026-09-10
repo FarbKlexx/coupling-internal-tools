@@ -42,6 +42,14 @@ const outcomes: OutcomeInfo[] = [
     resulting_state: "wiedervorlage",
   },
   {
+    id: "ap_nicht_da",
+    label: "Ansprechpartner nicht da",
+    description: "Betrieb erreicht, Entscheider nicht.",
+    tone: "neutral",
+    time_input: "snooze",
+    resulting_state: "wiedervorlage",
+  },
+  {
     id: "rueckruf",
     label: "Rückruf vereinbart",
     description: "Termin abgesprochen.",
@@ -55,6 +63,7 @@ const contact: CallContact = {
   id: "k1",
   list_id: "l1",
   list_name: "Handwerker Herford",
+  list_archived: false,
   betrieb: "Azmanlar Tayfun Malermeister",
   telefon: "+49 5224 79473",
   email: "info@tayfun-design.de",
@@ -108,7 +117,7 @@ describe("CallWorkbench", () => {
     const wrapper = mountWorkbench();
     const labels = wrapper.findAll("button.outcome").map((button) => button.text());
 
-    expect(labels).toHaveLength(3);
+    expect(labels).toHaveLength(outcomes.length);
     expect(labels[0]).toContain("Zusage");
     expect(wrapper.get("button.outcome").classes()).toContain("outcome--positive");
   });
@@ -150,10 +159,30 @@ describe("CallWorkbench", () => {
     });
   });
 
-  it("schickt beim Rückruf einen Termin mit Zeitzone", async () => {
+  it("schickt bei der Schnellauswahl das angeklickte Ergebnis, nicht „nicht erreichbar“", async () => {
+    // Es gibt zwei Ergebnisse mit Wiedervorlage. Die Knöpfe „in 1 Stunde"
+    // & Co. haben das Ergebnis früher fest verdrahtet — damit hätte ein
+    // „Ansprechpartner nicht da" als „nicht erreichbar" im Protokoll
+    // gestanden, und das Protokoll ist der Zweck dieses Werkzeugs.
     const wrapper = mountWorkbench();
 
     await wrapper.findAll("button.outcome")[2]!.trigger("click");
+    expect(wrapper.text()).toContain("Wann erneut anrufen?");
+
+    const chips = wrapper.findAll("button.chip");
+    await chips[0]!.trigger("click");
+
+    expect(wrapper.emitted("answer")?.[0]?.[1]).toEqual({
+      outcome: "ap_nicht_da",
+      snooze_minutes: 60,
+      note: "",
+    });
+  });
+
+  it("schickt beim Rückruf einen Termin mit Zeitzone", async () => {
+    const wrapper = mountWorkbench();
+
+    await wrapper.findAll("button.outcome")[3]!.trigger("click");
     expect(wrapper.text()).toContain("Wann ist der Rückruf verabredet?");
 
     await wrapper.get("input[type='datetime-local']").setValue("2026-09-01T14:00");

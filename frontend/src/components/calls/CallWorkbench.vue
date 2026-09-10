@@ -278,7 +278,12 @@ function answer(choice: OutcomeChoice) {
           >
             <span class="white-text">{{ event.outcome_label }}</span>
             · {{ formatMoment(event.occurred_at) }} · {{ event.username }}
-            <template v-if="event.note"> · „{{ event.note }}“</template>
+            <!-- Die Notiz auf eigener Zeile, mit ihren Umbrüchen: hinter der
+                 Kopfzeile angehängt stünde ein Absatz aus dem Gespräch als
+                 eine lange Zeile. -->
+            <span v-if="event.note" class="mt-0.5 block break-words whitespace-pre-line">
+              „{{ event.note }}“
+            </span>
           </li>
         </ul>
       </div>
@@ -330,10 +335,13 @@ function answer(choice: OutcomeChoice) {
         </div>
         <div class="flex flex-col gap-1">
           <label class="text-sm font-medium" :for="`note-${contact.id}`">Anmerkungen</label>
+          <!-- Vier Zeilen, nicht zwei: was im Gespräch gesagt wurde, ist
+               selten ein Satz, und ein Feld, in dem man dafür scrollen muss,
+               liest hinterher niemand mehr nach. -->
           <textarea
             :id="`note-${contact.id}`"
             v-model="note"
-            rows="2"
+            rows="4"
             placeholder="Was im Gespräch gesagt wurde"
             class="w-full rounded-md grey-background light-grey-stroke px-3 py-2 text-sm outline-none focus:border-blue-500 transition-colors resize-y"
           />

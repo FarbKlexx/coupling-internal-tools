@@ -212,7 +212,7 @@ describe("MailFollowupList", () => {
 
     const noteButton = wrapper.findAll("li button").find((b) => b.text().includes("Anmerkung"));
     await noteButton?.trigger("click");
-    await wrapper.find("li input[type='text']").setValue("Angebot mit Preisliste");
+    await wrapper.find("li textarea").setValue("Angebot mit Preisliste");
     const submit = wrapper.findAll("li button").find((b) => b.text() === "Speichern");
     await submit?.trigger("click");
 

@@ -95,7 +95,7 @@ describe("CallDecisionLog", () => {
     const wrapper = mountLog();
 
     await wrapper.get("button").trigger("click");
-    await wrapper.get("input[type='text']").setValue("doch zugesagt");
+    await wrapper.get("textarea").setValue("doch zugesagt");
     await wrapper.get("button.outcome").trigger("click");
 
     expect(wrapper.emitted("correct")?.[0]).toEqual([

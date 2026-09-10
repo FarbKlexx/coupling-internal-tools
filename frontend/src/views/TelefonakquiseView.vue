@@ -46,6 +46,16 @@
         @correct="correctDecision"
       />
 
+      <!-- Die Suche steht unter der Entscheidungsliste und wie diese hinter
+           der Sitzung, nicht hinter `isAdmin`: sie ist der Weg zurück zu
+           einem Betrieb, den man selbst angerufen hat. Sie liest nur. -->
+      <CallContactSearch
+        :page="searchResults"
+        :is-searching="isSearching"
+        :search="search"
+        :go-to-page="goToSearchPage"
+      />
+
       <!-- Die Listenpflege liegt auf derselben Seite, ist aber nur für
            Administratoren sichtbar; durchgesetzt wird sie im Backend, das die
            Verwaltungsendpunkte hinter `require_admin` hält. -->
@@ -71,6 +81,7 @@
 
 <script setup lang="ts">
 import { onMounted } from "vue";
+import CallContactSearch from "@/components/calls/CallContactSearch.vue";
 import CallDecisionLog from "@/components/calls/CallDecisionLog.vue";
 import CallListManager from "@/components/calls/CallListManager.vue";
 import CallWorkbench from "@/components/calls/CallWorkbench.vue";
@@ -92,6 +103,8 @@ const {
   isBlacklistLoading,
   decisions,
   isDecisionsLoading,
+  searchResults,
+  isSearching,
   isLoading,
   isSaving,
   isWaiting,
@@ -101,6 +114,8 @@ const {
   loadBlacklist,
   loadDecisions,
   loadMoreDecisions,
+  search,
+  goToSearchPage,
   startPolling,
   recordOutcome,
   correctDecision,

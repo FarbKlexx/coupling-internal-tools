@@ -3,7 +3,8 @@
 Zwei Gruppen von Endpunkten an einem Router:
 
 * **Anrufen** — `GET /telefonakquise/state`,
-  `POST /telefonakquise/contacts/{id}/outcome` sowie die Entscheidungsliste
+  `POST /telefonakquise/contacts/{id}/outcome`, die Kontaktsuche
+  (`GET /telefonakquise/contacts`) sowie die Entscheidungsliste
   (`GET /telefonakquise/decisions`) und ihre Richtigstellung
   (`POST /telefonakquise/decisions/{event_id}/correct`). Alle drei
   schreibenden Wege antworten mit dem ganzen Arbeitsstand, so wie das
@@ -39,9 +40,13 @@ from app.schemas.call_list import (
     DECISION_PAGE_SIZE,
     MAX_BLACKLIST_PAGE_SIZE,
     MAX_DECISION_PAGE_SIZE,
+    MAX_SEARCH_PAGE_SIZE,
+    MAX_SEARCH_TERM,
+    SEARCH_PAGE_SIZE,
     BlacklistAddRequest,
     BlacklistMutationResponse,
     BlacklistPage,
+    CallContactPage,
     CallDecisionPage,
     CallState,
     ListAnalyseResponse,
@@ -68,6 +73,7 @@ from app.services.call_list_service import (
     import_list,
     record_outcome,
     remove_blacklist_entry,
+    search_contacts,
     update_list,
 )
 
@@ -122,6 +128,25 @@ def submit_outcome(
         )
     except CallListError as exc:
         raise _fail(exc) from exc
+
+
+@router.get("/contacts", response_model=CallContactPage)
+def search_contacts_endpoint(
+    q: str = Query(default="", max_length=MAX_SEARCH_TERM),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=SEARCH_PAGE_SIZE, ge=1, le=MAX_SEARCH_PAGE_SIZE),
+    _: CurrentUser = Depends(current_user),
+) -> CallContactPage:
+    """Betriebe zu einem Suchbegriff, mit ihrem Protokoll.
+
+    Kein `require_admin`: das ist der Weg zurück zu einem Betrieb, den man
+    selbst angerufen hat. Auch archivierte Listen sind dabei — nachgesehen
+    wird gerade dann, wenn eine Runde schon vorbei ist.
+
+    Geblättert und deshalb nicht Teil von `CallState`, wie die
+    Entscheidungsliste. Ein leeres `q` liefert nichts statt aller Kontakte.
+    """
+    return search_contacts(q, offset=offset, limit=limit)
 
 
 @router.get("/decisions", response_model=CallDecisionPage)

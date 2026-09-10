@@ -145,7 +145,9 @@ function stateClass(entry: CallDecision): string {
           </div>
         </div>
 
-        <p v-if="entry.note" class="mt-0.5 text-xs text-zinc-500 break-words">„{{ entry.note }}“</p>
+        <p v-if="entry.note" class="mt-0.5 text-xs text-zinc-500 break-words whitespace-pre-line">
+          „{{ entry.note }}“
+        </p>
 
         <!-- Die Richtigstellung: dieselben Knöpfe wie am Arbeitsplatz -->
         <div
@@ -174,11 +176,13 @@ function stateClass(entry: CallDecision): string {
               <label class="text-xs text-zinc-500" :for="`fix-note-${entry.event_id}`">
                 Anmerkung
               </label>
-              <input
+              <!-- Textfeld wie am Arbeitsplatz: eine Richtigstellung muss
+                   dieselbe Notiz aufnehmen können wie das Gespräch selbst. -->
+              <textarea
                 :id="`fix-note-${entry.event_id}`"
                 v-model="note"
-                type="text"
-                class="rounded-md light-grey-background light-grey-stroke px-3 py-2 text-sm outline-none focus:border-blue-500 transition-colors"
+                rows="4"
+                class="rounded-md light-grey-background light-grey-stroke px-3 py-2 text-sm outline-none focus:border-blue-500 transition-colors resize-y"
               />
             </div>
           </div>

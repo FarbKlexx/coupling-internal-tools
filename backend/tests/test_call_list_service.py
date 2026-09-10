@@ -40,6 +40,7 @@ from app.services.call_list_service import (
     import_list,
     record_outcome,
     remove_blacklist_entry,
+    search_contacts,
     update_list,
 )
 
@@ -408,6 +409,47 @@ def test_a_due_deferral_is_back_in_the_pool_but_behind_the_untried_ones():
 
     assert third.contact.id == first
     assert third.contact.state is ContactState.WIEDERVORLAGE
+
+
+def test_an_absent_contact_person_defers_like_an_unreachable_one():
+    """Betrieb erreicht, Ansprechpartner nicht — mit eigenem Protokolleintrag.
+
+    Der Zustand ist derselbe wie bei „nicht erreichbar" (Wiedervorlage), die
+    *Zeile* im Protokoll ist es nicht: beim naechsten Anruf ist der
+    Unterschied die halbe Information („Frau Meier ist ab Montag da").
+    """
+    state = _import().state
+    contact_id = state.contact.id
+
+    after = _answer(contact_id, CallOutcome.AP_NICHT_DA, snooze_minutes=120)
+
+    assert after.counters.wiedervorlage == 1
+    assert after.next_due_at is not None
+
+    with db.connect() as conn:
+        row = db.find_contact(conn, contact_id)
+
+    assert row["state"] == ContactState.WIEDERVORLAGE.value
+    # Der Betrieb wurde erreicht — das war ein Versuch.
+    assert row["attempts"] == 1
+
+    with db.connect() as conn:
+        events = db.events_of_contact(conn, contact_id)
+
+    assert [event["outcome"] for event in events] == ["ap_nicht_da"]
+
+
+def test_an_absent_contact_person_needs_a_time_of_its_own():
+    """Die Wiedervorlage haengt am `time_input` des Knopfes, nicht am Ergebnis.
+
+    Vorher stand „nicht erreichbar" als einziger Fall im Service; ein zweites
+    Ergebnis mit Wiedervorlage waere dort stillschweigend ohne Zeitpunkt
+    durchgelaufen und der Betrieb danach in keinem Vorrat mehr aufgetaucht.
+    """
+    state = _import().state
+
+    with pytest.raises(CallListError, match="fehlt der Zeitpunkt"):
+        _answer(state.contact.id, CallOutcome.AP_NICHT_DA)
 
 
 def test_unreachable_without_a_time_is_refused():
@@ -1198,3 +1240,76 @@ def test_a_database_from_before_the_corrections_gets_the_new_column():
     # kostet, wäre teurer als die fehlende Spalte.
     assert row["note"] == "alter Eintrag"
     assert row["corrects_event_id"] is None
+
+
+# ------------------------------
+# Kontaktsuche
+# ------------------------------
+
+
+def test_the_search_finds_a_contact_by_name_with_its_protocol():
+    """Der Weg zurueck zu einem Betrieb, den man schon angerufen hat."""
+    state = _import().state
+    _answer(state.contact.id, CallOutcome.AP_NICHT_DA, snooze_minutes=60)
+
+    page = search_contacts("erster")
+
+    assert page.matched == 1
+    assert page.query == "erster"
+    hit = page.entries[0]
+    assert hit.betrieb == "Erster Betrieb"
+    assert hit.state is ContactState.WIEDERVORLAGE
+    # Das Protokoll faehrt mit — es ist die Antwort auf „was war da?".
+    assert [event.outcome for event in hit.history] == [CallOutcome.AP_NICHT_DA]
+
+
+def test_the_search_ignores_case_and_finds_a_number_in_any_notation():
+    _import()
+
+    assert search_contacts("ZWEITER").matched == 1
+    # Ziffernschluessel: die Datei schreibt „05221 222".
+    assert search_contacts("+49 5221 222").matched == 1
+    assert search_contacts("zwei@example.de").matched == 1
+
+
+def test_the_search_also_looks_into_archived_lists():
+    """Genau dann wird nachgesehen: die Runde ist vorbei, die Frage nicht.
+
+    Der Anrufvorrat laesst archivierte Listen aus — die Suche darf das nicht,
+    sonst ist ein Betrieb nach dem Beenden seiner Liste unauffindbar.
+    """
+    result = _import()
+    update_list(result.list_id, ListUpdateRequest(archived=True))
+
+    page = search_contacts("dritter")
+
+    assert page.matched == 1
+    assert page.entries[0].list_archived is True
+
+
+def test_an_empty_search_term_returns_nothing():
+    """Eine Suche ohne Begriff ist keine zweite Ansicht auf alle Kontakte."""
+    _import()
+
+    page = search_contacts("   ")
+
+    assert page.matched == 0
+    assert page.entries == []
+
+
+def test_the_search_pages_and_keeps_its_total():
+    _import()
+
+    page = search_contacts("betrieb", limit=2)
+
+    assert page.matched == 3
+    assert len(page.entries) == 2
+    # Alphabetisch innerhalb der aktiven Listen.
+    assert [hit.betrieb for hit in page.entries] == [
+        "Dritter Betrieb",
+        "Erster Betrieb",
+    ]
+
+    second = search_contacts("betrieb", limit=2, offset=2)
+
+    assert [hit.betrieb for hit in second.entries] == ["Zweiter Betrieb"]
