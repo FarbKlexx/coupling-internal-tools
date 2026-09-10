@@ -100,7 +100,20 @@ export interface MailEntry {
   actions: MailState[];
 }
 
+/**
+ * Die Zahlen über der Liste – zwei Aufteilungen derselben Menge.
+ *
+ * Die Oberfläche hat zwei Filterreihen, und **jede zählt innerhalb der
+ * Auswahl der anderen**: mit Reiter „Offen" nennen die Marker die offenen
+ * Zusagen, und ihre drei Zahlen ergeben zusammen die Zahl auf dem Reiter.
+ * Ihren eigenen Filter lässt eine Reihe außen vor, sonst gäbe es keinen
+ * Rückweg, der eine Zahl nennt. Die Suche bleibt aus beiden heraus.
+ *
+ * Gerechnet wird das im Backend (`_counters`) – hier ist nur zu wissen, dass
+ * die Zahlen zur mitgeschickten Sicht gehören.
+ */
 export interface MailCounters {
+  /** Alle Zusagen der Auswahl – die Zahl hinter dem Reiter „Alle". */
   gesamt: number;
   offen: number;
   versendet: number;
@@ -110,10 +123,11 @@ export interface MailCounters {
   /** Zusagen ohne Adresse – die Nacharbeit, die sonst niemand sieht. */
   ohne_email: number;
   /**
-   * Die Bau-Einschätzung, gezählt über *alle* Zusagen.
+   * Die Bau-Einschätzung, gezählt innerhalb des Versandstand-Filters.
    *
-   * „Wie viele könnten wir sofort bauen?" ist die Frage, für die die Marker
-   * gesetzt werden – und die stellt sich vor der Antwort auf die Mail.
+   * Ohne ihn über alle Zusagen: „wie viele könnten wir sofort bauen?" ist die
+   * Frage, für die die Marker gesetzt werden – und die stellt sich vor der
+   * Antwort auf die Mail.
    */
   ready_to_build: number;
   missing_content: number;

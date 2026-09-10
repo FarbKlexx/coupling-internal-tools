@@ -158,17 +158,41 @@ def _entry(row: sqlite3.Row) -> MailEntry:
     )
 
 
-def _counters(conn: sqlite3.Connection, cutoff: str) -> MailCounters:
-    totals = db.mail_totals(conn, cutoff)
-    # Zweite Abfrage, weil es eine zweite Frage ist: die Einschätzung hängt
-    # weder am Stichtag noch am Versandstand.
-    readiness = db.mail_readiness_totals(conn)
+def _counters(
+    conn: sqlite3.Connection,
+    cutoff: str,
+    *,
+    state: MailState | None,
+    readiness: BuildReadiness | None,
+) -> MailCounters:
+    """Die Zahlen der beiden Filterreihen.
 
-    def count(state: MailState) -> int:
-        return totals.get(state.value, (0, 0))[0]
+    Jede Reihe zählt mit dem Filter der *anderen*, aber ohne ihren eigenen:
+    steht die Reiterzeile auf „Offen", nennen die Marker die offenen Zusagen,
+    und ihre drei Zahlen ergeben zusammen die Zahl auf dem Reiter. Umgekehrt
+    genauso. Sonst stehen über der Liste zwei Aufteilungen derselben Menge,
+    von denen nur eine zur Auswahl passt — und die andere zählt Zeilen mit,
+    die gerade nicht in der Liste stehen.
+
+    Ohne den eigenen Filter, weil eine Reihe sonst nur noch eine Zahl hätte:
+    ein Filter über „Ready to Build" nullt „Missing Content" und „nicht
+    eingeschätzt", und damit gäbe es keinen Weg zurück, der eine Zahl nennt.
+
+    Die **Suche** bleibt aus beiden Reihen heraus (siehe `mail_totals`).
+    """
+    state_filter = state.value if state else None
+    marker_filter = readiness.value if readiness else None
+
+    totals = db.mail_totals(conn, cutoff, marker_filter)
+    # Zweite Abfrage, weil es eine zweite Frage ist — und weil sie den
+    # anderen Filter braucht als die erste.
+    markers = db.mail_readiness_totals(conn, cutoff, state_filter)
+
+    def count(value: MailState) -> int:
+        return totals.get(value.value, (0, 0))[0]
 
     def marked(value: BuildReadiness) -> int:
-        return readiness.get(value.value, 0)
+        return markers.get(value.value, 0)
 
     return MailCounters(
         gesamt=sum(total for total, _ in totals.values()),
@@ -207,7 +231,9 @@ def _board(
 
     return MailBoard(
         revision=db.revision(conn),
-        counters=_counters(conn, cutoff),
+        # Die Zähler kennen die Filter der Ansicht: jede Reihe zeigt ihre
+        # Zahlen innerhalb der Auswahl der anderen.
+        counters=_counters(conn, cutoff, state=state, readiness=readiness),
         entries=[_entry(row) for row in rows],
         total=total,
         matched=matched,

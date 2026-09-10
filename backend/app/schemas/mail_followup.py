@@ -312,12 +312,23 @@ class MailEntry(BaseModel):
 
 
 class MailCounters(BaseModel):
-    """Die Zahlen über der Liste.
+    """Die Zahlen über der Liste — zwei Aufteilungen derselben Menge.
 
     `offen` ist hier die Zahl, die auf null laufen soll: Zusagen, deren Mail
     noch nicht heraus ist. `versendet` ist das, was auf eine Antwort wartet.
+
+    Die Oberfläche zeigt sie in zwei Filterreihen (Versandstand, dann
+    Bau-Einschätzung), und **jede Reihe zählt innerhalb der Auswahl der
+    anderen**: wer auf „Offen" filtert, bekommt in den Markern die offenen
+    Zusagen, deren drei Zahlen zusammen die Zahl auf dem Reiter ergeben.
+    Ihren *eigenen* Filter lässt eine Reihe dabei außen vor — sonst stünde
+    auf allen Marken außer der angeklickten eine Null und es gäbe keinen
+    Rückweg, der eine Zahl nennt. Die Suche bleibt aus beiden Reihen heraus:
+    die Zähler beantworten „wo stehe ich", nicht „wie viele Zeilen sehe ich".
     """
 
+    #: Alle Zusagen der Auswahl — mit Marker-Filter also dessen Anzahl, und
+    #: die Zahl hinter dem Reiter „Alle".
     gesamt: int
     offen: int
     versendet: int
@@ -325,12 +336,14 @@ class MailCounters(BaseModel):
     abgelehnt: int
     keine_antwort: int
     #: Zusagen ohne Adresse. Sie stehen mit in der Liste, aber ohne
-    #: Versand-Knopf — die Nacharbeit, die sonst niemand sieht.
+    #: Versand-Knopf — die Nacharbeit, die sonst niemand sieht. Zählt wie die
+    #: Reiter über ihr, also innerhalb eines gesetzten Marker-Filters.
     ohne_email: int
 
-    #: Die Bau-Einschätzung, gezählt über *alle* Zusagen — nicht nur über die
-    #: beantworteten. „Wie viele könnten wir sofort bauen?" ist die Frage, für
-    #: die die Marker gesetzt werden, und die stellt sich vor der Antwort.
+    #: Die Bau-Einschätzung, gezählt innerhalb des Versandstand-Filters (ohne
+    #: ihn: über alle Zusagen — „wie viele könnten wir sofort bauen?" ist die
+    #: Frage, für die die Marker gesetzt werden, und die stellt sich vor der
+    #: Antwort auf die Mail).
     ready_to_build: int
     missing_content: int
     #: Die noch nicht angesehenen. Ausdrücklich mitgeschickt und nicht als

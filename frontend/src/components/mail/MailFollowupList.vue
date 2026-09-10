@@ -117,6 +117,12 @@ function readinessOption(id: BuildReadiness): ReadinessOptionInfo | undefined {
   return props.readinessOptions.find((option) => option.id === id);
 }
 
+/**
+ * Die Zahl auf einem Marker – gezählt innerhalb des Reiters, der oben aktiv
+ * ist (`countOf` erklärt die Regel). Die drei ergeben damit zusammen die Zahl
+ * des Reiters; vorher zählten sie immer über alle Zusagen und passten zur
+ * Liste nur, solange „Alle" ausgewählt war.
+ */
 function readinessCount(id: BuildReadiness): number {
   return props.board?.counters[id] ?? 0;
 }
@@ -161,10 +167,16 @@ const TABS: { id: MailState | null; label: string }[] = [
 /**
  * Die Zahl auf einem Reiter.
  *
- * Kommt immer aus `counters` und nie aus `matched`: die Zähler zählen alle
- * Zusagen, auch während eine Suche läuft. Sonst zeigte jeder Reiter die Zahl
- * der gerade sichtbaren Zeilen – und die Reiter beantworteten die Frage
- * nicht mehr, für die sie da sind („wo stehe ich insgesamt?").
+ * Kommt immer aus `counters` und nie aus `matched`: eine laufende **Suche**
+ * lässt die Zähler unberührt, sonst zeigte jeder Reiter die Zahl der gerade
+ * sichtbaren Zeilen und beantwortete die Frage nicht mehr, für die er da ist
+ * („wo stehe ich?").
+ *
+ * Der Filter der *anderen* Reihe steckt dagegen im Wert, denn er kommt
+ * gerechnet aus dem Backend: bei aktivem Marker-Filter teilen die Reiter
+ * dessen Auswahl auf, und „Alle" ist deren Summe. Hier ist dafür nichts zu
+ * tun – die Sicht reist mit der Anfrage, und die Antwort bringt die Zahlen,
+ * die zu ihr passen.
  */
 function countOf(state: MailState | null): number {
   if (!props.board) return 0;

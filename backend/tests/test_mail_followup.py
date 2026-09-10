@@ -654,11 +654,55 @@ def test_the_marker_filter_is_independent_of_the_state_filter(zusagen):
     assert _board(client, readiness="missing_content")["matched"] == 0
     assert _board(client, readiness="unbewertet")["matched"] == 0
 
-    # Die Zahlen über der Liste zählen weiter alles — gefiltert ist die Liste,
-    # nicht die Auskunft „wo stehe ich insgesamt".
+    # `total` zählt weiter jede Zusage: es ist die Auskunft „gibt es hier
+    # überhaupt etwas", an der die leere Liste hängt.
     assert both["total"] == 2
+    # Die Zähler dagegen kennen die Auswahl — jede Reihe die der *anderen*:
+    # die Reiter zählen innerhalb des Markers (zwei sind Ready to Build), die
+    # Marker innerhalb des Reiters (einer davon ist verschickt).
     assert both["counters"]["gesamt"] == 2
-    assert both["counters"]["ready_to_build"] == 2
+    assert both["counters"]["ready_to_build"] == 1
+
+
+def test_each_counter_row_counts_within_the_other_filter(zusagen):
+    """Zwei Filterreihen, und jede zählt in der Auswahl der anderen.
+
+    Vorher zählten die Marker immer über alle Zusagen: wer oben auf „Offen"
+    filterte, sah darunter Zahlen einer anderen Menge als die Liste — die
+    Auskunft „12 Ready to Build" über einer Liste mit drei Zeilen. Die drei
+    Marken müssen den Reiter ergeben, auf dem sie stehen, sonst beantworten
+    sie eine Frage, die niemand gestellt hat.
+
+    Der *eigene* Filter bleibt draußen, und das ist die zweite Hälfte der
+    Regel: nullte er die übrigen Marken, gäbe es keinen Rückweg, der eine
+    Zahl nennt.
+    """
+    client, ids = zusagen
+    # „Erster" ist verschickt und Ready to Build, „Dritter" (ohne Adresse)
+    # steht offen und ist Missing Content.
+    _mark(client, ids[0], "ready_to_build")
+    _click(client, ids[0], "versendet")
+    _mark(client, ids[1], "missing_content")
+
+    offen = _board(client, state="offen")["counters"]
+    assert offen["offen"] == 1
+    assert (offen["ready_to_build"], offen["missing_content"]) == (0, 1)
+    assert offen["unbewertet"] == 0
+    # Die Summe der Marken ist die Zahl auf dem Reiter — genau das war vorher
+    # nicht so.
+    assert (
+        offen["ready_to_build"] + offen["missing_content"] + offen["unbewertet"]
+        == offen["offen"]
+    )
+
+    ready = _board(client, readiness="ready_to_build")["counters"]
+    assert ready["gesamt"] == 1
+    assert (ready["offen"], ready["versendet"]) == (0, 1)
+    # Auch die Nacharbeit zählt in der Auswahl: die Zusage ohne Adresse ist
+    # Missing Content und steht hier nicht mit in der Liste.
+    assert ready["ohne_email"] == 0
+    # Der eigene Filter der Markerreihe bleibt draußen.
+    assert (ready["missing_content"], ready["unbewertet"]) == (1, 0)
 
 
 def test_the_marker_filter_combines_with_the_search(zusagen):

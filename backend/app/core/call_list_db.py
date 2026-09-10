@@ -1209,20 +1209,36 @@ def mail_page(
     return rows, matched, total
 
 
-def mail_totals(conn: sqlite3.Connection, cutoff: str) -> dict[str, tuple[int, int]]:
+def mail_totals(
+    conn: sqlite3.Connection,
+    cutoff: str,
+    readiness: str | None = None,
+) -> dict[str, tuple[int, int]]:
     """Pro Versandzustand: (Anzahl, davon ohne E-Mail-Adresse).
 
-    Eine Abfrage für alle Zähler — und sie zählt über *alle* Zusagen, nicht
-    über die gefilterte Seite: die Zahlen über der Liste sollen sich beim
-    Suchen nicht ändern, sonst beantworten sie eine andere Frage als die, für
-    die sie da sind.
+    Eine Abfrage für die Zähler der Reiterzeile. Die **Suche** bleibt
+    ausdrücklich außen vor: die Reiter beantworten „wo stehe ich insgesamt",
+    nicht „wie viele Zeilen sehe ich gerade".
+
+    Der Marker-Filter zählt dagegen mit. Die Oberfläche hat zwei
+    Filterreihen, und jede zeigt ihre Zahlen mit dem Filter der *anderen*,
+    aber ohne den eigenen — das ist der einzige Zuschnitt, in dem eine Reihe
+    eine Aufteilung zeigt, deren Summe die Liste auch erreicht. Ohne den
+    eigenen Filter, weil sonst auf allen Marken außer der angeklickten eine
+    Null stünde. Dieselbe Regel eine Funktion tiefer in
+    `mail_readiness_totals`.
     """
+    where, params = _mail_filter("", None, readiness, cutoff)
+
     rows = conn.execute(
         f"SELECT {_MAIL_STATE} AS mail_state, COUNT(*) AS total,"
         " SUM(CASE WHEN c.email = '' THEN 1 ELSE 0 END) AS ohne_email"
         + _MAIL_FROM
+        + where
         + " GROUP BY mail_state",
-        (cutoff,),
+        # Der Stichtag zuerst: er steht im `?` der Spaltenliste, die
+        # Filterparameter dahinter — wie in `mail_page`.
+        [cutoff] + params,
     ).fetchall()
 
     return {
@@ -1231,18 +1247,32 @@ def mail_totals(conn: sqlite3.Connection, cutoff: str) -> dict[str, tuple[int, i
     }
 
 
-def mail_readiness_totals(conn: sqlite3.Connection) -> dict[str, int]:
+def mail_readiness_totals(
+    conn: sqlite3.Connection,
+    cutoff: str,
+    state: str | None = None,
+) -> dict[str, int]:
     """Pro Bau-Einschätzung: die Anzahl der Zusagen.
 
-    Eigene Abfrage und nicht in `mail_totals` hineingerechnet: die
-    Einschätzung hängt nicht am Stichtag und nicht am Versandstand, und eine
-    Gruppierung über beide Größen gäbe fünfzehn Zeilen, aus denen die
-    Zähler wieder zusammenzusummieren wären.
+    Eigene Abfrage und nicht in `mail_totals` hineingerechnet: eine
+    Gruppierung über beide Größen gäbe fünfzehn Zeilen, aus denen die Zähler
+    wieder zusammenzusummieren wären — und die beiden Reihen brauchen
+    verschiedene Filter, siehe dort.
+
+    `state` ist hier dieser andere Filter: steht die Reiterzeile auf „Offen",
+    zählt diese Reihe innerhalb der offenen Zusagen, und ihre drei Zahlen
+    ergeben zusammen die Zahl auf dem Reiter. Der Stichtag wird deshalb auch
+    hier gebraucht — gefiltert wird über den *gerechneten* Zustand, nicht
+    über die Spalte.
     """
+    where, params = _mail_filter("", state, None, cutoff)
+
     rows = conn.execute(
         f"SELECT {_MAIL_READINESS} AS readiness, COUNT(*) AS total"
         + _MAIL_FROM
-        + f" GROUP BY {_MAIL_READINESS}"
+        + where
+        + f" GROUP BY {_MAIL_READINESS}",
+        params,
     ).fetchall()
 
     return {row["readiness"]: int(row["total"]) for row in rows}
