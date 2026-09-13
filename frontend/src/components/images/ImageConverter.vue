@@ -343,7 +343,7 @@ async function convert() {
 </script>
 
 <template>
-  <div class="max-w-2xl rounded-xl border light-grey-background light-grey-stroke p-6 space-y-5">
+  <div class="max-w-2xl content-box p-6 space-y-5">
     <div class="space-y-1">
       <h2 class="text-lg font-semibold">Bilder zu WebP konvertieren</h2>
       <p class="text-xs text-zinc-500">
@@ -481,7 +481,7 @@ async function convert() {
     </div>
     <p v-else class="text-xs text-zinc-500">Noch keine Dateien ausgewählt.</p>
 
-    <div class="border-t light-grey-stroke" />
+    <div class="border-t border-hairline" />
 
     <!-- Auflösung -->
     <div class="flex flex-col gap-2">

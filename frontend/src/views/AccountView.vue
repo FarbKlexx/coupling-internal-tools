@@ -177,9 +177,7 @@ function describeDevice(agent: string): string {
     <PasswordChangeView />
 
     <!-- Zweiter Faktor -->
-    <section
-      class="max-w-lg rounded-xl border light-grey-background light-grey-stroke p-6 space-y-4"
-    >
+    <section class="max-w-lg content-box p-6 space-y-4">
       <div class="space-y-1">
         <h2 class="text-lg font-semibold">Zwei-Faktor-Authentifizierung</h2>
         <p class="text-xs text-zinc-500">
@@ -328,9 +326,7 @@ function describeDevice(agent: string): string {
     </section>
 
     <!-- Sitzungen -->
-    <section
-      class="max-w-3xl rounded-xl border light-grey-background light-grey-stroke p-6 space-y-4"
-    >
+    <section class="max-w-3xl content-box p-6 space-y-4">
       <div class="flex items-start justify-between gap-4">
         <div class="space-y-1">
           <h2 class="text-lg font-semibold">Aktive Sitzungen</h2>
@@ -357,7 +353,7 @@ function describeDevice(agent: string): string {
         {{ sessionError }}
       </p>
 
-      <ul class="divide-y divide-white/5">
+      <ul class="divide-y divide-hairline">
         <li
           v-for="session in sessions"
           :key="session.id"

@@ -44,7 +44,7 @@ async function upload() {
 </script>
 
 <template>
-  <div class="max-w-md rounded-xl border light-grey-background light-grey-stroke p-6 space-y-4">
+  <div class="max-w-md content-box p-6 space-y-4">
     <h2 class="text-lg font-semibold">CSV konvertieren</h2>
 
     <!-- Option -->

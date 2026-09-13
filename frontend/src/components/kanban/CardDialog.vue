@@ -7,14 +7,12 @@
     @click:outside="emit('close')"
     @keydown.esc="emit('close')"
   >
-    <div
-      class="w-[32rem] max-w-[90vw] rounded-xl border light-grey-background light-grey-stroke p-6 space-y-4"
-    >
+    <div class="w-[32rem] max-w-[90vw] content-box p-6 space-y-4">
       <div class="flex items-start justify-between gap-4">
         <h2 class="text-lg font-semibold">
           {{ card ? "Karte bearbeiten" : "Neue Karte" }}
         </h2>
-        <button type="button" class="grey-text" @click="emit('close')">
+        <button type="button" class="grey-text hover:text-strong" @click="emit('close')">
           <span class="material-symbols-outlined">close</span>
         </button>
       </div>

@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { useAuth } from "@/composables/useAuth";
+import { useTheme } from "@/composables/useTheme";
 
 // Mail und Notifications sind weiterhin reine Platzhalter ohne Backend (feste
 // Badge-Zahlen, kein Ziel beim Klick). Der Avatar dagegen ist jetzt echt: er
@@ -11,6 +12,7 @@ const SHOW_PLACEHOLDER_ACTIONS = false;
 
 const auth = useAuth();
 const router = useRouter();
+const { isLight, toggle: toggleTheme } = useTheme();
 
 const open = ref(false);
 const container = ref<HTMLElement | null>(null);
@@ -47,6 +49,26 @@ async function signOut() {
 <template>
   <!-- Container bleibt bestehen: TopBar ist ein 3-Spalten-Grid, sonst rutscht die Suche aus der Mitte. -->
   <div ref="container" class="relative ml-auto flex items-center gap-4">
+    <!-- Hell/Dunkel. Ein `switch` und keine zwei Knoepfe: es gibt genau zwei
+         Modi, und welcher gilt, steht am Griff (Sonne oder Mond). -->
+    <button
+      type="button"
+      role="switch"
+      class="theme-switch"
+      :aria-checked="isLight"
+      :aria-label="isLight ? 'Zum dunklen Modus wechseln' : 'Zum hellen Modus wechseln'"
+      :title="isLight ? 'Heller Modus' : 'Dunkler Modus'"
+      @click="toggleTheme"
+    >
+      <span class="theme-switch__thumb">
+        <Transition name="theme-icon">
+          <span :key="isLight ? 'sonne' : 'mond'" class="material-symbols-outlined">
+            {{ isLight ? "light_mode" : "dark_mode" }}
+          </span>
+        </Transition>
+      </span>
+    </button>
+
     <template v-if="SHOW_PLACEHOLDER_ACTIONS">
       <button class="relative items-center p-0 m-0 w-8 h-8 rounded-full nav-item">
         <span class="material-symbols-outlined text-lg nav-icon"> mail </span>
@@ -68,9 +90,7 @@ async function signOut() {
       :aria-label="`Konto von ${auth.user.value?.username}`"
       @click="open = !open"
     >
-      <div
-        class="flex h-8 w-8 items-center justify-center rounded-full grey-background light-grey-stroke text-xs font-semibold"
-      >
+      <div class="avatar flex h-8 w-8 items-center justify-center text-xs font-semibold">
         {{ initials }}
       </div>
     </button>
@@ -78,9 +98,9 @@ async function signOut() {
     <div
       v-if="open"
       role="menu"
-      class="absolute right-0 top-11 z-50 w-60 overflow-hidden rounded-xl border light-grey-background light-grey-stroke py-1 shadow-xl"
+      class="absolute right-0 top-11 z-50 w-60 overflow-hidden content-box py-1 shadow-xl"
     >
-      <div class="border-b light-grey-stroke px-4 py-3">
+      <div class="border-b border-hairline px-4 py-3">
         <p class="truncate text-sm font-medium">{{ auth.user.value?.username }}</p>
         <p class="text-xs text-zinc-500">
           {{ auth.isAdmin.value ? "Administrator" : "Benutzer" }}
@@ -114,7 +134,7 @@ async function signOut() {
       <button
         type="button"
         role="menuitem"
-        class="flex w-full items-center gap-2 border-t light-grey-stroke px-4 py-2 text-left text-sm nav-item"
+        class="flex w-full items-center gap-2 border-t border-hairline px-4 py-2 text-left text-sm nav-item"
         @click="signOut"
       >
         <span class="material-symbols-outlined text-base nav-icon">logout</span>

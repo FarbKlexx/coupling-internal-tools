@@ -414,10 +414,7 @@ function waiting(entry: MailEntry): string {
 
     <p v-if="isLoading && !board" class="text-sm light-grey-text">Versandliste wird geladen …</p>
 
-    <p
-      v-else-if="!board?.total"
-      class="rounded-xl border light-grey-background light-grey-stroke p-6 text-sm light-grey-text"
-    >
+    <p v-else-if="!board?.total" class="content-box p-6 text-sm light-grey-text">
       Noch keine Zusage. Sobald in der Telefonakquise jemand zusagt, eine E-Mail zu bekommen,
       erscheint der Betrieb hier.
     </p>
@@ -428,11 +425,7 @@ function waiting(entry: MailEntry): string {
 
     <!-- Die Zeilen -->
     <ul v-else class="space-y-2">
-      <li
-        v-for="entry in board.entries"
-        :key="entry.contact_id"
-        class="rounded-xl border light-grey-background light-grey-stroke p-4 space-y-3"
-      >
+      <li v-for="entry in board.entries" :key="entry.contact_id" class="content-box p-4 space-y-3">
         <div class="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
           <div class="min-w-0 space-y-1">
             <p class="flex flex-wrap items-baseline gap-2">
@@ -487,7 +480,7 @@ function waiting(entry: MailEntry): string {
               <a
                 v-if="entry.email"
                 :href="`mailto:${entry.email}`"
-                class="hover:text-white transition-colors"
+                class="hover:text-strong transition-colors"
               >
                 {{ entry.email }}
               </a>
@@ -636,7 +629,7 @@ function waiting(entry: MailEntry): string {
           </button>
           <button
             type="button"
-            class="rounded-md light-grey-background light-grey-stroke px-3 py-2 text-sm hover:text-white transition-colors"
+            class="rounded-md light-grey-background light-grey-stroke px-3 py-2 text-sm hover:text-strong transition-colors"
             :disabled="isSaving"
             @click="editing = null"
           >

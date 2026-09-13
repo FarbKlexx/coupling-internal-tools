@@ -19,6 +19,18 @@ function currentIndex() {
   });
 }
 
+/**
+ * Alles, was dieser Benutzer oeffnen darf, in der Reihenfolge der Routen —
+ * also derselben, in der auch die Navigation die Eintraege zeigt.
+ *
+ * Das ist die Liste, die die Palette ohne Suchbegriff anzeigt: ein leeres
+ * Feld hiess vorher „keine Treffer", obwohl niemand etwas gesucht hatte, und
+ * wer die Suche oeffnet, um zu sehen *was* es gibt, bekam ein leeres Fenster.
+ */
+export function allRoutes() {
+  return currentIndex();
+}
+
 export function searchRoutes(query: string) {
   if (!query.trim()) return [];
 

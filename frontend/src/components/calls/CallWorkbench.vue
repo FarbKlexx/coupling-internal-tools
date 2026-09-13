@@ -112,16 +112,16 @@ function answer(choice: OutcomeChoice) {
   <div class="space-y-4">
     <!-- Zähler -->
     <div v-if="counters" class="flex flex-wrap items-stretch gap-3">
-      <div class="rounded-xl border light-grey-background light-grey-stroke px-5 py-3 min-w-36">
+      <div class="content-box px-5 py-3 min-w-36">
         <p class="eyebrow">Noch anzurufen</p>
         <p class="text-3xl font-semibold leading-tight">{{ counters.offen }}</p>
       </div>
-      <div class="rounded-xl border light-grey-background light-grey-stroke px-4 py-3">
+      <div class="content-box px-4 py-3">
         <p class="eyebrow">Wiedervorlage</p>
         <p class="text-xl font-semibold leading-tight">{{ counters.wiedervorlage }}</p>
         <p v-if="nextDueAt" class="text-xs text-zinc-500">ab {{ formatClock(nextDueAt) }}</p>
       </div>
-      <div class="rounded-xl border light-grey-background light-grey-stroke px-4 py-3">
+      <div class="content-box px-4 py-3">
         <p class="eyebrow">Zusagen</p>
         <p class="text-xl font-semibold leading-tight text-emerald-400">
           {{ counters.zugesagt }}
@@ -130,31 +130,22 @@ function answer(choice: OutcomeChoice) {
           {{ counters.zugesagt_ohne_email }} ohne Adresse
         </p>
       </div>
-      <div class="rounded-xl border light-grey-background light-grey-stroke px-4 py-3">
+      <div class="content-box px-4 py-3">
         <p class="eyebrow">Abgelehnt</p>
         <p class="text-xl font-semibold leading-tight">{{ counters.abgelehnt }}</p>
       </div>
-      <div
-        v-if="counters.kein_bedarf"
-        class="rounded-xl border light-grey-background light-grey-stroke px-4 py-3"
-      >
+      <div v-if="counters.kein_bedarf" class="content-box px-4 py-3">
         <p class="eyebrow">Kein Bedarf</p>
         <p class="text-xl font-semibold leading-tight">{{ counters.kein_bedarf }}</p>
       </div>
-      <div
-        v-if="counters.ungueltig"
-        class="rounded-xl border light-grey-background light-grey-stroke px-4 py-3"
-      >
+      <div v-if="counters.ungueltig" class="content-box px-4 py-3">
         <p class="eyebrow">Nummer falsch</p>
         <p class="text-xl font-semibold leading-tight">{{ counters.ungueltig }}</p>
       </div>
     </div>
 
     <!-- Kein Kontakt: die Gründe auseinandergehalten -->
-    <div
-      v-if="!contact"
-      class="max-w-2xl rounded-xl border light-grey-background light-grey-stroke p-6 space-y-2"
-    >
+    <div v-if="!contact" class="max-w-2xl content-box p-6 space-y-2">
       <template v-if="!hasLists">
         <h2 class="text-lg font-semibold">Noch keine Anrufliste hinterlegt</h2>
         <p class="text-sm light-grey-text">
@@ -184,10 +175,7 @@ function answer(choice: OutcomeChoice) {
     </div>
 
     <!-- Der Kontakt -->
-    <div
-      v-else
-      class="max-w-3xl rounded-xl border light-grey-background light-grey-stroke p-6 space-y-5"
-    >
+    <div v-else class="max-w-3xl content-box p-6 space-y-5">
       <div class="flex flex-wrap items-start justify-between gap-3">
         <div class="space-y-1">
           <h2 class="text-2xl font-semibold leading-tight">{{ contact.betrieb }}</h2>
@@ -207,14 +195,12 @@ function answer(choice: OutcomeChoice) {
         v-if="revisit"
         class="rounded-md border px-4 py-3 space-y-1"
         :class="
-          revisit.callback
-            ? 'border-blue-500/40 bg-blue-500/10'
-            : 'border-amber-500/40 bg-amber-500/10'
+          revisit.callback ? 'border-info/40 bg-info/10' : 'border-amber-500/40 bg-amber-500/10'
         "
       >
         <p
           class="flex items-center gap-2 text-sm font-semibold"
-          :class="revisit.callback ? 'text-blue-300' : 'text-amber-300'"
+          :class="revisit.callback ? 'text-info' : 'text-amber-300'"
         >
           <span class="material-symbols-outlined text-[18px] leading-none">
             {{ revisit.icon }}
@@ -248,7 +234,7 @@ function answer(choice: OutcomeChoice) {
           :href="website.href"
           target="_blank"
           rel="noopener noreferrer"
-          class="flex items-center gap-1 text-sm light-grey-text hover:text-white transition-colors"
+          class="flex items-center gap-1 text-sm light-grey-text hover:text-strong transition-colors"
         >
           <span class="material-symbols-outlined nav-icon">open_in_new</span>
           Website ansehen
@@ -261,7 +247,7 @@ function answer(choice: OutcomeChoice) {
       <!-- Vorherige Versuche -->
       <div v-if="contact.history.length" class="space-y-1">
         <button
-          class="flex items-center gap-1 text-xs light-grey-text hover:text-white transition-colors"
+          class="flex items-center gap-1 text-xs light-grey-text hover:text-strong transition-colors"
           @click="history = !history"
         >
           <span class="material-symbols-outlined nav-icon">
@@ -297,7 +283,7 @@ function answer(choice: OutcomeChoice) {
       <!-- Alles, was in der CSV sonst noch stand -->
       <div v-if="contact.extras.length">
         <button
-          class="flex items-center gap-1 text-xs light-grey-text hover:text-white transition-colors"
+          class="flex items-center gap-1 text-xs light-grey-text hover:text-strong transition-colors"
           @click="details = !details"
         >
           <span class="material-symbols-outlined nav-icon">

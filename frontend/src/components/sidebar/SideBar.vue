@@ -1,7 +1,7 @@
 <template>
   <aside
     :class="[
-      'shrink-0 overflow-y-auto overflow-x-hidden light-grey-background grey-stroke gap-3 flex flex-col',
+      'shrink-0 overflow-y-auto overflow-x-hidden light-grey-background gap-3 flex flex-col',
       // Padding bleibt konstant - sonst springt der Inhalt beim Umschalten,
       // waehrend die Breite noch animiert.
       'p-3 transition-[width] duration-200 ease-out',

@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, nextTick } from "vue";
 import { useRouter } from "vue-router";
-import { searchRoutes } from "@/search/useRouteSearch";
-import type { FuseResult } from "fuse.js";
+import { allRoutes, searchRoutes } from "@/search/useRouteSearch";
 import type { RouteSearchItem } from "@/search/buildRouteSearchIndex";
 
 const emit = defineEmits<{
@@ -23,9 +22,20 @@ function focus() {
   });
 }
 
-const results = computed<FuseResult<RouteSearchItem>[]>(() => {
-  if (!query.value.trim()) return [];
-  return searchRoutes(query.value);
+/**
+ * Ohne Suchbegriff steht hier alles, was man oeffnen darf — in der
+ * Reihenfolge der Routen, nicht nach Treffergenauigkeit, denn ohne Begriff
+ * gibt es keine. Erst ein eingetippter Begriff laesst Fuse sortieren.
+ *
+ * `FuseResult` wird gleich hier ausgepackt, damit die Vorlage nur eine Form
+ * kennt und nicht zwei.
+ */
+const results = computed<RouteSearchItem[]>(() => {
+  const term = query.value.trim();
+
+  if (!term) return allRoutes();
+
+  return searchRoutes(term).map((treffer) => treffer.item);
 });
 
 function selectResult(item: RouteSearchItem) {
@@ -40,9 +50,7 @@ defineExpose({ focus });
 
 <template>
   <div class="w-2xl">
-    <div
-      class="flex items-center gap-3 rounded-xl border light-grey-stroke light-grey-background px-2 py-2"
-    >
+    <div class="search-field flex items-center gap-3 px-2 py-2">
       <span class="material-symbols-outlined nav-icon"> search </span>
 
       <input
@@ -60,26 +68,26 @@ defineExpose({ focus });
     <!-- Ergebnisse -->
     <div
       v-if="isOpen && results.length > 0"
-      class="absolute z-50 mt-2 w-full rounded-xl border light-grey-stroke light-grey-background overflow-hidden"
+      class="absolute z-50 mt-2 max-h-[60vh] w-full overflow-y-auto rounded-xl border light-grey-stroke light-grey-background"
     >
       <button
         v-for="result in results"
-        :key="result.item.id"
+        :key="result.id"
         type="button"
-        class="flex w-full items-center gap-3 px-4 py-2 text-left hover:bg-zinc-800/40"
-        @mousedown.prevent="selectResult(result.item)"
+        class="search-result flex w-full items-center gap-3 px-4 py-2 text-left"
+        @mousedown.prevent="selectResult(result)"
       >
         <!-- optional: Icon aus route.meta.icon -->
-        <span v-if="result.item.icon" class="material-symbols-outlined nav-icon">
-          {{ result.item.icon }}
+        <span v-if="result.icon" class="material-symbols-outlined nav-icon">
+          {{ result.icon }}
         </span>
 
         <div class="min-w-0">
           <div class="truncate text-sm font-medium grey-text">
-            {{ result.item.label }}
+            {{ result.label }}
           </div>
           <div class="truncate text-xs opacity-60 grey-text">
-            {{ result.item.path }}
+            {{ result.path }}
           </div>
         </div>
       </button>

@@ -7,9 +7,7 @@
     @click:outside="emit('close')"
     @keydown.esc="emit('close')"
   >
-    <div
-      class="w-[34rem] max-w-[90vw] rounded-xl border light-grey-background light-grey-stroke p-6 space-y-4"
-    >
+    <div class="w-[34rem] max-w-[90vw] content-box p-6 space-y-4">
       <div class="flex items-start justify-between gap-4">
         <div class="space-y-1">
           <h2 class="text-lg font-semibold">Kunden verwalten</h2>
@@ -18,7 +16,7 @@
             sichtbar, auf denen sie schon liegen.
           </p>
         </div>
-        <button type="button" class="grey-text" @click="emit('close')">
+        <button type="button" class="grey-text hover:text-strong" @click="emit('close')">
           <span class="material-symbols-outlined">close</span>
         </button>
       </div>
@@ -80,7 +78,7 @@
 
             <button
               type="button"
-              class="grey-text shrink-0 hover:text-white"
+              class="grey-text shrink-0 hover:text-strong"
               :title="label.archived ? 'Wieder aktivieren' : 'Archivieren'"
               @click="emit('update', label.id, { archived: !label.archived })"
             >
@@ -109,7 +107,7 @@
               :class="[
                 'label-swatch',
                 `label-${color}`,
-                color === label.color ? 'ring-2 ring-white' : 'opacity-60',
+                color === label.color ? 'ring-2 ring-strong' : 'opacity-60 hover:opacity-100',
               ]"
               @click="pickColor(label.id, color)"
             />

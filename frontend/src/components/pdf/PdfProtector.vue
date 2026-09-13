@@ -84,7 +84,7 @@ async function protect() {
 </script>
 
 <template>
-  <div class="max-w-2xl rounded-xl border light-grey-background light-grey-stroke p-6 space-y-5">
+  <div class="max-w-2xl content-box p-6 space-y-5">
     <div class="space-y-1">
       <h2 class="text-lg font-semibold">PDF mit Passwort sichern</h2>
       <p class="text-xs text-zinc-500">
@@ -154,7 +154,7 @@ async function protect() {
         />
         <button
           type="button"
-          class="absolute inset-y-0 right-0 flex items-center px-3 hover:text-white transition-colors"
+          class="absolute inset-y-0 right-0 flex items-center px-3 hover:text-strong transition-colors"
           :title="showPassword ? 'Passwort verbergen' : 'Passwort anzeigen'"
           @click="showPassword = !showPassword"
         >

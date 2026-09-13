@@ -92,7 +92,7 @@ function download() {
 </script>
 
 <template>
-  <div class="max-w-2xl rounded-xl border light-grey-background light-grey-stroke p-6 space-y-5">
+  <div class="max-w-2xl content-box p-6 space-y-5">
     <div class="space-y-1">
       <h2 class="text-lg font-semibold">QR-Code erstellen</h2>
       <p class="text-xs text-zinc-500">
@@ -194,12 +194,12 @@ function download() {
 <style scoped>
 /* Schachbrett, damit ein transparenter Hintergrund in der Vorschau sichtbar ist. */
 .checkerboard {
-  background-color: #2a2a2b;
+  background-color: var(--checker-bg);
   background-image:
-    linear-gradient(45deg, #1e1e1e 25%, transparent 25%),
-    linear-gradient(-45deg, #1e1e1e 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, #1e1e1e 75%),
-    linear-gradient(-45deg, transparent 75%, #1e1e1e 75%);
+    linear-gradient(45deg, var(--checker-fg) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--checker-fg) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--checker-fg) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--checker-fg) 75%);
   background-size: 16px 16px;
   background-position:
     0 0,

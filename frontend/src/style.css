@@ -2,9 +2,272 @@
 @import "tailwindcss/preflight";
 @import "tailwindcss/utilities";
 
-/* App-Defaults */
+/* --------------------------------------------------------------------------
+   Farben als Token
+   --------------------------------------------------------------------------
+
+   Jede Farbe der Anwendung steht hier einmal und wird darunter nur noch über
+   ihren Namen benutzt. Das ist die ganze Mechanik hinter dem Hellmodus: das
+   Stylesheet darunter ist für beide Modi dasselbe, es wechselt nur, was diese
+   Variablen bedeuten.
+
+   Umgeschaltet wird über `data-theme` am <html>-Element (siehe
+   `composables/useTheme.ts`); das Attribut wird bereits in `index.html` vor
+   dem ersten Bild gesetzt, sonst blitzt bei jedem Laden der jeweils andere
+   Modus auf.
+
+   Die Namen beschreiben die *Rolle*, nicht den Farbwert ("raised" ist die
+   Fläche, die über der Grundfläche liegt) — im Hellmodus ist sie heller als
+   im Dunkelmodus, und ein Name wie „light-grey" hätte dort das Gegenteil
+   behauptet. Die alten Klassennamen (`.grey-background`, …) bleiben, weil sie
+   an 25 Stellen im Markup stehen; ihre Werte kommen jetzt von hier. */
 :root {
   color-scheme: dark;
+
+  /* Zwei Maße, die zusammengehören: der Radius eines Kastens und der
+     Abstand, den der Hauptbereich um ihn herum lässt. Aus beiden errechnet
+     sich seine eigene Ecke (siehe `.content-area`), deshalb stehen sie als
+     Variablen hier und nicht als Tailwind-Klassen im Markup. */
+  --box-radius: 0.75rem;
+  --content-gap: 1rem;
+
+  /* Flächen, von hinten nach vorn. */
+  --surface-base: #1e1e1e;
+  --surface-raised: #252526;
+  --surface-column: #1a1a1b;
+  --surface-card: #252526;
+  --surface-hover: #2d2d30;
+
+  /* Rahmen, vom leisen bis zu „das hier ist anklickbar". */
+  --border-strong: #333333;
+  --border-stronger: #454545;
+  --border-interactive: #4b5563;
+
+  /* Schrift, von der Überschrift bis zur Nebensache. */
+  --text-strong: #ffffff;
+  --text-body: #ffffff;
+  --text-soft: #b9b9c7;
+  --text-muted: #9d9da8;
+  --text-faint: #a1a1aa;
+
+  --card-action-bg: #2d2d2e;
+  --card-action-border: #3a3a3a;
+
+  --switch-thumb-bg: #2d2d30;
+  --switch-thumb-fg: #ffffff;
+
+  --tooltip-bg: #252526;
+  --tooltip-border: #333333;
+  --tooltip-text: #ffffff;
+
+  /* Die Primärfarbe: gefüllte Hauptknöpfe, Fokus- und Auswahlrahmen, der
+     aktive Reiter. `--primary-line` ist die dunklere Stufe für Linien und für
+     `:hover` auf einer gefüllten Fläche — bei einem warmen Ton führt
+     Nachdunkeln zu mehr Kontrast, nicht zu weniger. */
+  --primary: #ee7203;
+  --primary-line: #cf6202;
+  --primary-text: #ff9c45;
+
+  /* Tonlagen. Die Flächen dieser Marker sind durchsichtige Anteile einer
+     gesättigten Farbe und tragen auf hellem wie dunklem Grund; nur die
+     Schrift muss die Seite wechseln. */
+  --tone-positive: #6ee7b7;
+  --tone-negative: #fca5a5;
+  --tone-scope: #fdba74;
+  --tone-dev: #c4b5fd;
+  --tone-built: #93c5fd;
+  --tone-missing: #fcd34d;
+
+  /* Kundenfarben des Kanban-Boards, siehe unten. */
+  --label-slate: #a1a1aa;
+  --label-blue: #60a5fa;
+  --label-teal: #2dd4bf;
+  --label-green: #4ade80;
+  --label-lime: #a3e635;
+  --label-amber: #fbbf24;
+  --label-orange: #fb923c;
+  --label-red: #f87171;
+  --label-pink: #f472b6;
+  --label-violet: #a78bfa;
+
+  /* Schachbrett hinter einem transparenten QR-Code. */
+  --checker-bg: #2a2a2b;
+  --checker-fg: #1e1e1e;
+
+  /* Das Logo ist eine SVG-Datei mit fest weißer Füllung. */
+  --logo-filter: none;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  /* Die Reihenfolge ist dieselbe wie im Dunkelmodus, nur andersherum hell:
+     die Seite ist die getönteste Fläche, alles, was darauf liegt — Kopfzeile,
+     Navigation, Karten, Kästen — ist weiß. Wäre es umgekehrt, läge das Weiß
+     hinten und die Boxen darauf wären grau, also genau die Staffelung, die
+     der Dunkelmodus nicht hat. */
+  --surface-base: #f2f2f5;
+  --surface-raised: #ffffff;
+  --surface-column: #eaeaef;
+  --surface-card: #ffffff;
+  --surface-hover: #ebebf0;
+
+  --border-strong: #dcdce2;
+  --border-stronger: #c3c3cc;
+  --border-interactive: #a1a1aa;
+
+  --text-strong: #18181b;
+  --text-body: #27272a;
+  --text-soft: #52525b;
+  --text-muted: #63636d;
+  --text-faint: #71717a;
+
+  --card-action-bg: #f3f3f6;
+  --card-action-border: #dcdce2;
+
+  --switch-thumb-bg: #3f3f46;
+  --switch-thumb-fg: #ffffff;
+
+  /* Der Hinweis an der eingeklappten Navigation bleibt dunkel: er liegt über
+     dem Inhalt und soll sich von ihm absetzen, nicht in ihm verschwinden. */
+  --tooltip-bg: #27272a;
+  --tooltip-border: #27272a;
+  --tooltip-text: #ffffff;
+
+  --tone-positive: #047857;
+  --tone-negative: #b91c1c;
+  --tone-scope: #c2410c;
+  --tone-dev: #6d28d9;
+  --tone-built: #1d4ed8;
+  --tone-missing: #b45309;
+
+  --label-slate: #52525b;
+  --label-blue: #1d4ed8;
+  --label-teal: #0f766e;
+  --label-green: #15803d;
+  --label-lime: #4d7c0f;
+  --label-amber: #b45309;
+  --label-orange: #c2410c;
+  --label-red: #b91c1c;
+  --label-pink: #be185d;
+  --label-violet: #6d28d9;
+
+  /* Auf hellem Grund trägt das Orange als Schrift nicht — dafür die dunklere
+     Stufe. Fläche und Linie bleiben in beiden Modi gleich. */
+  --primary-text: #b35400;
+
+  --checker-bg: #ffffff;
+  --checker-fg: #e4e4e7;
+
+  --logo-filter: invert(1);
+
+  /* ------------------------------------------------------------------------
+     Die Tailwind-Palette für den Hellmodus
+
+     Tailwind v4 übersetzt `text-amber-400` zu `color: var(--color-amber-400)`,
+     und diese Variablen stehen auf `:root` — auf demselben Element wie
+     `data-theme`. Sie lassen sich hier also umdefinieren, und das ist die
+     einzige Art, die rund 250 Stellen im Markup zu drehen, ohne sie
+     anzufassen.
+
+     Gedreht wird nur, was im Dunkelmodus *für* den dunklen Grund gewählt
+     wurde: helle Töne (200–400) sind dort Schrift und werden hier zur
+     dunklen Entsprechung, dunkle Töne (700–900) sind dort Rahmen und Flächen
+     und werden hier zur hellen. Die Mitte (500/600) bleibt stehen: das sind
+     die gesättigten Knöpfe und Rahmen, die in beiden Modi dieselbe Farbe
+     haben müssen — ein blauer Hauptknopf ist in beiden Modi blau.
+
+     Zinc ist die Ausnahme von der Symmetrie: `text-zinc-500` steht an über
+     hundert Stellen als „Nebentext" und trägt auf beiden Gründen, deshalb
+     bleibt es fast, wo es ist. */
+  --color-zinc-300: #3f3f46;
+  --color-zinc-400: #52525b;
+  --color-zinc-500: #6b6b75;
+  --color-zinc-600: #8f8f99;
+  --color-zinc-700: #d4d4d8;
+  --color-zinc-800: #e4e4e7;
+
+  --color-red-200: #991b1b;
+  --color-red-300: #b91c1c;
+  --color-red-400: #dc2626;
+  --color-red-700: #fca5a5;
+  --color-red-800: #fecaca;
+  --color-red-900: #fee2e2;
+
+  --color-amber-200: #92400e;
+  --color-amber-300: #b45309;
+  --color-amber-400: #d97706;
+  --color-amber-700: #fcd34d;
+  --color-amber-800: #fde68a;
+  --color-amber-900: #fef3c7;
+
+  --color-emerald-200: #065f46;
+  --color-emerald-300: #047857;
+  --color-emerald-400: #059669;
+  --color-emerald-700: #6ee7b7;
+  --color-emerald-800: #a7f3d0;
+  --color-emerald-900: #d1fae5;
+
+  --color-blue-300: #1d4ed8;
+  --color-blue-400: #2563eb;
+
+  --color-violet-300: #6d28d9;
+  --color-orange-300: #c2410c;
+}
+
+/* Zwei eigene Farben in Tailwinds Palette, damit `hover:text-strong` und
+   `divide-hairline` als Utility-Klassen verfügbar sind. Sie ersetzen
+   `hover:text-white` und `divide-white/5` im Markup — Weiß ist im Hellmodus
+   kein Text und keine Trennlinie mehr, sondern der Hintergrund. */
+@theme {
+  --color-strong: var(--text-strong);
+  --color-hairline: var(--border-strong);
+
+  /* Blau, das *informiert* statt zu handeln: „Mail verschickt",
+     „Richtigstellung", der vereinbarte Rückruf. Es bleibt blau, auch seit die
+     Primärfarbe orange ist — sonst stünde es neben Bernstein („noch zu tun")
+     und dem Umfangsmarker in derselben Farbfamilie. */
+  --color-info: var(--tone-built);
+
+  /* Die Primärfarbe als *Schrift* — also die Stufe, die auf dem Untergrund
+     des jeweiligen Modus lesbar ist, nicht die der gefüllten Fläche. */
+  --color-primary: var(--primary-text);
+}
+
+/* --------------------------------------------------------------------------
+   Die Primärfarbe im Markup
+
+   `bg-blue-600` und `border-blue-500` stehen an rund hundert Stellen und
+   meinen dort überall dasselbe: den Hauptknopf, den Fokusrahmen, die
+   getroffene Auswahl. Statt sie alle anzufassen, zeigen die beiden
+   Tailwind-Stufen hier auf die Primärfarbe — dieselbe Mechanik wie beim
+   Hellmodus eine Etage höher, nur ohne Moduswechsel: sie gilt in beiden.
+
+   Die Stufen sind damit nicht mehr heller/dunkler nach Tailwind-Logik
+   sortiert, sondern nach Rolle: 600 ist die Fläche, 500 die Linie und das
+   Nachdunkeln beim Zeigen. Die helleren Stufen (`blue-300`, `blue-400`)
+   bleiben unangetastet — die sind Schrift und meinen die Information, nicht
+   die Handlung. */
+:root {
+  --color-blue-600: var(--primary);
+  --color-blue-500: var(--primary-line);
+}
+
+/* Waehrend umgeschaltet wird, bewegt sich nichts — ausser dem Schalter.
+
+   Die Klasse setzt `useTheme` fuer zwei Frames. Ohne sie faehrt beim Wechsel
+   jedes Element mit einem Uebergang gleichzeitig von seiner alten in seine
+   neue Farbe — das sieht nicht aus wie ein Wechsel, sondern wie ein Flackern,
+   am deutlichsten in der Navigation, wo jeder Eintrag einen hat.
+
+   Der Umschalter ist ausgenommen, und zwar samt Inhalt: er ist das eine
+   Element, dessen Bewegung *die Aussage* ist — der Griff faehrt herueber, das
+   Zeichen dreht sich. Ohne die Ausnahme legt die Regel auch ihn stumm, und
+   der Schalter springt. */
+:root.theme-switching *:not(.theme-switch, .theme-switch *),
+:root.theme-switching *:not(.theme-switch, .theme-switch *)::before,
+:root.theme-switching *:not(.theme-switch, .theme-switch *)::after {
+  transition: none !important;
 }
 
 html,
@@ -15,8 +278,8 @@ body {
 
 body {
   margin: 0;
-  background: #1e1e1e;
-  color: #ffffff;
+  background: var(--surface-base);
+  color: var(--text-body);
   font-family:
     ui-sans-serif,
     system-ui,
@@ -33,49 +296,105 @@ a {
 }
 
 .grey-background {
-  background: #1e1e1e;
-}
-
-.grey-stroke {
-  border: 1px solid #252526;
+  background: var(--surface-base);
 }
 
 .light-grey-background {
-  background: #252526;
+  background: var(--surface-raised);
 }
 
 .light-grey-stroke {
-  border: 1px solid #333333;
+  border: 1px solid var(--border-strong);
+}
+
+/* Ein Kasten mit Inhalt: die Kachel einer Zahl, das Formular eines Werkzeugs,
+   eine Zeile im Mailversand, ein Dialog.
+
+   Bewusst **ohne Kontur**. Der Kasten hebt sich durch seine Fläche von der
+   Seite ab (siehe die Staffelung im Token-Block), und ein Rahmen obendrauf
+   zeichnet ihn nach, statt ihn abzusetzen — im Hellmodus fällt das am
+   deutlichsten auf, weil eine graue Linie um Weiß auf Off-White wie ein
+   Umriss aussieht. Wo ein Rahmen etwas *sagt*, bleibt er: Eingabefelder
+   (`light-grey-stroke` an einem `rounded-md`) zeigen damit, dass man
+   hineinschreiben kann, ein bernsteinfarbener Rahmen warnt, und die Karten
+   des Kanban-Boards tragen ihre Kontur weiter, weil sie dort zwischen zwei
+   fast gleich hellen Flächen liegen und den Rahmen auch für den Hover
+   brauchen.
+
+   Der Radius steht mit hier drin, damit „Kasten" eine Entscheidung ist und
+   nicht drei Klassen, die man sich merken muss. */
+.content-box {
+  background: var(--surface-raised);
+  border-radius: var(--box-radius);
+}
+
+/* Der Hauptbereich. Seine obere linke Ecke stößt an Navigation und Kopfzeile
+   und ist deshalb die einzige, die man sieht.
+
+   Ihr Radius ist gerechnet, nicht gewählt: zwei Ecken, die ineinander liegen,
+   wirken nur dann konzentrisch, wenn die äußere um genau den Abstand größer
+   ist als die innere. Der Abstand ist hier das Innenmaß des Hauptbereichs,
+   die innere Ecke die eines Kastens — also `--content-gap + --box-radius`.
+   Vorher stand dort `rounded-xl`, derselbe Wert wie am Kasten selbst, und die
+   beiden Rundungen liefen sichtbar auseinander.
+
+   Padding steht mit hier drin, weil es in die Rechnung eingeht: als Klasse im
+   Markup könnte es sich ändern, ohne dass die Ecke es merkt. */
+.content-area {
+  padding: var(--content-gap);
+  border-top-left-radius: calc(var(--content-gap) + var(--box-radius));
+}
+
+/* Das Logo liegt als SVG mit fest weißer Füllung in `public/`. Im Hellmodus
+   wäre es unsichtbar; invertiert wird aus dem reinen Weiß reines Schwarz. */
+.brand-logo {
+  filter: var(--logo-filter);
+}
+
+/* Gefüllte Knöpfe in einer Signalfarbe behalten in beiden Modi weiße Schrift:
+   ihre Fläche wechselt die Seite nicht (siehe Palette oben), die geerbte
+   Textfarbe aber schon — ein blauer Knopf mit dunkler Schrift wäre die
+   Nebenwirkung. Als Attributselektor, weil dieselbe Klasse mal einzeln und
+   mal in einer `:class`-Liste steht. */
+[class~="bg-blue-600"],
+[class~="bg-red-600"],
+[class~="bg-red-600/90"],
+[class~="bg-red-600/80"] {
+  color: #ffffff;
 }
 
 .nav-icon {
   font-size: 20px;
-  color: #9d9da8;
+  color: var(--text-muted);
 }
 
+/* Eine Zeile in einem Menue. Sie liegt auf dessen Flaeche und hat keine
+   eigene: fruher trug sie `--surface-base`, also die Farbe der *Seite*, was
+   im Dunkelmodus zufaellig funktionierte (dort ist die Seite dunkler als das
+   Menue) und im Hellmodus als grauer Block auf weissem Menue endete — mit
+   dem Hover als weissem Kasten mit Rahmen, also genau andersherum. */
 .nav-item {
-  background: #1e1e1e;
-  border: 1px solid #1e1e1e;
+  background: transparent;
+  transition: background 0.15s;
 }
 
 .nav-icon--active {
   font-size: 20px;
-  color: #ffffff;
+  color: var(--text-strong);
 }
 
 .nav-item:hover {
-  background: #252526;
-  border: 1px solid #333333;
+  background: var(--surface-hover);
 }
 
 .grey-text {
   font-size: 14px;
-  color: #9d9da8;
+  color: var(--text-muted);
 }
 
 .light-grey-text {
   font-size: 14px;
-  color: #b9b9c7;
+  color: var(--text-soft);
 }
 
 .eyebrow {
@@ -85,7 +404,7 @@ a {
 
 .white-text {
   font-size: 14px;
-  color: #ffffff;
+  color: var(--text-strong);
 }
 
 .outfit-regular {
@@ -121,42 +440,42 @@ a {
 }
 
 .sidebar-item {
-  background: #252526;
-  border: 1px solid #252526;
+  background: var(--surface-raised);
+  border: 1px solid var(--surface-raised);
 }
 
 .sidebar-item:hover {
-  background: #252526;
-  border: 1px solid #333333;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
 }
 
 .sidebar-item--active {
-  background: #1e1e1e;
-  border: 1px solid #333333;
+  background: var(--surface-base);
+  border: 1px solid var(--border-strong);
 }
 
 /* Trennt die Gruppen der Sidebar und den Fussbereich ab. Eine Klasse statt
    zweier Tailwind-Arbitraries, damit die Farbe an einer Stelle steht. */
 .sidebar-rule {
-  border-top: 1px solid #333333;
+  border-top: 1px solid var(--border-strong);
 }
 
 /* Ueberschrift einer Sidebar-Gruppe. Bewusst ohne die Rahmen eines
    Nav-Eintrags: sie ist keine Zielseite, sondern nur ein Schalter. */
 .sidebar-group:hover .grey-text,
 .sidebar-group:hover .nav-icon {
-  color: #ffffff;
+  color: var(--text-strong);
 }
 
 /* Icon-Button in der Topbar (Burger). Gleiche Optik wie ein Nav-Eintrag,
    aber ohne dessen Semantik. */
 .icon-button {
-  background: #252526;
-  border: 1px solid #252526;
+  background: var(--surface-raised);
+  border: 1px solid var(--surface-raised);
 }
 
 .icon-button:hover {
-  border: 1px solid #333333;
+  border: 1px solid var(--border-strong);
 }
 
 /* Beschriftung der eingeklappten Navigation. Wird per Teleport an <body>
@@ -167,12 +486,194 @@ a {
   transform: translateY(-50%);
   padding: 4px 8px;
   border-radius: 6px;
-  background: #252526;
-  border: 1px solid #333333;
-  color: #ffffff;
+  background: var(--tooltip-bg);
+  border: 1px solid var(--tooltip-border);
+  color: var(--tooltip-text);
   font-size: 14px;
   white-space: nowrap;
   pointer-events: none;
+}
+
+/* --------------------------------------------------------------------------
+   Hell/Dunkel-Umschalter
+   --------------------------------------------------------------------------
+
+   Sitzt in der Topbar links neben dem Profil. Ein einzelner Schalter und
+   keine zwei Knöpfe: es gibt genau zwei Modi, und welcher gilt, steht am
+   Griff selbst (Sonne oder Mond). */
+.theme-switch {
+  position: relative;
+  width: 52px;
+  height: 28px;
+  flex: none;
+  border-radius: 999px;
+  background: var(--surface-base);
+  border: 1px solid var(--border-strong);
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+}
+
+.theme-switch:hover {
+  border-color: var(--border-interactive);
+}
+
+/* Der Griff ist die einzige Stelle im Schalter, die etwas aussagt — deshalb
+   hebt er sich in beiden Modi deutlich von der Schiene ab, und zwar in die
+   Richtung, in der dort noch Kontrast übrig ist: im Dunkelmodus heller als
+   sie, im Hellmodus dunkler. An `--surface-hover` zu hängen ging nicht: im
+   Hellmodus ist das fast die Farbe der Schiene selbst, und der Schalter sah
+   aus wie ein weißer Fleck auf einer weißen Leiste. */
+.theme-switch__thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--switch-thumb-bg);
+  color: var(--switch-thumb-fg);
+  transition: transform 0.18s ease;
+}
+
+.theme-switch[aria-checked="true"] .theme-switch__thumb {
+  transform: translateX(22px);
+}
+
+.theme-switch__thumb .material-symbols-outlined {
+  font-size: 14px;
+  /* Beide Zeichen liegen waehrend des Wechsels uebereinander, sonst schoebe
+     das eine das andere aus dem Griff. */
+  grid-area: 1 / 1;
+}
+
+/* Sonne und Mond tauschen sich drehend aus, in der Richtung, in die auch der
+   Griff faehrt. */
+.theme-icon-enter-active,
+.theme-icon-leave-active {
+  transition:
+    opacity 0.16s ease,
+    transform 0.16s ease;
+}
+
+.theme-icon-enter-from {
+  opacity: 0;
+  transform: rotate(-90deg) scale(0.5);
+}
+
+.theme-icon-leave-to {
+  opacity: 0;
+  transform: rotate(90deg) scale(0.5);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .theme-switch__thumb,
+  .theme-icon-enter-active,
+  .theme-icon-leave-active {
+    transition: none;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Suche und Profil
+   -------------------------------------------------------------------------- */
+
+/* Das Suchfeld — der Platzhalter in der Kopfzeile und das echte Feld in der
+   Palette sehen gleich aus, weil das eine beim Klick zum anderen wird. */
+.search-field {
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--box-radius);
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+}
+
+.search-field:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-interactive);
+}
+
+/* Ein aufklappbarer Abschnitt („Listen verwalten", „Blacklist"): die ganze
+   Zeile ist der Schalter, also hebt sich auch die ganze Zeile ab. Ueber die
+   Flaeche und nicht ueber die Schrift, weil `--text-body` und `--text-strong`
+   im Dunkelmodus beide Weiss sind — ein Aufhellen waere dort unsichtbar. */
+.disclosure {
+  border-radius: var(--box-radius);
+  transition: background 0.15s;
+}
+
+.disclosure:hover {
+  background: var(--surface-hover);
+}
+
+/* Ein Farbpunkt des Boards. Beim Zeigen etwas heller — ein Ring waere hier
+   der gewaehlten Farbe vorbehalten. */
+.label-swatch {
+  transition:
+    opacity 0.15s,
+    filter 0.15s;
+}
+
+button.label-swatch:hover {
+  filter: brightness(1.15);
+}
+
+/* Eine Zeile in der Trefferliste. */
+.search-result {
+  transition: background 0.15s;
+}
+
+.search-result:hover {
+  background: var(--surface-hover);
+}
+
+/* Der Kreis mit den Initialen. Er ist nicht selbst der Knopf, sondern sitzt
+   darin — deshalb hoert er auf dessen Hover, und auf sein `aria-expanded`:
+   solange das Menue offen ist, bleibt er angefasst. */
+.avatar {
+  background: var(--surface-base);
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+}
+
+button:hover > .avatar,
+button[aria-expanded="true"] > .avatar {
+  background: var(--surface-hover);
+  border-color: var(--border-interactive);
+}
+
+/* Die Palette faehrt ein und wieder aus, statt zu erscheinen und zu
+   verschwinden: sie kommt aus der Kopfzeile, und die kurze Bewegung sagt,
+   woher — in beide Richtungen, sonst klappt das Fenster beim Schliessen weg.
+
+   Uebergangsklassen und keine Keyframes, denn eine Animation laeuft nur beim
+   Einhaengen. Gesetzt werden sie von Vuetify (`transition="search-palette"`
+   am Overlay), das den Inhalt beim Schliessen erst danach wegnimmt. */
+.search-palette-enter-active,
+.search-palette-leave-active {
+  transition:
+    opacity 0.16s ease-out,
+    transform 0.16s ease-out;
+}
+
+.search-palette-enter-from,
+.search-palette-leave-to {
+  opacity: 0;
+  transform: translateY(-8px) scale(0.985);
+}
+
+/* Wer Bewegung abgestellt hat, bekommt keine. */
+@media (prefers-reduced-motion: reduce) {
+  .search-palette-enter-active,
+  .search-palette-leave-active {
+    transition: none;
+  }
 }
 
 /* --------------------------------------------------------------------------
@@ -204,6 +705,27 @@ label:has(> input[type="radio"]) {
   cursor: pointer;
 }
 
+/* Und es soll sich auch anfassen lassen: ein umrandeter Knopf hebt sich beim
+   Zeigen ab. Zentral aus demselben Grund wie die Zeiger oben — sonst fehlt die
+   Rueckmeldung genau an den Knoepfen, an die niemand mehr denkt (die
+   Filterknoepfe des Boards, „Passwort zuruecksetzen", der Abbrechen-Knopf im
+   Kartendialog).
+
+   Ueber die Flaeche und nicht ueber den Rahmen, damit die wenigen Knoepfe, die
+   beim Zeigen absichtlich blau werden (`hover:border-blue-500`), das weiter
+   tun. */
+button:not(:disabled).light-grey-stroke,
+label:has(> input[type="checkbox"]).light-grey-stroke,
+label:has(> input[type="radio"]).light-grey-stroke {
+  transition: background 0.15s;
+}
+
+button:not(:disabled).light-grey-stroke:hover,
+label:has(> input[type="checkbox"]).light-grey-stroke:hover,
+label:has(> input[type="radio"]).light-grey-stroke:hover {
+  background: var(--surface-hover);
+}
+
 /* Deaktiviert heißt: nicht anklickbar – und soll auch so aussehen. */
 button:disabled,
 select:disabled,
@@ -219,37 +741,37 @@ textarea:disabled {
 /* Label-Farben.
    Die Slugs müssen zu `LabelColor` in backend/app/schemas/kanban.py und zu
    LABEL_COLORS in src/api/kanban.api.ts passen – eine elfte Farbe braucht
-   einen Eintrag an allen drei Stellen. Die Werte sind hell genug für den
-   dunklen Untergrund (#252526) gewählt. */
+   einen Eintrag an allen drei Stellen. Die Werte stehen oben im Token-Block,
+   je Modus einmal: der dunkle braucht helle Farben, der helle dunkle. */
 .label-slate {
-  --label-color: #a1a1aa;
+  --label-color: var(--label-slate);
 }
 .label-blue {
-  --label-color: #60a5fa;
+  --label-color: var(--label-blue);
 }
 .label-teal {
-  --label-color: #2dd4bf;
+  --label-color: var(--label-teal);
 }
 .label-green {
-  --label-color: #4ade80;
+  --label-color: var(--label-green);
 }
 .label-lime {
-  --label-color: #a3e635;
+  --label-color: var(--label-lime);
 }
 .label-amber {
-  --label-color: #fbbf24;
+  --label-color: var(--label-amber);
 }
 .label-orange {
-  --label-color: #fb923c;
+  --label-color: var(--label-orange);
 }
 .label-red {
-  --label-color: #f87171;
+  --label-color: var(--label-red);
 }
 .label-pink {
-  --label-color: #f472b6;
+  --label-color: var(--label-pink);
 }
 .label-violet {
-  --label-color: #a78bfa;
+  --label-color: var(--label-violet);
 }
 
 .label-chip {
@@ -281,31 +803,38 @@ textarea:disabled {
   background: var(--label-color);
 }
 
+/* Auch hier keine Kontur (siehe `.content-box`), aber die Staffelung muss
+   zwei Ebenen tragen statt einer: die Spalte ist deshalb die *vertiefte*
+   Ablage — im Dunkelmodus dunkler, im Hellmodus stärker getönt als die Seite
+   —, und die Karte darin liegt obenauf. Das ist dieselbe Aussage, die vorher
+   der Rahmen gemacht hat, nur mit der Fläche. */
 .kanban-column {
-  background: #212122;
-  border: 1px solid #333333;
+  background: var(--surface-column);
 }
 
+/* Der Rahmen der Karte ist da, aber unsichtbar: er hält den Platz, damit die
+   Karte beim Zeigen nicht um zwei Pixel wächst — und er ist das Einzige, was
+   die Karte als anfassbar ausweist. */
 .kanban-card {
-  background: #252526;
-  border: 1px solid #333333;
+  background: var(--surface-card);
+  border: 1px solid transparent;
 }
 
 .kanban-card:hover {
-  border-color: #454545;
+  border-color: var(--border-stronger);
 }
 
-/* Weiter-Button auf einer Karte. Etwas heller als die Karte selbst, damit er
-   sich abhebt, ohne wie ein Label auszusehen. */
+/* Weiter-Button auf einer Karte. Etwas abgesetzt von der Karte selbst, damit
+   er sich abhebt, ohne wie ein Label auszusehen. */
 .card-action {
-  background: #2d2d2e;
-  border: 1px solid #3a3a3a;
-  color: #b9b9c7;
+  background: var(--card-action-bg);
+  border: 1px solid var(--card-action-border);
+  color: var(--text-soft);
 }
 
 .card-action:hover:not(:disabled) {
-  background: #333333;
-  color: #ffffff;
+  background: var(--surface-hover);
+  color: var(--text-strong);
 }
 
 .card-action:disabled {
@@ -315,8 +844,9 @@ textarea:disabled {
 /* Platzhalter, den sortablejs an der Einfügestelle einblendet. */
 .kanban-ghost {
   opacity: 0.4;
-  background: #1e1e1e;
+  background: var(--surface-base);
   border-style: dashed;
+  border-color: var(--border-stronger);
 }
 
 .kanban-drag {
@@ -336,8 +866,8 @@ textarea:disabled {
   gap: 0.5rem;
   padding: 0.625rem 0.75rem;
   border-radius: 0.375rem;
-  background: #1e1e1e;
-  border: 1px solid #333333;
+  background: var(--surface-base);
+  border: 1px solid var(--border-strong);
   font-size: 0.875rem;
   transition:
     background 0.15s,
@@ -345,8 +875,8 @@ textarea:disabled {
 }
 
 .outcome:hover:not(:disabled) {
-  border-color: #4b5563;
-  background: #252526;
+  border-color: var(--border-interactive);
+  background: var(--surface-raised);
 }
 
 .outcome:disabled {
@@ -356,7 +886,7 @@ textarea:disabled {
 /* Die Zusage ist das Ziel des Anrufs und darf danach aussehen. */
 .outcome--positive {
   border-color: rgba(16, 185, 129, 0.4);
-  color: #6ee7b7;
+  color: var(--tone-positive);
 }
 
 .outcome--positive:hover:not(:disabled) {
@@ -367,7 +897,7 @@ textarea:disabled {
 /* Der Widerspruch ist endgültig — ein Fehlklick kostet hier am meisten. */
 .outcome--negative {
   border-color: rgba(239, 68, 68, 0.4);
-  color: #fca5a5;
+  color: var(--tone-negative);
 }
 
 .outcome--negative:hover:not(:disabled) {
@@ -375,10 +905,11 @@ textarea:disabled {
   background: rgba(239, 68, 68, 0.1);
 }
 
-/* Angeklickt, wartet noch auf einen Zeitpunkt. */
+/* Angeklickt, wartet noch auf einen Zeitpunkt — eine getroffene Auswahl,
+   also die Primärfarbe. */
 .outcome--armed {
-  border-color: #3b82f6;
-  background: rgba(59, 130, 246, 0.1);
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 10%, transparent);
 }
 
 /* Kleine Schaltfläche für Nebensachen: Zeitspannen, Umbenennen, Ausgaben. */
@@ -388,8 +919,8 @@ textarea:disabled {
   gap: 0.25rem;
   padding: 0.375rem 0.75rem;
   border-radius: 9999px;
-  background: #252526;
-  border: 1px solid #333333;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
   font-size: 0.75rem;
   transition:
     background 0.15s,
@@ -397,8 +928,8 @@ textarea:disabled {
 }
 
 .chip:hover:not(:disabled) {
-  border-color: #4b5563;
-  background: #2d2d30;
+  border-color: var(--border-interactive);
+  background: var(--surface-hover);
 }
 
 .chip:disabled {
@@ -407,7 +938,7 @@ textarea:disabled {
 
 .chip--danger {
   border-color: rgba(239, 68, 68, 0.5);
-  color: #fca5a5;
+  color: var(--tone-negative);
 }
 
 /* Die Bau-Einschätzung im Mailversand: gesetzter Marker bzw. aktiver Filter.
@@ -423,7 +954,7 @@ textarea:disabled {
 .chip--ready {
   border-color: rgba(16, 185, 129, 0.5);
   background: rgba(16, 185, 129, 0.1);
-  color: #6ee7b7;
+  color: var(--tone-positive);
 }
 
 .chip--ready:hover:not(:disabled) {
@@ -439,7 +970,7 @@ textarea:disabled {
 .chip--scope {
   border-color: rgba(249, 115, 22, 0.5);
   background: rgba(249, 115, 22, 0.1);
-  color: #fdba74;
+  color: var(--tone-scope);
 }
 
 .chip--scope:hover:not(:disabled) {
@@ -450,7 +981,7 @@ textarea:disabled {
 .chip--dev {
   border-color: rgba(139, 92, 246, 0.5);
   background: rgba(139, 92, 246, 0.1);
-  color: #c4b5fd;
+  color: var(--tone-dev);
 }
 
 .chip--dev:hover:not(:disabled) {
@@ -461,7 +992,7 @@ textarea:disabled {
 .chip--built {
   border-color: rgba(59, 130, 246, 0.5);
   background: rgba(59, 130, 246, 0.1);
-  color: #93c5fd;
+  color: var(--tone-built);
 }
 
 .chip--built:hover:not(:disabled) {
@@ -472,7 +1003,7 @@ textarea:disabled {
 .chip--missing {
   border-color: rgba(245, 158, 11, 0.5);
   background: rgba(245, 158, 11, 0.1);
-  color: #fcd34d;
+  color: var(--tone-missing);
 }
 
 .chip--missing:hover:not(:disabled) {
@@ -483,9 +1014,9 @@ textarea:disabled {
 /* Der Filter „noch nicht eingeschätzt", aktiv: keine eigene Farbe, denn er
    sagt nichts über eine Website — nur, dass niemand hingesehen hat. */
 .chip--on {
-  border-color: #4b5563;
-  background: #2d2d30;
-  color: #fafafa;
+  border-color: var(--border-interactive);
+  background: var(--surface-hover);
+  color: var(--text-strong);
 }
 
 /* --------------------------------------------------------------------------
@@ -510,7 +1041,7 @@ textarea:disabled {
   border-bottom: 2px solid transparent;
   margin-bottom: -1px;
   font-size: 0.8125rem;
-  color: #a1a1aa;
+  color: var(--text-faint);
   white-space: nowrap;
   transition:
     color 0.15s,
@@ -518,12 +1049,12 @@ textarea:disabled {
 }
 
 .tab:hover:not(:disabled) {
-  color: #fafafa;
+  color: var(--text-strong);
 }
 
 .tab--active {
-  color: #fafafa;
-  border-bottom-color: #3b82f6;
+  color: var(--text-strong);
+  border-bottom-color: var(--primary);
   font-weight: 500;
 }
 
@@ -534,13 +1065,13 @@ textarea:disabled {
 /* Die Anzahl hinter der Beschriftung. */
 .tab-count {
   border-radius: 9999px;
-  background: #2d2d30;
+  background: var(--surface-hover);
   padding: 0.0625rem 0.4375rem;
   font-size: 0.6875rem;
   font-variant-numeric: tabular-nums;
 }
 
 .tab--active .tab-count {
-  background: rgba(59, 130, 246, 0.2);
-  color: #93c5fd;
+  background: color-mix(in srgb, var(--primary) 18%, transparent);
+  color: var(--primary-text);
 }

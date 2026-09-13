@@ -36,7 +36,7 @@
       <!-- min-w-0: ohne das kann <main> nicht schmaler werden als sein
            Inhalt, und eine breite Seite (Kanban-Board) schiebt Sidebar und
            Topbar aus dem Bild statt selbst zu scrollen. -->
-      <main class="min-w-0 flex-1 overflow-y-auto rounded-tl-xl grey-background p-6">
+      <main class="min-w-0 flex-1 overflow-y-auto content-area grey-background">
         <RouterView />
       </main>
     </div>

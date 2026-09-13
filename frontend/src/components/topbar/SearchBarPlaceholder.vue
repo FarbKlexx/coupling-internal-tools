@@ -17,9 +17,7 @@ function openSearch() {
 
 <template>
   <div class="relative w-sm mx-auto">
-    <div
-      class="flex items-center gap-3 rounded-xl border light-grey-stroke light-grey-background px-2 py-2"
-    >
+    <div class="search-field flex items-center gap-3 px-2 py-2">
       <span class="material-symbols-outlined nav-icon"> search </span>
 
       <input
@@ -31,7 +29,15 @@ function openSearch() {
       />
     </div>
   </div>
-  <v-overlay v-model="overlay" class="mt-40 flex justify-center content-center">
+  <!-- `transition` statt einer Animation in der Palette selbst: eine
+       Animation laeuft nur beim Einhaengen, das Zumachen saehe man nicht.
+       Vuetify haengt die Uebergangsklassen an seinen Inhalt, definiert
+       sind sie in `style.css`. -->
+  <v-overlay
+    v-model="overlay"
+    transition="search-palette"
+    class="mt-40 flex justify-center content-center"
+  >
     <SearchBar @close="overlay = false" ref="searchBarRef"></SearchBar>
   </v-overlay>
 </template>

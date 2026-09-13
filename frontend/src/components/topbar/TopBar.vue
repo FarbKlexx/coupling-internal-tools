@@ -1,5 +1,5 @@
 <template>
-  <header class="sticky top-0 z-40 w-full grey-stroke light-grey-background backdrop-blur">
+  <header class="sticky top-0 z-40 w-full light-grey-background backdrop-blur">
     <div class="mx-4 grid grid-cols-3 items-center h-15">
       <!-- Burger + Logo -->
       <div class="flex items-center gap-3">
@@ -12,7 +12,7 @@
           <span class="material-symbols-outlined nav-icon--active">menu</span>
         </button>
 
-        <img src="/coupling-int-tools-logo.svg" alt="Coupling Logo" class="h-8 w-auto" />
+        <img src="/coupling-int-tools-logo.svg" alt="Coupling Logo" class="brand-logo h-8 w-auto" />
       </div>
 
       <!-- Search -->

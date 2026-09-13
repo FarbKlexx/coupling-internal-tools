@@ -67,7 +67,7 @@ async function generateCsv() {
 </script>
 
 <template>
-  <div class="max-w-2xl rounded-xl border light-grey-background light-grey-stroke p-6 space-y-5">
+  <div class="max-w-2xl content-box p-6 space-y-5">
     <h2 class="text-lg font-semibold">AWIN Banner CSV generieren</h2>
 
     <!-- File Input -->
@@ -98,7 +98,7 @@ async function generateCsv() {
       <p v-else class="text-xs text-zinc-500">Noch keine Dateien ausgewählt.</p>
     </div>
 
-    <div class="border-t light-grey-stroke" />
+    <div class="border-t border-hairline" />
 
     <!-- Common Attributes -->
     <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">

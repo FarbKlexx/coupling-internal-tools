@@ -248,7 +248,7 @@ async function downloadCalibrationSheet() {
 
 <template>
   <div class="space-y-5">
-    <div class="rounded-xl border light-grey-background light-grey-stroke p-6 space-y-5">
+    <div class="content-box p-6 space-y-5">
       <div class="space-y-1">
         <h2 class="text-lg font-semibold">Namensschilder drucken</h2>
         <p class="text-xs text-zinc-500">
@@ -323,7 +323,7 @@ async function downloadCalibrationSheet() {
 
     <!-- Einstellungen und Vorschau -->
     <div class="grid grid-cols-1 gap-5 xl:grid-cols-2">
-      <div class="rounded-xl border light-grey-background light-grey-stroke p-6 space-y-5">
+      <div class="content-box p-6 space-y-5">
         <h3 class="text-sm font-semibold">Bogen</h3>
 
         <div v-if="formats.length > 1" class="flex flex-col gap-1">
@@ -405,7 +405,7 @@ async function downloadCalibrationSheet() {
       </div>
 
       <!-- Trockenlauf -->
-      <div class="rounded-xl border light-grey-background light-grey-stroke p-6 space-y-4">
+      <div class="content-box p-6 space-y-4">
         <h3 class="text-sm font-semibold">Trockenlauf</h3>
 
         <p v-if="!analysis && !isWorking" class="text-xs text-zinc-500">
@@ -490,7 +490,7 @@ async function downloadCalibrationSheet() {
     </div>
 
     <!-- Vorschau -->
-    <div class="rounded-xl border light-grey-background light-grey-stroke p-6 space-y-4">
+    <div class="content-box p-6 space-y-4">
       <div class="flex items-center justify-between gap-3">
         <h3 class="text-sm font-semibold">Vorschau</h3>
         <span v-if="isWorking" class="text-xs text-zinc-500">Wird erzeugt …</span>

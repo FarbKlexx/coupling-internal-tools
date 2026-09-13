@@ -5,6 +5,27 @@
     <link rel="icon" type="image/png" href="/favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Internal Tools</title>
+    <script>
+      // Hell oder dunkel, noch vor dem ersten Bild: die Farben haengen alle an
+      // diesem Attribut (siehe src/style.css). Wuerde es erst Vue setzen,
+      // blitzte bei jedem Laden kurz der jeweils andere Modus auf.
+      // Dieselbe Reihenfolge wie in src/composables/useTheme.ts: eine eigene
+      // Wahl schlaegt die Voreinstellung des Betriebssystems.
+      (function () {
+        try {
+          var stored = localStorage.getItem("theme");
+        } catch (e) {
+          stored = null;
+        }
+
+        document.documentElement.dataset.theme =
+          stored === "light" || stored === "dark"
+            ? stored
+            : window.matchMedia("(prefers-color-scheme: light)").matches
+              ? "light"
+              : "dark";
+      })();
+    </script>
     <link
       href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,200..700,0..1,-50..200"
       rel="stylesheet"

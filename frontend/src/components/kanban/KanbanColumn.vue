@@ -9,7 +9,7 @@
       </div>
       <button
         type="button"
-        class="grey-text hover:text-white"
+        class="grey-text hover:text-strong"
         title="Karte hinzufügen"
         @click="emit('add', column.id)"
       >

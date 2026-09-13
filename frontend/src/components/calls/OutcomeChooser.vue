@@ -189,7 +189,7 @@ const timeFieldId = useId();
           Übernehmen
         </button>
         <button
-          class="rounded-md light-grey-background light-grey-stroke px-3 py-2 text-sm hover:text-white transition-colors"
+          class="rounded-md light-grey-background light-grey-stroke px-3 py-2 text-sm hover:text-strong transition-colors"
           :disabled="disabled"
           @click="pending = null"
         >

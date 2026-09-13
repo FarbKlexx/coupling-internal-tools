@@ -17,7 +17,7 @@
     <button
       v-if="selected.length"
       type="button"
-      class="grey-text hover:text-white"
+      class="grey-text hover:text-strong"
       style="font-size: 12px"
       @click="emit('update:selected', [])"
     >

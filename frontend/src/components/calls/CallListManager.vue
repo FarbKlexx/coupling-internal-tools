@@ -209,8 +209,11 @@ function formatDate(iso: string): string {
 </script>
 
 <template>
-  <div class="max-w-4xl rounded-xl border light-grey-background light-grey-stroke">
-    <button class="flex w-full items-center justify-between gap-3 px-6 py-4" @click="open = !open">
+  <div class="max-w-4xl content-box">
+    <button
+      class="disclosure flex w-full items-center justify-between gap-3 px-6 py-4"
+      @click="open = !open"
+    >
       <span class="flex items-center gap-2">
         <span class="material-symbols-outlined nav-icon">list_alt</span>
         <span class="font-semibold">Listen verwalten</span>

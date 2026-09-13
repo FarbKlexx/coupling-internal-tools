@@ -33,7 +33,7 @@ const site = computed(() => contactWebsite(props.website));
     :href="site.href"
     target="_blank"
     rel="noopener noreferrer"
-    class="inline-flex items-baseline gap-0.5 hover:text-white transition-colors"
+    class="inline-flex items-baseline gap-0.5 hover:text-strong transition-colors"
   >
     {{ text ?? site.label }}
     <span class="material-symbols-outlined" :style="{ fontSize: `${iconSize ?? 13}px` }">

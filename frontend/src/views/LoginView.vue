@@ -87,10 +87,7 @@ function switchCodeKind() {
 
 <template>
   <main class="flex min-h-screen items-center justify-center p-6">
-    <form
-      class="w-full max-w-sm rounded-xl border light-grey-background light-grey-stroke p-6 space-y-5"
-      @submit.prevent="submit"
-    >
+    <form class="w-full max-w-sm content-box p-6 space-y-5" @submit.prevent="submit">
       <div class="space-y-1">
         <h1 class="text-lg font-semibold">Anmelden</h1>
         <p class="text-xs text-zinc-500">Coupling Internal Tools</p>
@@ -153,7 +150,7 @@ function switchCodeKind() {
         />
         <button
           type="button"
-          class="self-start text-xs text-blue-400 hover:text-blue-300"
+          class="self-start text-xs text-primary transition-opacity hover:opacity-75"
           @click="switchCodeKind"
         >
           {{

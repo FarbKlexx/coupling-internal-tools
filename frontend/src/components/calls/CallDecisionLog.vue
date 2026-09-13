@@ -188,7 +188,7 @@ function stateClass(entry: CallDecision): string {
       <li
         v-for="entry in page.entries"
         :key="entry.event_id"
-        class="rounded-md border light-grey-background light-grey-stroke px-3 py-2"
+        class="rounded-md light-grey-background px-3 py-2"
       >
         <div class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
           <div class="min-w-0 text-xs light-grey-text">
@@ -200,7 +200,7 @@ function stateClass(entry: CallDecision): string {
             <span>{{ formatMoment(entry.occurred_at) }} · {{ entry.username }}</span>
             <button
               v-if="entry.correctable"
-              class="rounded-md grey-background light-grey-stroke px-2 py-1 hover:text-white transition-colors"
+              class="rounded-md grey-background light-grey-stroke px-2 py-1 hover:text-strong transition-colors"
               :disabled="isSaving"
               @click="editing === entry.event_id ? close() : open(entry)"
             >
@@ -225,13 +225,13 @@ function stateClass(entry: CallDecision): string {
         <p v-if="page.query" class="mt-0.5 text-xs light-grey-text">
           <a
             :href="`tel:${entry.telefon.replace(/\s+/g, '')}`"
-            class="hover:text-white transition-colors"
+            class="hover:text-strong transition-colors"
           >
             {{ entry.telefon }}
           </a>
           <template v-if="entry.email">
             ·
-            <a :href="`mailto:${entry.email}`" class="hover:text-white transition-colors">
+            <a :href="`mailto:${entry.email}`" class="hover:text-strong transition-colors">
               {{ entry.email }}
             </a>
           </template>
@@ -296,7 +296,7 @@ function stateClass(entry: CallDecision): string {
          nichts aufzuziehen: gesucht wird im ganzen Protokoll. -->
     <button
       v-if="page && !page.query && page.entries.length < page.total"
-      class="text-xs light-grey-text hover:text-white transition-colors"
+      class="text-xs light-grey-text hover:text-strong transition-colors"
       :disabled="isLoading"
       @click="loadMore()"
     >

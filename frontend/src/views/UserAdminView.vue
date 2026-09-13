@@ -236,7 +236,7 @@ async function remove(user: UserSummary) {
     </div>
 
     <!-- Neues Konto -->
-    <section class="rounded-xl border light-grey-background light-grey-stroke p-6 space-y-4">
+    <section class="content-box p-6 space-y-4">
       <h2 class="text-lg font-semibold">Neues Konto</h2>
 
       <div class="flex flex-wrap items-end gap-3">
@@ -287,7 +287,7 @@ async function remove(user: UserSummary) {
     <section
       v-for="user in users"
       :key="user.id"
-      class="rounded-xl border light-grey-background light-grey-stroke p-6 space-y-4"
+      class="content-box p-6 space-y-4"
       :class="user.active ? '' : 'opacity-60'"
     >
       <div class="flex flex-wrap items-start justify-between gap-3">
@@ -296,7 +296,7 @@ async function remove(user: UserSummary) {
             {{ user.username }}
             <span
               v-if="user.id === auth.user.value?.id"
-              class="rounded bg-blue-500/15 px-1.5 py-0.5 text-xs text-blue-300"
+              class="rounded bg-info/15 px-1.5 py-0.5 text-xs text-info"
             >
               das bin ich
             </span>
@@ -367,7 +367,7 @@ async function remove(user: UserSummary) {
           </button>
           <button
             type="button"
-            class="rounded-md border border-red-500/40 px-3 py-1.5 text-xs text-red-300"
+            class="rounded-md border border-red-500/40 px-3 py-1.5 text-xs text-red-300 transition-colors hover:bg-red-500/10"
             :disabled="isBusy"
             @click="remove(user)"
           >

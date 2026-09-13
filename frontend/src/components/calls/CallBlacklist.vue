@@ -109,7 +109,7 @@ function formatDate(iso: string): string {
 
 <template>
   <div class="space-y-3 border-t border-zinc-800 pt-4">
-    <button class="flex w-full items-center justify-between gap-3" @click="toggle">
+    <button class="disclosure flex w-full items-center justify-between gap-3" @click="toggle">
       <span class="flex items-center gap-2">
         <span class="material-symbols-outlined nav-icon">block</span>
         <span class="text-sm font-semibold">Blacklist</span>
