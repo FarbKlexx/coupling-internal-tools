@@ -1,7 +1,10 @@
 <template>
   <!-- Die Spalten teilen sich die Breite (bei fünf Spalten passen sie damit
-       ins Fenster) und scrollen erst, wenn min-w-56 nicht mehr hineingeht. -->
-  <section class="kanban-column flex min-w-56 flex-1 flex-col rounded-xl">
+       ins Fenster) und scrollen waagerecht erst, wenn min-w-56 nicht mehr
+       hineingeht. Senkrecht scrollt die Kartenliste weiter unten, nicht die
+       Spalte: so bleiben Überschrift und Plus stehen, auch wenn eine Spalte
+       voll ist. -->
+  <section class="kanban-column flex min-h-0 min-w-56 flex-1 flex-col rounded-xl">
     <header class="flex items-center justify-between gap-2 px-3 py-2.5">
       <div class="flex items-center gap-2">
         <span class="white-text font-medium">{{ column.label }}</span>
@@ -29,7 +32,7 @@
       :prevent-on-filter="false"
       ghost-class="kanban-ghost"
       drag-class="kanban-drag"
-      class="flex min-h-24 flex-1 flex-col gap-2 px-2 pb-3"
+      class="flex min-h-24 flex-1 flex-col gap-2 overflow-y-auto px-2 pb-3"
       @start="emit('dragStart')"
       @end="emit('dragEnd', $event)"
     >

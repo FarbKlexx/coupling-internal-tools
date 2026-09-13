@@ -33,7 +33,11 @@
 
     <p v-if="isLoading && !board" class="light-grey-text">Board wird geladen …</p>
 
-    <div v-else class="flex min-w-0 flex-1 gap-3 overflow-x-auto pb-2">
+    <!-- min-h-0: dieselbe Regel wie am <main> der Huelle, eine Ebene tiefer.
+         Ohne sie ist diese Reihe so hoch wie ihre vollste Spalte, und statt
+         der Spalte scrollt die ganze Seite. Mit ihr ist die Reihe genau so
+         hoch wie der Platz, den sie hat — und jede Spalte scrollt in sich. -->
+    <div v-else class="flex min-h-0 min-w-0 flex-1 gap-3 overflow-x-auto pb-2">
       <KanbanColumn
         v-for="column in columns"
         :key="column.id"
