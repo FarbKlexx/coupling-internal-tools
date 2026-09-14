@@ -1034,3 +1034,44 @@ def test_a_database_from_before_the_assessment_gets_the_new_column(zusagen):
     assert entry["oversized"] is False
     assert _board(client)["counters"]["unbewertet"] == 2
     assert _board(client)["counters"]["oversized"] == 0
+
+
+def test_a_row_carries_the_whole_contact_of_the_call_list(client, call_db):
+    """Die Zeile bringt mit, was in der Anrufliste stand — auch die freien
+    Spalten.
+
+    Die Liste zeigt davon nichts; gebraucht wird es zum Kopieren einer Zeile
+    („alles über diesen Betrieb als Text"). Die Zusatzspalten sind der
+    eigentliche Grund: was in ihnen steht, entscheidet die Analyse, aus der
+    die Anrufliste kam, und genau darüber wird hinterher geschrieben.
+    """
+    csv = (
+        "Betrieb;Telefon;Prio;Befunde;Ladezeit;CMS\r\n"
+        "Zaunbau Müller;05221 111;A;Seite lädt langsam;4,2 s;WordPress 5.2\r\n"
+    ).encode("utf-8")
+    upload = client.post(
+        "/telefonakquise/lists",
+        files={"file": ("analyse.csv", csv, "text/csv")},
+        data={"name": "Analyse Herford"},
+    )
+    assert upload.status_code == 200, upload.text
+
+    contact = client.get("/telefonakquise/state").json()["contact"]
+    assert (
+        client.post(
+            f"/telefonakquise/contacts/{contact['id']}/outcome",
+            json={"outcome": "zugesagt"},
+        ).status_code
+        == 200
+    )
+
+    entry = _board(client)["entries"][0]
+
+    assert entry["prio"] == "A"
+    assert entry["befunde"] == "Seite lädt langsam"
+    # In der Reihenfolge der Datei, wortwörtlich — dieselbe Zusage wie drüben
+    # beim Kontakt.
+    assert entry["extras"] == [
+        {"label": "Ladezeit", "value": "4,2 s"},
+        {"label": "CMS", "value": "WordPress 5.2"},
+    ]

@@ -60,6 +60,9 @@ const entry: MailEntry = {
   plz: "32052",
   website: "",
   gewerk: "Maler",
+  prio: "A",
+  befunde: "Seite lädt langsam",
+  extras: [{ label: "Ladezeit", value: "4,2 s" }],
   list_id: "l1",
   list_name: "Handwerker Herford",
   list_archived: false,
@@ -220,7 +223,8 @@ describe("MailFollowupList", () => {
   it("schickt beim Klick den Zustand und sonst nichts", async () => {
     const { wrapper, save } = mountList();
 
-    await wrapper.findAll("li button")[0]?.trigger("click");
+    const button = wrapper.findAll("li button").find((b) => b.text().includes("Mail versendet"));
+    await button?.trigger("click");
 
     expect(save).toHaveBeenCalledWith("k1", { state: "versendet" });
   });
@@ -528,6 +532,54 @@ describe("MailFollowupList", () => {
     const active = mountList([], undefined, { oversizedFilter: true });
 
     expect(active.wrapper.find("[data-scope-filter]").attributes("aria-pressed")).toBe("true");
+  });
+
+  it("kopiert alles ueber den Betrieb als Text", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+
+    const { wrapper } = mountList();
+    await wrapper.find("li [data-copy]").trigger("click");
+
+    const text = writeText.mock.calls[0]?.[0] as string;
+
+    // Stammdaten, Versandstand und die freien Spalten der Analyse – der Text
+    // soll ohne die Anwendung daneben lesbar sein.
+    expect(text).toContain("Betrieb: Azmanlar Tayfun Malermeister");
+    expect(text).toContain("Telefon: +49 5224 79473");
+    expect(text).toContain("Adresse: 32052 Herford");
+    expect(text).toContain("Prio: A");
+    expect(text).toContain("Versandstand: Mail noch nicht versendet");
+    expect(text).toContain("Befunde:\nSeite lädt langsam");
+    expect(text).toContain("Anmerkung aus dem Telefonat:\nwill Preise sehen");
+    expect(text).toContain("Details aus der Liste:\n- Ladezeit: 4,2 s");
+
+    // Leere Felder stehen nicht drin: „Website: “ waere im Prompt eine
+    // Behauptung ueber einen Betrieb, ueber den wir nichts wissen.
+    expect(text).not.toContain("Website:");
+    expect(text).not.toContain("Antwort am:");
+    // Und ein Marker, den niemand gesetzt hat, ist keine Aussage.
+    expect(text).not.toContain("Bau-Einschätzung:");
+    expect(text).not.toContain("Umfang:");
+  });
+
+  it("meldet das Kopieren am Knopf zurueck", async () => {
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: vi.fn().mockResolvedValue(undefined) },
+      configurable: true,
+    });
+
+    const { wrapper } = mountList([entry, { ...entry, contact_id: "k2" }]);
+    const copyButtons = () => wrapper.findAll("li [data-copy]").map((button) => button.text());
+
+    expect(copyButtons()).toEqual(["content_copy Kopieren", "content_copy Kopieren"]);
+
+    await wrapper.find("li [data-copy]").trigger("click");
+    await wrapper.vm.$nextTick();
+
+    // Nur die angeklickte Zeile bestaetigt – sonst sieht es aus, als haenge
+    // die Zwischenablage an der Liste und nicht an diesem Betrieb.
+    expect(copyButtons()).toEqual(["check Kopiert", "content_copy Kopieren"]);
   });
 
   it("laesst die Einschaetzung auch ohne E-Mail-Adresse zu", () => {

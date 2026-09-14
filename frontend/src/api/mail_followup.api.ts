@@ -1,4 +1,5 @@
 import { http } from "./http";
+import type { ContactField } from "./call_list.api";
 
 /**
  * Der Mailversand – was aus einer Zusage der Telefonakquise geworden ist.
@@ -96,6 +97,18 @@ export interface MailEntry {
   plz: string;
   website: string;
   gewerk: string;
+  /** Die Prio aus der Datei – die Liste zeigt sie nicht, das Kopieren nimmt sie mit. */
+  prio: string;
+  /** Der Gesprächsaufhänger aus der Datei. */
+  befunde: string;
+  /**
+   * Alle übrigen Spalten der Anrufliste, in der Reihenfolge der Datei.
+   *
+   * Angezeigt wird davon nichts – sie sind der Grund, warum eine Zeile sich
+   * als Text kopieren lässt: was in ihnen steht, weiß nur die Analyse, aus
+   * der die Liste kam.
+   */
+  extras: ContactField[];
   list_id: string;
   list_name: string;
   /** Archivierte Listen bleiben sichtbar – die Zusage gilt weiter. */

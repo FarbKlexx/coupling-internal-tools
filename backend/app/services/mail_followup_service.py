@@ -31,12 +31,14 @@ Wie überall in dieser Anwendung antwortet jeder schreibende Aufruf mit der
 hier geblättert: Zusagen sammeln sich an und werden nie weniger.
 """
 
+import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
 
 from app.core import call_list_db as db
 from app.core.csv_utils import csv_rows_to_str
+from app.schemas.call_list import ContactField
 from app.schemas.mail_followup import (
     MAIL_ACTIONS,
     MAIL_PAGE_SIZE,
@@ -126,6 +128,9 @@ def _entry(row: sqlite3.Row) -> MailEntry:
     state = MailState(row["mail_state"])
     stored = MailState(row["stored_state"] or MailState.OFFEN.value)
     readiness = BuildReadiness(row["readiness"])
+    # Die freien Spalten der Anrufliste, so wie der Kontakt sie drüben auch
+    # liefert: eine Zusage ohne Zusatzspalten hat hier eine leere Liste.
+    extras: dict[str, str] = json.loads(row["extras"] or "{}")
 
     return MailEntry(
         contact_id=row["contact_id"],
@@ -136,6 +141,11 @@ def _entry(row: sqlite3.Row) -> MailEntry:
         plz=row["plz"],
         website=row["website"],
         gewerk=row["gewerk"],
+        prio=row["prio"],
+        befunde=row["befunde"],
+        extras=[
+            ContactField(label=label, value=value) for label, value in extras.items()
+        ],
         list_id=row["list_id"],
         list_name=row["list_name"] or "",
         list_archived=bool(row["list_archived"]),

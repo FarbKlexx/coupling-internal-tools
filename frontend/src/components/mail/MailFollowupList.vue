@@ -29,7 +29,7 @@
  * deshalb an beiden Stellen abgesetzt: in der Filterzeile hinter einem
  * Trenner, an der Zeile hinter den Bau-Markern.
  */
-import { ref } from "vue";
+import { onBeforeUnmount, ref } from "vue";
 import {
   exportUrl,
   type BuildReadiness,
@@ -42,6 +42,7 @@ import {
 } from "@/api/mail_followup.api";
 import { formatMoment } from "@/components/calls/callTime";
 import ContactWebsiteLink from "@/components/calls/ContactWebsiteLink.vue";
+import { contactText } from "./contactText";
 
 const props = defineProps<{
   board: MailBoard | null;
@@ -299,6 +300,39 @@ function actionOf(id: MailState): MailActionInfo | undefined {
   return props.actions.find((action) => action.id === id);
 }
 
+/**
+ * Welche Zeile gerade kopiert wurde – für die Rückmeldung am Knopf.
+ *
+ * Ohne sie sieht ein Klick auf „Kopieren" aus, als sei nichts passiert: die
+ * Zwischenablage ist die einzige Stelle, an der sich etwas ändert, und die
+ * sieht man nicht.
+ */
+const copied = ref<string | null>(null);
+let copiedTimer: ReturnType<typeof setTimeout> | undefined;
+
+onBeforeUnmount(() => clearTimeout(copiedTimer));
+
+/**
+ * Alles über diesen Betrieb als Text in die Zwischenablage.
+ *
+ * `navigator.clipboard` gibt es nur in sicheren Kontexten (HTTPS oder
+ * localhost) – in Produktion beides gegeben, aber ein `?.` ist billiger als
+ * ein TypeError in einem Browser, der ihn nicht hat.
+ */
+async function copyEntry(entry: MailEntry) {
+  const text = contactText(entry, props.scopeMarker?.label);
+
+  try {
+    await navigator.clipboard?.writeText(text);
+  } catch {
+    return;
+  }
+
+  copied.value = entry.contact_id;
+  clearTimeout(copiedTimer);
+  copiedTimer = setTimeout(() => (copied.value = null), 2000);
+}
+
 /** „seit 12 Tagen" – die Zahl kommt gerechnet aus dem Backend. */
 function waiting(entry: MailEntry): string {
   if (entry.days_since_sent === null) return "";
@@ -508,6 +542,23 @@ function waiting(entry: MailEntry): string {
           </div>
 
           <div class="shrink-0 space-y-1 text-right text-xs text-zinc-500">
+            <!-- Alles über diesen Betrieb als Text – oben rechts, weil der
+                 Knopf nichts an der Zeile ändert und deshalb nicht zwischen
+                 die Knöpfe gehört, die es tun. -->
+            <button
+              type="button"
+              class="chip"
+              :class="copied === entry.contact_id ? 'chip--on' : ''"
+              data-copy
+              :title="`Alle Angaben zu ${entry.betrieb} als Text kopieren`"
+              @click="copyEntry(entry)"
+            >
+              <span class="material-symbols-outlined" style="font-size: 16px">
+                {{ copied === entry.contact_id ? "check" : "content_copy" }}
+              </span>
+              {{ copied === entry.contact_id ? "Kopiert" : "Kopieren" }}
+            </button>
+
             <p v-if="entry.sent_at">
               versendet {{ formatMoment(entry.sent_at) }}
               <span :class="entry.state === 'keine_antwort' ? 'text-amber-400' : ''">

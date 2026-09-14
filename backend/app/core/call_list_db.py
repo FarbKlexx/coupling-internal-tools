@@ -1160,9 +1160,16 @@ _MAIL_FROM = (
 #: Spalten einer Zeile der Versandliste. `promised_at`/`promised_by` kommen
 #: aus dem Protokoll — es ist der Nachweis, auf den sich der Versand stützt,
 #: und gehört deshalb neben die Adresse und nicht in eine zweite Abfrage.
+#:
+#: `prio`, `befunde` und `extras` stehen mit darin, obwohl die Liste sie
+#: nirgends anzeigt: sie sind das, was die Zeile zum Kopieren hergibt (die
+#: freien Spalten der Analyse, aus der die Anrufliste kam). Ein zweiter
+#: Aufruf je Zeile wäre der Alternativweg — für ein paar hundert Byte pro
+#: Zusage nicht die Mühe wert.
 _MAIL_SELECT = (
     " c.id AS contact_id, c.betrieb, c.telefon, c.email, c.ort, c.plz,"
-    " c.website, c.gewerk, c.note, c.list_id, l.name AS list_name,"
+    " c.website, c.gewerk, c.prio, c.befunde, c.extras,"
+    " c.note, c.list_id, l.name AS list_name,"
     " l.archived AS list_archived,"
     " m.state AS stored_state, m.sent_at, m.answered_at,"
     " m.note AS mail_note, m.updated_at AS mail_updated_at,"

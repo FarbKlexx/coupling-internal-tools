@@ -46,7 +46,7 @@ from enum import Enum
 
 from pydantic import BaseModel, Field
 
-from app.schemas.call_list import OutcomeTone
+from app.schemas.call_list import ContactField, OutcomeTone
 
 #: Nach wie vielen Tagen ohne Antwort eine versendete Mail als unbeantwortet
 #: gilt. Kein technischer Wert, sondern eine fachliche Frist: danach lohnt
@@ -351,6 +351,16 @@ class MailEntry(BaseModel):
     plz: str
     website: str
     gewerk: str
+    #: Die Prio aus der Datei — was sie bedeutet, entscheidet die Analyse, aus
+    #: der die Liste kam. Angezeigt wird sie hier nicht; sie gehört zu dem,
+    #: was die Zeile zum Kopieren hergibt.
+    prio: str
+    #: Der Gesprächsaufhänger aus der Datei.
+    befunde: str
+    #: Alle übrigen Spalten der Anrufliste, in der Reihenfolge der Datei —
+    #: dieselbe Wortwahl wie im Kontakt der Telefonakquise. Was darin steht,
+    #: weiß nur die Analyse; hier reist es unverändert mit.
+    extras: list[ContactField]
     list_id: str
     list_name: str
     #: Archivierte Listen bleiben sichtbar: die Zusage gilt weiter, und die
