@@ -73,6 +73,7 @@ const entry: MailEntry = {
   state_label: "Mail noch nicht versendet",
   readiness: "unbewertet",
   readiness_label: "noch nicht eingeschätzt",
+  readiness_actions: ["ready_to_build", "in_development", "ready_to_mail", "missing_content"],
   oversized: false,
   automatic: false,
   sent_at: null,
@@ -532,6 +533,27 @@ describe("MailFollowupList", () => {
     const active = mountList([], undefined, { oversizedFilter: true });
 
     expect(active.wrapper.find("[data-scope-filter]").attributes("aria-pressed")).toBe("true");
+  });
+
+  it("zeigt an einer verschickten Zeile keine Bau-Marker mehr", () => {
+    // „Ready to Mail" heisst „gebaut, muss noch zum Betrieb" – neben einem
+    // „verschickt" widerspricht sich das. Welche Marker eine Zeile hat,
+    // entscheidet deshalb das Backend, und die Oberflaeche baut die Regel
+    // nicht nach.
+    const { wrapper } = mountList([
+      {
+        ...entry,
+        state: "versendet",
+        state_label: "Mail versendet – wartet auf Antwort",
+        readiness_actions: [],
+        actions: ["positiv", "abgelehnt", "offen"],
+      },
+    ]);
+
+    expect(wrapper.findAll("li [data-marker]")).toHaveLength(0);
+    // Der Umfang bleibt: er ist eine Aussage ueber die Seite, nicht ueber
+    // den Weg zur Mail.
+    expect(wrapper.find("li [data-scope-marker]").exists()).toBe(true);
   });
 
   it("kopiert alles ueber den Betrieb als Text", async () => {

@@ -1138,7 +1138,26 @@ _MAIL_STATE = (
 #: angesprochen: ein `GROUP BY readiness` hätte in SQLite die *Spalte*
 #: `m.build_readiness` treffen können und damit NULL als eigene Gruppe
 #: gezählt — deshalb heißt der Alias auch nicht wie die Spalte.
-_MAIL_READINESS = "COALESCE(m.build_readiness, 'unbewertet')"
+#:
+#: **Sie gilt nur, solange die Mail nicht heraus ist**, und ergibt sonst
+#: NULL: „Ready to Mail" heißt „gebaut, muss noch zum Betrieb", und neben
+#: einem Versandstand „verschickt" wäre das eine Auskunft, die sich selbst
+#: widerspricht. Die ganze Reihe ist ein Weg *bis* zur Mail — danach
+#: beantwortet der Reiter „Verschickt" dieselbe Frage besser.
+#:
+#: NULL und nicht `'unbewertet'`, obwohl beides „kein Marker an der Zeile"
+#: ergäbe: eine verschickte Zusage soll auch nicht unter „nicht
+#: eingeschätzt" auftauchen. NULL fällt aus jedem `GROUP BY`-Zähler heraus,
+#: den die Oberfläche kennt, und aus jedem `= ?`-Filter — die Regel steht
+#: damit an *einer* Stelle statt in jeder Abfrage noch einmal.
+#:
+#: Gelesen wird der gespeicherte Wert weiterhin über `stored_readiness`
+#: (siehe `_MAIL_SELECT`): er bleibt stehen und kommt zurück, sobald der
+#: Versand zurückgesetzt wird.
+_MAIL_READINESS = (
+    "CASE WHEN COALESCE(m.state, 'offen') = 'offen'"
+    "     THEN COALESCE(m.build_readiness, 'unbewertet') END"
+)
 
 #: Der Umfangs-Marker, wie ihn jede Abfrage liest.
 #:
@@ -1171,7 +1190,8 @@ _MAIL_SELECT = (
     " c.website, c.gewerk, c.prio, c.befunde, c.extras,"
     " c.note, c.list_id, l.name AS list_name,"
     " l.archived AS list_archived,"
-    " m.state AS stored_state, m.sent_at, m.answered_at,"
+    " m.state AS stored_state, m.build_readiness AS stored_readiness,"
+    " m.sent_at, m.answered_at,"
     " m.note AS mail_note, m.updated_at AS mail_updated_at,"
     " m.updated_by AS mail_updated_by,"
     " (SELECT e.occurred_at FROM events e"
@@ -1241,6 +1261,9 @@ def _mail_filter(
         params += [cutoff, state]
 
     if readiness:
+        # Verschickte Zusagen fallen hier von selbst heraus: `_MAIL_READINESS`
+        # ist für sie NULL, und NULL ist nie gleich irgendetwas. Die Regel
+        # steht damit nur an dem einen Ort, an dem sie formuliert ist.
         where += f" AND {_MAIL_READINESS} = ?"
         params.append(readiness)
 
@@ -1368,7 +1391,13 @@ def mail_readiness_totals(
         params,
     ).fetchall()
 
-    return {row["readiness"]: int(row["total"]) for row in rows}
+    # Ohne die NULL-Gruppe: das sind die Zeilen, deren Mail heraus ist, und
+    # für die gibt es keine Marke, auf der die Zahl stehen könnte.
+    return {
+        row["readiness"]: int(row["total"])
+        for row in rows
+        if row["readiness"] is not None
+    }
 
 
 def mail_oversized_total(

@@ -119,9 +119,21 @@ export interface MailEntry {
   note: string;
   state: MailState;
   state_label: string;
-  /** Die Bau-Einschätzung – unabhängig vom Versandstand. */
+  /**
+   * Die Bau-Einschätzung – unabhängig vom Versandstand, aber nur, solange
+   * die Mail nicht heraus ist: danach `unbewertet`, weil die Reihe der Weg
+   * *bis* zur Mail ist. Der gesetzte Wert bleibt gespeichert und kommt
+   * zurück, wenn der Versand zurückgesetzt wird.
+   */
   readiness: BuildReadiness;
   readiness_label: string;
+  /**
+   * Welche Marker diese Zeile setzen kann – leer, sobald die Mail heraus ist.
+   *
+   * Dieselbe Rolle wie `actions`: die Oberfläche baut die Regel nicht nach,
+   * sonst wächst ihr ein Knopf, der mit 400 antwortet.
+   */
+  readiness_actions: BuildReadiness[];
   /**
    * „Bigger than expected" – die dritte Größe, kombinierbar mit den beiden
    * anderen. `false` heißt „hat niemand gesagt", nicht „ist ein Onepager".

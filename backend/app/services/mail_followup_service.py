@@ -124,10 +124,35 @@ def _actions(row: sqlite3.Row, state: MailState) -> list[MailState]:
     return list(allowed)
 
 
+#: Die Marker, die an einer Zeile stehen können — der Katalog ohne den
+#: Rückweg: `unbewertet` ist kein Knopf, sondern das Ausschalten des
+#: gesetzten.
+_READINESS_MARKERS: tuple[BuildReadiness, ...] = tuple(
+    option.id
+    for option in READINESS_OPTIONS
+    if option.id is not BuildReadiness.UNBEWERTET
+)
+
+
+def _readiness_actions(state: MailState) -> list[BuildReadiness]:
+    """Welche Marker diese Zeile setzen kann.
+
+    Keine, sobald die Mail heraus ist: die Reihe beschreibt den Weg *bis* zur
+    Mail („lässt sich bauen" → „ist gebaut, muss noch raus"), und neben einem
+    „verschickt" widerspricht sie sich selbst. Wiedergefunden werden diese
+    Zeilen über den Reiter — dieselbe Auskunft, nur an der Stelle, an der sie
+    stimmt.
+    """
+    return [] if state is not MailState.OFFEN else list(_READINESS_MARKERS)
+
+
 def _entry(row: sqlite3.Row) -> MailEntry:
     state = MailState(row["mail_state"])
     stored = MailState(row["stored_state"] or MailState.OFFEN.value)
-    readiness = BuildReadiness(row["readiness"])
+    # NULL heißt hier „gilt nicht mehr" (die Mail ist heraus) und nicht „noch
+    # nicht angesehen" — an der Zeile sieht beides gleich aus, gezählt wird
+    # nur das zweite.
+    readiness = BuildReadiness(row["readiness"] or BuildReadiness.UNBEWERTET.value)
     # Die freien Spalten der Anrufliste, so wie der Kontakt sie drüben auch
     # liefert: eine Zusage ohne Zusatzspalten hat hier eine leere Liste.
     extras: dict[str, str] = json.loads(row["extras"] or "{}")
@@ -156,6 +181,7 @@ def _entry(row: sqlite3.Row) -> MailEntry:
         state_label=MAIL_STATE_LABELS[state],
         readiness=readiness,
         readiness_label=READINESS_LABELS[readiness],
+        readiness_actions=_readiness_actions(state),
         oversized=bool(row["oversized_flag"]),
         # Der einzige Fall, in dem sich der angezeigte vom gespeicherten
         # Zustand unterscheidet: die abgelaufene Frist. Ohne diesen Hinweis
@@ -385,6 +411,16 @@ def set_state(
             else:
                 sent_at, answered_at = _times(row, target)
 
+            if request.readiness is not None and target is not MailState.OFFEN:
+                # Die Einschätzung gehört zum Weg bis zur Mail. Danach ist sie
+                # keine Auskunft mehr, sondern ein Widerspruch — und ein still
+                # weggeschriebener Wert wäre einer, den niemand mehr sieht.
+                raise MailFollowupError(
+                    f"Die Mail an „{row['betrieb']}“ ist heraus – eine "
+                    "Bau-Einschätzung gibt es dafür nicht mehr. Sie kommt "
+                    "zurück, sobald der Versand zurückgesetzt wird."
+                )
+
             db.set_mail_status(
                 conn,
                 contact_id,
@@ -394,8 +430,12 @@ def set_state(
                 # Fehlt der Marker, bleibt der gesetzte stehen: ein Klick auf
                 # „Mail versendet" darf eine Einschätzung nicht verwerfen.
                 # Entfernt wird sie mit `unbewertet`, nicht durch Weglassen.
+                # Der *gespeicherte* Wert, nicht der angezeigte: sobald die
+                # Mail heraus ist, liefert `readiness` NULL, und eine
+                # Anmerkung an einer verschickten Zeile hätte die Einschätzung
+                # damit gelöscht statt sie nur nicht mehr zu zeigen.
                 readiness=(
-                    row["readiness"]
+                    row["stored_readiness"]
                     if request.readiness is None
                     else request.readiness.value
                 ),

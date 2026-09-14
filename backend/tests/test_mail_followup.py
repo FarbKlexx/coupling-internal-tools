@@ -517,21 +517,20 @@ def test_a_promise_starts_without_an_assessment(zusagen):
 
 
 def test_a_marker_is_set_without_touching_the_state(zusagen):
-    """Eingeschätzt wird, *während* eine Zeile irgendwo steht.
+    """Die Einschätzung ist keine Stufe im Versand.
 
-    Die Einschätzung ist keine Stufe im Versand, sondern eine Beobachtung
-    über eine Website — sie darf den Versandstand nicht anfassen.
+    Sie ist eine Beobachtung über eine Website und darf den Versandstand
+    nicht anfassen — auch nicht das Versanddatum, an dem die Frist hängt.
     """
     client, ids = zusagen
-    _click(client, ids[0], "versendet")
 
     board = _mark(client, ids[0], "ready_to_build")
     entry = _entry(board, ids[0])
 
     assert entry["readiness"] == "ready_to_build"
     assert entry["readiness_label"] == "Ready to Build"
-    assert entry["state"] == "versendet"
-    assert entry["sent_at"]
+    assert entry["state"] == "offen"
+    assert entry["sent_at"] is None
     assert board["counters"]["ready_to_build"] == 1
     assert board["counters"]["unbewertet"] == 1
 
@@ -601,10 +600,11 @@ def test_a_built_website_is_a_marker_and_not_a_mail_state(zusagen):
     assert board["counters"]["ready_to_mail"] == 1
     assert board["counters"]["ready_to_build"] == 0
 
-    # Und er überlebt den Versand — wie jeder andere Marker auch.
+    # Und er tritt mit dem Versand ab: „gebaut, muss noch zum Betrieb" neben
+    # einem „verschickt" wäre eine Zeile, die sich selbst widerspricht.
     board = _click(client, ids[0], "versendet")
-    assert _entry(board, ids[0])["readiness"] == "ready_to_mail"
-    assert _board(client, readiness="ready_to_mail")["matched"] == 1
+    assert _entry(board, ids[0])["readiness"] == "unbewertet"
+    assert _board(client, readiness="ready_to_mail")["matched"] == 0
 
 
 def test_a_marker_can_be_removed_again(zusagen):
@@ -624,22 +624,87 @@ def test_a_marker_can_be_removed_again(zusagen):
     assert board["counters"]["unbewertet"] == 2
 
 
-def test_a_send_click_keeps_the_marker(zusagen):
-    """Sonst verwirft der Weg durch den Versand die Einschätzung still.
+def test_the_assessment_steps_back_once_the_mail_is_out(zusagen):
+    """„Ready to Mail" und „verschickt" schließen sich aus.
+
+    Die Bau-Einschätzung beschreibt den Weg *bis* zur Mail: von „lässt sich
+    bauen" über „wird gebaut" bis „ist gebaut, muss noch zum Betrieb". Ist
+    die Mail heraus, ist dieser Weg zu Ende — und „muss noch zum Betrieb"
+    neben einem „verschickt" ist keine Auskunft, sondern ein Widerspruch.
+
+    Deshalb tritt die ganze Reihe ab, und zwar auch aus „nicht
+    eingeschätzt": eine verschickte Zusage ist nicht unangesehen, sie ist
+    fertig. Wiedergefunden wird sie über den Reiter, der dieselbe Frage
+    besser beantwortet.
+    """
+    client, ids = zusagen
+    _mark(client, ids[0], "ready_to_mail")
+
+    board = _click(client, ids[0], "versendet")
+    entry = _entry(board, ids[0])
+
+    assert entry["state"] == "versendet"
+    assert entry["readiness"] == "unbewertet"
+    # Keine Marke zählt sie mehr — die eigene nicht und „nicht eingeschätzt"
+    # auch nicht.
+    assert board["counters"]["ready_to_mail"] == 0
+    assert board["counters"]["unbewertet"] == 1
+    # Und kein Filter findet sie mehr über die Bau-Spur.
+    assert _board(client, readiness="ready_to_mail")["matched"] == 0
+    assert _board(client, readiness="unbewertet")["matched"] == 1
+
+    # Die Zeile bietet die Marker-Knöpfe nicht mehr an — dieselbe Regel wie
+    # bei den Zustandsknöpfen: die Oberfläche zeigt, was das Backend ihr
+    # mitgibt.
+    assert entry["readiness_actions"] == []
+    assert _entry(board, ids[1])["readiness_actions"] == [
+        "ready_to_build",
+        "in_development",
+        "ready_to_mail",
+        "missing_content",
+    ]
+
+
+def test_a_marker_is_refused_once_the_mail_is_out(zusagen):
+    """Was die Oberfläche nicht anbietet, nimmt das Backend auch nicht an.
+
+    Dasselbe Muster wie bei den Zustandsübergängen: die Regel steht an einer
+    Stelle, und ein still weggeschriebener Marker wäre einer, den niemand
+    mehr zu sehen bekommt.
+    """
+    client, ids = zusagen
+    _click(client, ids[0], "versendet")
+
+    body = _mark(client, ids[0], "ready_to_build", expected=400)
+
+    assert "ist heraus" in body["detail"]
+    assert "zurückgesetzt" in body["detail"]
+
+
+def test_a_send_click_hides_the_marker_but_keeps_it(zusagen):
+    """Verschwunden ist nicht dasselbe wie gelöscht.
+
+    Mit dem Versand tritt die Einschätzung ab — gespeichert bleibt sie
+    trotzdem, denn der Versand ist zurücknehmbar, und dann ist die Website
+    wieder genau da, wo sie vorher war. Das ist derselbe Bau, nicht ein
+    zweiter: eine Zeile, die nach dem Zurücksetzen auf „nicht eingeschätzt"
+    stünde, ließe jemanden die Arbeit noch einmal machen.
 
     Beide Größen liegen in derselben Zeile, und geschrieben wird sie immer
-    ganz — das „unverändert" muss der Service auflösen.
+    ganz — das „unverändert" muss der Service über den *gespeicherten* Wert
+    auflösen, nicht über den angezeigten.
     """
     client, ids = zusagen
     _mark(client, ids[0], "ready_to_build")
 
     board = _click(client, ids[0], "versendet")
-    assert _entry(board, ids[0])["readiness"] == "ready_to_build"
+    assert _entry(board, ids[0])["readiness"] == "unbewertet"
 
     board = _click(client, ids[0], "positiv")
-    assert _entry(board, ids[0])["readiness"] == "ready_to_build"
+    assert _entry(board, ids[0])["readiness"] == "unbewertet"
 
-    # Auch das Zurücksetzen des Versands ist keine Aussage über die Website.
+    # Und zurück: das Zurücksetzen des Versands ist keine Aussage über die
+    # Website — die Einschätzung von vorher steht wieder da.
     board = _click(client, ids[0], "offen")
     assert _entry(board, ids[0])["readiness"] == "ready_to_build"
 
@@ -667,22 +732,32 @@ def test_a_note_keeps_the_marker_and_a_marker_keeps_the_note(zusagen):
     assert _entry(board, ids[0])["mail_note"] == "doch genug Inhalt"
 
 
-def test_a_marker_survives_the_expired_deadline(zusagen, call_db):
-    """Ein Marker darf die gerechnete Frist nicht festschreiben.
+def test_a_note_on_a_sent_row_does_not_erase_the_marker(zusagen, call_db):
+    """Dieselbe Falle wie beim Zustand, eine Spalte weiter.
 
-    Dieselbe Falle wie beim Notizzettel: geschrieben wird der *gespeicherte*
-    Zustand, nicht der angezeigte.
+    Geschrieben wird immer die ganze Zeile, und „unverändert" muss der
+    Service auflösen — über den *gespeicherten* Wert. Über den angezeigten
+    wäre die Einschätzung nach dem ersten Notizzettel an einer verschickten
+    Zeile weg, und das fiele erst auf, wenn jemand den Versand zurücknimmt.
     """
     client, ids = zusagen
+    _mark(client, ids[0], "in_development")
     _click(client, ids[0], "versendet")
     _backdate(call_db, ids[0], MAIL_TIMEOUT_DAYS + 4)
 
-    board = _mark(client, ids[0], "ready_to_build")
+    board = client.post(
+        f"/mailversand/contacts/{ids[0]}",
+        json={"note": "zweimal nachgefasst"},
+    ).json()
     entry = _entry(board, ids[0])
 
-    assert entry["readiness"] == "ready_to_build"
     assert entry["state"] == "keine_antwort"
     assert entry["automatic"] is True
+    assert entry["readiness"] == "unbewertet"
+
+    # Der Beweis, dass sie nur nicht gezeigt wird: sie steht wieder da.
+    board = _click(client, ids[0], "offen")
+    assert _entry(board, ids[0])["readiness"] == "in_development"
 
 
 def test_a_marker_needs_no_email_address(zusagen):
@@ -704,32 +779,36 @@ def test_a_marker_needs_no_email_address(zusagen):
 def test_the_marker_filter_is_independent_of_the_state_filter(zusagen):
     """Zwei Filter, zwei Fragen — und zusammen die dritte.
 
-    „Verschickt und Ready to Build" ist die Liste, mit der jemand anfängt zu
-    bauen; sie entsteht nur, wenn beide Filter gleichzeitig gelten.
+    „Offen und Ready to Build" ist die Liste, mit der jemand anfängt zu
+    bauen; sie entsteht nur, wenn beide Filter gleichzeitig gelten. Dass die
+    Marker ohnehin nur an offenen Zusagen stehen, macht den zweiten Filter
+    nicht überflüssig: er teilt die offenen auf.
     """
     client, ids = zusagen
-    _mark(client, ids[0], "ready_to_build")
-    _click(client, ids[0], "versendet")
+    _mark(client, ids[0], "missing_content")
     _mark(client, ids[1], "ready_to_build")
 
-    both = _board(client, state="versendet", readiness="ready_to_build")
-    assert [e["contact_id"] for e in both["entries"]] == [ids[0]]
+    both = _board(client, state="offen", readiness="ready_to_build")
+    assert [e["contact_id"] for e in both["entries"]] == [ids[1]]
     assert both["matched"] == 1
 
-    marker_only = _board(client, readiness="ready_to_build")
-    assert marker_only["matched"] == 2
+    marker_only = _board(client, readiness="missing_content")
+    assert marker_only["matched"] == 1
 
-    assert _board(client, readiness="missing_content")["matched"] == 0
+    # Verschickt *und* eingeschätzt gibt es nicht mehr: die Einschätzung ist
+    # der Weg bis zur Mail.
+    assert _board(client, state="versendet", readiness="ready_to_build")["matched"] == 0
     assert _board(client, readiness="unbewertet")["matched"] == 0
 
     # `total` zählt weiter jede Zusage: es ist die Auskunft „gibt es hier
     # überhaupt etwas", an der die leere Liste hängt.
     assert both["total"] == 2
     # Die Zähler dagegen kennen die Auswahl — jede Reihe die der *anderen*:
-    # die Reiter zählen innerhalb des Markers (zwei sind Ready to Build), die
-    # Marker innerhalb des Reiters (einer davon ist verschickt).
-    assert both["counters"]["gesamt"] == 2
+    # die Reiter zählen innerhalb des Markers (einer ist Ready to Build), die
+    # Marker innerhalb des Reiters (beide stehen offen).
+    assert both["counters"]["gesamt"] == 1
     assert both["counters"]["ready_to_build"] == 1
+    assert both["counters"]["missing_content"] == 1
 
 
 def test_each_counter_row_counts_within_the_other_filter(zusagen):
@@ -744,10 +823,15 @@ def test_each_counter_row_counts_within_the_other_filter(zusagen):
     Der *eigene* Filter bleibt draußen, und das ist die zweite Hälfte der
     Regel: nullte er die übrigen Marken, gäbe es keinen Rückweg, der eine
     Zahl nennt.
+
+    Seit die Einschätzung mit dem Versand abtritt, geht die Summe nur noch
+    auf dem Reiter „Offen" auf — auf „Alle" fehlen darin die verschickten
+    Zusagen, weil sie keine Marke mehr tragen. Das ist die Aussage und nicht
+    ihr Verlust: dort beantwortet der Reiter dieselbe Frage.
     """
     client, ids = zusagen
-    # „Erster" ist verschickt und Ready to Build, „Dritter" (ohne Adresse)
-    # steht offen und ist Missing Content.
+    # „Erster" ist Ready to Build und verschickt — die Marke tritt damit ab.
+    # „Dritter" (ohne Adresse) steht offen und ist Missing Content.
     _mark(client, ids[0], "ready_to_build")
     _click(client, ids[0], "versendet")
     _mark(client, ids[1], "missing_content")
@@ -768,15 +852,22 @@ def test_each_counter_row_counts_within_the_other_filter(zusagen):
         == offen["offen"]
     )
 
-    ready = _board(client, readiness="ready_to_build")["counters"]
-    assert ready["gesamt"] == 1
-    assert (ready["offen"], ready["versendet"]) == (0, 1)
+    # Auf „Alle" sind es zwei Zusagen, aber nur eine Marke: die verschickte
+    # trägt keine mehr, auch keine „nicht eingeschätzt".
+    alle = _board(client)["counters"]
+    assert alle["gesamt"] == 2
+    assert (alle["missing_content"], alle["unbewertet"]) == (1, 0)
+    assert alle["ready_to_build"] == 0
+
+    fehlend = _board(client, readiness="missing_content")["counters"]
+    assert fehlend["gesamt"] == 1
+    assert (fehlend["offen"], fehlend["versendet"]) == (1, 0)
     # Auch die Nacharbeit zählt in der Auswahl: die Zusage ohne Adresse ist
-    # Missing Content und steht hier nicht mit in der Liste.
-    assert ready["ohne_email"] == 0
+    # genau die, die hier in der Liste steht.
+    assert fehlend["ohne_email"] == 1
     # Der eigene Filter der Markerreihe bleibt draußen.
-    assert (ready["missing_content"], ready["unbewertet"]) == (1, 0)
-    assert (ready["in_development"], ready["ready_to_mail"]) == (0, 0)
+    assert (fehlend["ready_to_build"], fehlend["unbewertet"]) == (0, 0)
+    assert (fehlend["in_development"], fehlend["ready_to_mail"]) == (0, 0)
 
 
 def test_the_marker_filter_combines_with_the_search(zusagen):
@@ -792,10 +883,7 @@ def test_the_marker_filter_combines_with_the_search(zusagen):
     assert _board(client, q="Erster", readiness="ready_to_build")["matched"] == 1
     assert _board(client, q="Dritter", readiness="ready_to_build")["matched"] == 0
 
-    _click(client, ids[0], "versendet")
-    hit = _board(
-        client, q="+49 5221 111", state="versendet", readiness="ready_to_build"
-    )
+    hit = _board(client, q="+49 5221 111", state="offen", readiness="ready_to_build")
     assert [e["contact_id"] for e in hit["entries"]] == [ids[0]]
 
 
@@ -886,14 +974,17 @@ def test_the_scope_marker_stands_next_to_every_other_marker(zusagen):
     board = _mark(client, ids[0], "ready_to_mail")
     assert _entry(board, ids[0])["oversized"] is True
 
+    # Und er bleibt, wo die Bau-Einschätzung mit dem Versand abtritt: der
+    # Umfang ist eine Aussage über die Seite, nicht über den Weg zur Mail.
     board = _click(client, ids[0], "versendet")
     assert _entry(board, ids[0])["oversized"] is True
+    assert _entry(board, ids[0])["readiness"] == "unbewertet"
 
     board = client.post(
         f"/mailversand/contacts/{ids[0]}", json={"note": "drei Unterseiten"}
     ).json()
     assert _entry(board, ids[0])["oversized"] is True
-    assert _entry(board, ids[0])["readiness"] == "ready_to_mail"
+    assert _board(client, oversized=True)["matched"] == 1
 
 
 def test_the_scope_marker_can_be_taken_back(zusagen):
@@ -918,7 +1009,6 @@ def test_the_scope_filter_is_independent_of_the_other_two(zusagen):
     _scope(client, ids[0], True)
     _mark(client, ids[0], "in_development")
     _scope(client, ids[1], True)
-    _click(client, ids[0], "versendet")
 
     big = _board(client, oversized=True)
     assert big["matched"] == 2
@@ -926,7 +1016,7 @@ def test_the_scope_filter_is_independent_of_the_other_two(zusagen):
     assert _board(client, oversized=False)["matched"] == 0
 
     all_three = _board(
-        client, state="versendet", readiness="in_development", oversized=True
+        client, state="offen", readiness="in_development", oversized=True
     )
     assert [e["contact_id"] for e in all_three["entries"]] == [ids[0]]
 
@@ -1032,7 +1122,9 @@ def test_a_database_from_before_the_assessment_gets_the_new_column(zusagen):
     assert entry["state"] == "versendet"
     assert entry["readiness"] == "unbewertet"
     assert entry["oversized"] is False
-    assert _board(client)["counters"]["unbewertet"] == 2
+    # Nur die offene Zusage steht auf „nicht eingeschätzt": die verschickte
+    # trägt gar keine Marke mehr.
+    assert _board(client)["counters"]["unbewertet"] == 1
     assert _board(client)["counters"]["oversized"] == 0
 
 

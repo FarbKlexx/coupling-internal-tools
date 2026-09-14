@@ -22,6 +22,13 @@
  * Filterzeile darunter — zwei Fragen, zwei Filter, und beide gleichzeitig
  * ergibt die Liste, mit der jemand zu bauen anfängt.
  *
+ * Sie endet allerdings mit der Mail: „Ready to Mail" heißt „gebaut, muss noch
+ * zum Betrieb", und neben einem „verschickt" widerspricht sich das. Welche
+ * Marker eine Zeile setzen kann, steht deshalb in `entry.readiness_actions`
+ * und kommt wie die Zustandsknöpfe aus dem Backend — an einer verschickten
+ * Zeile ist die Liste leer, und die Marker verschwinden mitsamt ihrem
+ * Trenner.
+ *
  * Quer zu *beiden* liegt **„Bigger than expected"**: der Umfang der Seite.
  * Der eine Marker, der die anderen nicht ersetzt, sondern neben ihnen steht —
  * eine Seite kann „In Development" und größer als ein Onepager sein, und
@@ -166,15 +173,6 @@ const READINESS_FILTERS: BuildReadiness[] = [
   "unbewertet",
 ];
 
-/** Die Marker, die an einer Zeile stehen. `unbewertet` ist kein Knopf,
- *  sondern das Ausschalten des gesetzten – siehe `toggleReadiness`. */
-const READINESS_MARKERS: BuildReadiness[] = [
-  "ready_to_build",
-  "in_development",
-  "ready_to_mail",
-  "missing_content",
-];
-
 function readinessOption(id: BuildReadiness): ReadinessOptionInfo | undefined {
   return props.readinessOptions.find((option) => option.id === id);
 }
@@ -196,6 +194,10 @@ function readinessCount(id: BuildReadiness): number {
  * gehört zum Werkzeug, und ein Marker, den man nur setzen kann, wäre für die
  * Zeile eine Einbahnstraße. Der Titel des aktiven Knopfes sagt das auch –
  * mit der Beschreibung, die das Backend für den Rückweg mitschickt.
+ *
+ * Angeboten wird das nur, solange die Mail nicht heraus ist – welche Marker
+ * eine Zeile hat, entscheidet `entry.readiness_actions`, und gegen dieselbe
+ * Regel prüft auch das Schreiben.
  */
 function toggleReadiness(entry: MailEntry, id: BuildReadiness) {
   void props.save(entry.contact_id, {
@@ -607,7 +609,7 @@ function waiting(entry: MailEntry): string {
                nimmt ihn zurück. -->
           <span class="ml-auto flex flex-wrap items-center gap-2">
             <button
-              v-for="id in READINESS_MARKERS"
+              v-for="id in entry.readiness_actions"
               :key="id"
               type="button"
               class="chip"
@@ -624,7 +626,14 @@ function waiting(entry: MailEntry): string {
               {{ readinessOption(id)?.label ?? id }}
             </button>
 
-            <span class="mx-0.5 h-5 w-px bg-zinc-800" aria-hidden="true"></span>
+            <!-- Der Trenner nur, wenn links davon etwas steht: an einer
+                 verschickten Zeile ist die Bau-Spur zu Ende, der Umfang
+                 bleibt. -->
+            <span
+              v-if="entry.readiness_actions.length"
+              class="mx-0.5 h-5 w-px bg-zinc-800"
+              aria-hidden="true"
+            ></span>
             <button
               type="button"
               class="chip"

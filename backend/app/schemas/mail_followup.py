@@ -376,9 +376,19 @@ class MailEntry(BaseModel):
     state: MailState
     state_label: str
     #: Die Bau-Einschätzung — zweite Dimension, unabhängig von `state`.
-    #: `unbewertet`, solange niemand die Website angesehen hat.
+    #: `unbewertet`, solange niemand die Website angesehen hat, **und sobald
+    #: die Mail heraus ist**: die Reihe ist ein Weg bis zur Mail, danach
+    #: beantwortet der Versandstand dieselbe Frage. Der gesetzte Wert bleibt
+    #: dabei gespeichert und kommt zurück, wenn der Versand zurückgesetzt
+    #: wird.
     readiness: BuildReadiness
     readiness_label: str
+    #: Welche Marker diese Zeile setzen kann, in dieser Reihenfolge — leer,
+    #: sobald die Mail heraus ist. Dieselbe Rolle wie `actions` beim
+    #: Versandstand: die Oberfläche baut die Regel nicht nach, sondern zeigt,
+    #: was das Backend ihr mitgibt, und kann deshalb keinen Knopf bauen, der
+    #: mit 400 antwortet.
+    readiness_actions: list[BuildReadiness]
     #: „Bigger than expected" — die dritte Größe, kombinierbar mit den
     #: beiden anderen. `False` heißt „niemand hat das gesagt", nicht „ist ein
     #: Onepager": es ist eine Aussage, deren Fehlen keine ist.
