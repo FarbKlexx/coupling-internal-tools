@@ -591,11 +591,17 @@ class BlacklistSource(str, Enum):
 
     IMPORT = "import"
     MANUELL = "manuell"
+    #: Über einen von Hand angelegten Eintrag im Mailversand in den Bestand
+    #: gekommen. Eigener Wert und nicht `import`, weil die Meldung über eine
+    #: schon bekannte Nummer die Herkunft benennt — „schon einmal importiert"
+    #: wäre für eine Nummer, die nie in einer Datei stand, schlicht falsch.
+    ERFASST = "erfasst"
 
 
 BLACKLIST_SOURCE_LABELS: dict[BlacklistSource, str] = {
     BlacklistSource.IMPORT: "importiert",
     BlacklistSource.MANUELL: "von Hand",
+    BlacklistSource.ERFASST: "von Hand erfasst",
 }
 
 

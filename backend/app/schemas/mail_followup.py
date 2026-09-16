@@ -48,7 +48,7 @@ from enum import Enum
 
 from pydantic import BaseModel, Field
 
-from app.schemas.call_list import ContactField, OutcomeTone
+from app.schemas.call_list import MAX_EMAIL, ContactField, OutcomeTone
 
 #: Nach wie vielen Tagen ohne Antwort eine versendete Mail als unbeantwortet
 #: gilt. Kein technischer Wert, sondern eine fachliche Frist: danach lohnt
@@ -68,6 +68,12 @@ MAIL_PAGE_SIZE = 50
 MAX_MAIL_PAGE_SIZE = 200
 
 MAX_MAIL_NOTE = 500
+
+#: Längengrenzen des von Hand angelegten Betriebs. Dieselben Werte, die der
+#: CSV-Import für dieselben Felder zulässt (`call_list_csv`) — ein Eintrag von
+#: Hand darf nicht mehr können als eine Zeile aus der Datei.
+MAX_MANUAL_NAME = 200
+MAX_MANUAL_NOTE = 2000
 
 
 class MailState(str, Enum):
@@ -421,6 +427,11 @@ class MailEntry(BaseModel):
     #: Archivierte Listen bleiben sichtbar: die Zusage gilt weiter, und die
     #: Mail muss trotzdem heraus.
     list_archived: bool
+    #: Von Hand angelegt statt aus einer Datei importiert. Nur diese Zeilen
+    #: lassen sich hier auch ändern — was aus einer Anrufliste kam, gehört
+    #: der Telefonakquise, und zwei Oberflächen auf denselben Kontakt wären
+    #: zwei Wahrheiten. Die Oberfläche hängt ihren Stift daran.
+    manual: bool
     #: Wann und von wem die Zusage am Telefon aufgenommen wurde — aus dem
     #: Protokoll, also der Nachweis, auf den sich der Versand stützt.
     promised_at: str | None
@@ -561,6 +572,47 @@ class MailBoard(BaseModel):
     #: Die kürzere Frist, nach der angerufen werden soll — aus demselben
     #: Grund mitgeschickt.
     followup_days: int = MAIL_FOLLOWUP_DAYS
+
+
+#: Name der Liste, in der die von Hand angelegten Betriebe landen. Ein
+#: Kontakt braucht eine Liste (`contacts.list_id` ist NOT NULL), und eine
+#: eigene ist ehrlicher als die erstbeste: so steht an jeder Zeile, woher sie
+#: kommt, und die Anrufliste bleibt das, was aus einer Datei kam. Angelegt
+#: wird sie beim ersten Eintrag; wiedergefunden wird sie über ihr Kennzeichen
+#: in der Datenbank, nicht über diesen Namen — er lässt sich umbenennen.
+MANUAL_LIST_NAME = "Manuell erfasst"
+
+
+class ManualEntryRequest(BaseModel):
+    """Ein von Hand erfasster Betrieb — angelegt wie geändert.
+
+    Der Mailversand hat keine eigenen Kontakte: was hier entsteht, ist ein
+    Kontakt der Telefonakquise im Zustand `zugesagt`, samt Protokollzeile.
+    Ohne diese Zeile stünde im Nachweis nichts — und der Nachweis ist der
+    Grund, warum es das Protokoll gibt.
+
+    `betrieb` und `email` sind Pflicht: die Zeile existiert, damit eine Mail
+    hinausgeht, und eine Zusage ohne Adresse ist genau die Nacharbeit, die
+    dieses Werkzeug sichtbar machen soll — sie von Hand *anzulegen* wäre
+    verkehrt herum. Alles andere ist freiwillig; die Nummer ist es auch, aber
+    sie ist die einzige, mit der die Doppelprüfung gegen Listen und Blacklist
+    arbeiten kann.
+    """
+
+    betrieb: str = Field(min_length=1, max_length=MAX_MANUAL_NAME)
+    email: str = Field(min_length=1, max_length=MAX_EMAIL)
+    telefon: str = Field(default="", max_length=MAX_MANUAL_NAME)
+    plz: str = Field(default="", max_length=MAX_MANUAL_NAME)
+    ort: str = Field(default="", max_length=MAX_MANUAL_NAME)
+    website: str = Field(default="", max_length=MAX_MANUAL_NAME)
+    gewerk: str = Field(default="", max_length=MAX_MANUAL_NAME)
+    #: Woher der Kontakt kommt, was besprochen wurde — landet an derselben
+    #: Stelle wie die Anmerkung aus dem Telefonat und im Protokoll.
+    note: str = Field(default="", max_length=MAX_MANUAL_NOTE)
+    #: Nur beim Anlegen: eine schon bekannte Nummer trotzdem übernehmen.
+    #: Dieselbe ausdrückliche Bestätigung wie beim Löschen einer Liste — die
+    #: Meldung nennt vorher, wo die Nummer bereits steht.
+    force: bool = False
 
 
 class MailUpdateRequest(BaseModel):

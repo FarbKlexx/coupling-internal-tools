@@ -330,7 +330,7 @@ def _resolve_times(
     return None, None
 
 
-def _validated_email(raw: str | None) -> str | None:
+def validated_email(raw: str | None) -> str | None:
     """Adresse aus dem Gespräch prüfen. `None` = unverändert, `""` = löschen.
 
     Bewusst keine strenge Prüfung: alles, was ein Postfach beschreibt, hat ein
@@ -381,7 +381,7 @@ def _write_outcome(
     den Anrufzähler — eine Korrektur ist kein zweiter Anruf, sondern derselbe,
     anders eingeordnet.
     """
-    email = _validated_email(request.email)
+    email = validated_email(request.email)
     note = request.note.strip()
     due_at, appointment_at = _resolve_times(request.outcome, request)
     state = OUTCOME_STATES[request.outcome]
@@ -687,8 +687,8 @@ def _prio_key(raw: str) -> str:
     return collapsed.casefold() if collapsed else NO_PRIO_VALUE
 
 
-def _blocked_reason(
-    record: CallRecord,
+def blocked_reason(
+    betrieb: str,
     key: str,
     owners: dict[str, str],
     blocked: dict[str, sqlite3.Row],
@@ -699,11 +699,15 @@ def _blocked_reason(
     auch kennt: „steht in der Liste ‚Handwerker Herford'" sagt, wo der Betrieb
     gerade bearbeitet wird, „steht auf der Blacklist" sagt nur, dass er es
     einmal wurde.
+
+    Nimmt den Betrieb als Text und nicht die ganze Zeile, weil der zweite
+    Aufrufer keine Zeile aus einer Datei hat: der Mailversand prüft damit den
+    von Hand erfassten Betrieb. Eine Prüfung, zwei Wege hinein — zwei
+    Formulierungen desselben Sachverhalts wären die Sorte Abweichung, die
+    niemandem auffällt.
     """
     if not key:
         return None
-
-    betrieb = record.get("betrieb")
 
     if key in owners:
         return f"{betrieb}: die Nummer steht bereits in der Liste „{owners[key]}“."
@@ -715,6 +719,13 @@ def _blocked_reason(
     if entry["source"] == BlacklistSource.MANUELL.value:
         note = f" ({entry['note']})" if entry["note"] else ""
         return f"{betrieb}: die Nummer ist von Hand gesperrt{note}."
+
+    if entry["source"] == BlacklistSource.ERFASST.value:
+        origin = f" (Liste „{entry['list_name']}“)" if entry["list_name"] else ""
+        return (
+            f"{betrieb}: die Nummer wurde am {_german_date(entry['created_at'])} "
+            f"von Hand erfasst{origin}."
+        )
 
     if entry["list_name"]:
         return (
@@ -784,7 +795,7 @@ def _plan_import(
             )
             seen_per_group[group] = set()
 
-        reason = _blocked_reason(record, key, owners, blocked)
+        reason = blocked_reason(record.get("betrieb"), key, owners, blocked)
 
         if has_prio:
             option = groups[group]

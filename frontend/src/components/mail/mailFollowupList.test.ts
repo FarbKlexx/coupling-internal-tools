@@ -12,12 +12,14 @@
 import { describe, expect, it, vi, type Mock } from "vitest";
 import { mount } from "@vue/test-utils";
 import MailFollowupList from "./MailFollowupList.vue";
+import ManualEntryDialog from "./ManualEntryDialog.vue";
 import type {
   BuildReadiness,
   MailActionInfo,
   MailBoard,
   MailEntry,
   MailState,
+  ManualEntry,
   ReadinessOptionInfo,
   ScopeMarkerInfo,
 } from "@/api/mail_followup.api";
@@ -72,6 +74,7 @@ const entry: MailEntry = {
   list_id: "l1",
   list_name: "Handwerker Herford",
   list_archived: false,
+  manual: false,
   promised_at: "2026-09-01T09:00:00Z",
   promised_by: "anruferin",
   note: "will Preise sehen",
@@ -130,12 +133,14 @@ function board(...entries: MailEntry[]): MailBoard {
 /** Die Filter-Aufrufe, typisiert – sonst passt `vi.fn()` nicht auf die Prop. */
 type FilterMock = Mock<(state: MailState | null) => void>;
 type ReadinessFilterMock = Mock<(readiness: BuildReadiness | null) => void>;
+type SubmitContactMock = Mock<(entry: ManualEntry, contactId: string | null) => Promise<boolean>>;
 
 function mountList(
   entries: MailEntry[] = [],
   save = vi.fn().mockResolvedValue(true),
   extra: {
     filterBy?: FilterMock;
+    submitContact?: SubmitContactMock;
     stateFilter?: MailState | null;
     readinessFilter?: BuildReadiness | null;
     oversizedFilter?: boolean | null;
@@ -144,6 +149,7 @@ function mountList(
   const filterBy: FilterMock = extra.filterBy ?? vi.fn();
   const filterByReadiness: ReadinessFilterMock = vi.fn();
   const filterByScope: Mock<() => void> = vi.fn();
+  const submitContact: SubmitContactMock = extra.submitContact ?? vi.fn().mockResolvedValue(true);
 
   const wrapper = mount(MailFollowupList, {
     props: {
@@ -160,6 +166,9 @@ function mountList(
       filterByScope,
       goToPage: vi.fn(),
       save,
+      submitContact,
+      conflict: null,
+      formError: null,
       query: "",
       stateFilter: extra.stateFilter ?? null,
       readinessFilter: extra.readinessFilter ?? null,
@@ -167,7 +176,7 @@ function mountList(
     },
   });
 
-  return { wrapper, save, filterBy, filterByReadiness, filterByScope };
+  return { wrapper, save, filterBy, filterByReadiness, filterByScope, submitContact };
 }
 
 /** Die Knöpfe *einer* Zeile, ohne Reiter und Werkzeugleiste. */
@@ -372,6 +381,71 @@ describe("MailFollowupList", () => {
     expect(writeText.mock.calls[0]?.[0]).toContain("Nachgefasst am: 12.09.2026");
   });
 
+  it("legt einen Betrieb von Hand an", async () => {
+    // Der eine Knopf, der etwas Neues erzeugt – fuer die, die niemand
+    // angerufen hat.
+    const { wrapper, submitContact } = mountList();
+
+    expect(wrapper.findComponent(ManualEntryDialog).exists()).toBe(false);
+
+    await wrapper.find("[data-new-contact]").trigger("click");
+    const dialog = wrapper.findComponent(ManualEntryDialog);
+
+    expect(dialog.exists()).toBe(true);
+    // Ohne Zeile: es wird angelegt, nicht geaendert.
+    expect(dialog.props("entry")).toBeNull();
+
+    const entered = {
+      betrieb: "Dachdecker Wolff",
+      email: "info@wolff-dach.de",
+      telefon: "",
+      plz: "",
+      ort: "",
+      website: "",
+      gewerk: "",
+      note: "",
+      force: false,
+    };
+    dialog.vm.$emit("submit", entered);
+    await wrapper.vm.$nextTick();
+
+    // `null` als Kontakt heisst „anlegen" – dieselbe Funktion macht beides.
+    expect(submitContact).toHaveBeenCalledWith(entered, null);
+  });
+
+  it("bietet den Stift nur an der von Hand erfassten Zeile an", async () => {
+    // Was aus einer Anrufliste kam, gehoert der Telefonakquise: zwei
+    // Oberflaechen auf denselben Kontakt waeren zwei Wahrheiten.
+    const importiert = mountList([entry]);
+
+    expect(importiert.wrapper.find("li [data-edit]").exists()).toBe(false);
+
+    const { wrapper, submitContact } = mountList([
+      { ...entry, manual: true, list_name: "Manuell erfasst" },
+    ]);
+
+    await wrapper.find("li [data-edit]").trigger("click");
+    const dialog = wrapper.findComponent(ManualEntryDialog);
+
+    expect(dialog.props("entry")).toMatchObject({ contact_id: "k1" });
+
+    dialog.vm.$emit("submit", { ...entry, force: false });
+    await wrapper.vm.$nextTick();
+
+    expect(submitContact).toHaveBeenCalledWith(expect.anything(), "k1");
+  });
+
+  it("nennt die Anmerkung der erfassten Zeile nicht „Telefonat“", () => {
+    // Dort hat niemand telefoniert – die Anmerkung kommt aus dem Formular.
+    const importiert = mountList([entry]);
+
+    expect(importiert.wrapper.text()).toContain("Telefonat: „will Preise sehen“");
+
+    const { wrapper } = mountList([{ ...entry, manual: true }]);
+
+    expect(wrapper.text()).toContain("Notiz: „will Preise sehen“");
+  });
+
   it("sagt bei leerer Liste, woher die Zeilen kaemen", () => {
     const empty: MailBoard = { ...board(), entries: [], total: 0, matched: 0 };
     const wrapper = mount(MailFollowupList, {
@@ -389,6 +463,9 @@ describe("MailFollowupList", () => {
         filterByScope: vi.fn(),
         goToPage: vi.fn(),
         save: vi.fn(),
+        submitContact: vi.fn(),
+        conflict: null,
+        formError: null,
         query: "",
         stateFilter: null,
         readinessFilter: null,

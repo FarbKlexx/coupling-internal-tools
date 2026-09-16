@@ -121,6 +121,13 @@ export interface MailEntry {
   list_name: string;
   /** Archivierte Listen bleiben sichtbar – die Zusage gilt weiter. */
   list_archived: boolean;
+  /**
+   * Von Hand angelegt statt aus einer Datei importiert.
+   *
+   * Nur diese Zeilen lassen sich hier ändern: was aus einer Anrufliste kam,
+   * gehört der Telefonakquise. Die Oberfläche hängt ihren Stift daran.
+   */
+  manual: boolean;
   promised_at: string | null;
   promised_by: string;
   /** Anmerkung aus dem Telefonat. */
@@ -305,6 +312,73 @@ export async function updateEntry(
   view: MailView = {},
 ): Promise<MailBoard> {
   const response = await http.post<MailBoard>(`/mailversand/contacts/${contactId}`, update, {
+    params: params(view),
+  });
+  return response.data;
+}
+
+/**
+ * Ein von Hand erfasster Betrieb – zum Anlegen wie zum Ändern.
+ *
+ * Spiegel von `ManualEntryRequest` im Backend. `betrieb` und `email` sind
+ * Pflicht: die Zeile existiert, damit eine Mail hinausgeht. Was daraus
+ * entsteht, ist ein Kontakt der Telefonakquise im Zustand „zugesagt" samt
+ * Protokollzeile – der Mailversand hat auch hier keine eigenen Zeilen.
+ */
+export interface ManualEntry {
+  betrieb: string;
+  email: string;
+  telefon: string;
+  plz: string;
+  ort: string;
+  website: string;
+  gewerk: string;
+  note: string;
+  /** Eine schon bekannte Nummer trotzdem übernehmen – nach dem 409. */
+  force?: boolean;
+}
+
+/** Ein leeres Formular. */
+export function emptyManualEntry(): ManualEntry {
+  return {
+    betrieb: "",
+    email: "",
+    telefon: "",
+    plz: "",
+    ort: "",
+    website: "",
+    gewerk: "",
+    note: "",
+  };
+}
+
+/**
+ * Einen Betrieb von Hand anlegen.
+ *
+ * Antwortet mit der ganzen Ansicht, wie jeder Schreibzugriff hier – deshalb
+ * reist auch hier die Sicht mit. 409 heißt „die Nummer ist schon bekannt",
+ * und die Meldung nennt, wo sie steht; mit `force` geht es danach trotzdem.
+ */
+export async function createEntry(entry: ManualEntry, view: MailView = {}): Promise<MailBoard> {
+  const response = await http.post<MailBoard>("/mailversand/contacts", entry, {
+    params: params(view),
+  });
+  return response.data;
+}
+
+/**
+ * Die Stammdaten eines von Hand erfassten Betriebs ändern.
+ *
+ * PATCH, weil unter derselben Adresse per POST der Versandstand geschrieben
+ * wird: die Methode trennt „was ist aus der Zusage geworden" von „wer ist
+ * dieser Betrieb". Importierte Zeilen lehnt das Backend ab.
+ */
+export async function updateContact(
+  contactId: string,
+  entry: ManualEntry,
+  view: MailView = {},
+): Promise<MailBoard> {
+  const response = await http.patch<MailBoard>(`/mailversand/contacts/${contactId}`, entry, {
     params: params(view),
   });
   return response.data;

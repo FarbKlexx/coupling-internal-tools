@@ -1,13 +1,16 @@
 import { computed, ref, shallowRef, watch } from "vue";
 import axios from "axios";
 import {
+  createEntry,
   fetchBoard,
+  updateContact,
   updateEntry,
   type BuildReadiness,
   type MailBoard,
   type MailState,
   type MailUpdate,
   type MailView,
+  type ManualEntry,
 } from "@/api/mail_followup.api";
 
 /**
@@ -172,6 +175,61 @@ export function useMailFollowup() {
     }
   }
 
+  /**
+   * Die Meldung zu einer schon bekannten Nummer (409), oder `null`.
+   *
+   * Getrennt von `formError`, weil die Oberfläche darauf anders antwortet:
+   * ein Befund bekommt den Knopf „trotzdem anlegen", ein Tippfehler nicht.
+   */
+  const conflict = ref<string | null>(null);
+  /** Fehler des Formulars – sie gehören in den Dialog, nicht über die Liste. */
+  const formError = ref<string | null>(null);
+
+  /**
+   * Einen von Hand erfassten Betrieb anlegen oder ändern.
+   *
+   * Eine Funktion für beides: es ist dasselbe Formular, und der einzige
+   * Unterschied ist, ob es den Kontakt schon gibt. Liefert `true`, wenn
+   * gespeichert wurde – dann schließt der Dialog.
+   *
+   * Nach dem **Anlegen** fallen Suche und Filter weg und die Liste springt auf
+   * Seite eins: der neue Betrieb steht auf „offen", und wer gerade auf
+   * „Verschickt" gefiltert hatte, sähe sonst nach dem Speichern nichts und
+   * hielte es für fehlgeschlagen.
+   */
+  async function submitContact(entry: ManualEntry, contactId: string | null): Promise<boolean> {
+    isSaving.value = true;
+    formError.value = null;
+    conflict.value = null;
+
+    try {
+      board.value = contactId
+        ? await updateContact(contactId, entry, view())
+        : await createEntry(entry, view());
+    } catch (e) {
+      console.error(e);
+      if (axios.isAxiosError(e) && e.response?.status === 409) {
+        conflict.value = readDetail(e, "Diese Nummer ist schon bekannt.");
+      } else {
+        formError.value = readDetail(e, "Der Betrieb wurde nicht gespeichert.");
+      }
+      return false;
+    } finally {
+      isSaving.value = false;
+    }
+
+    if (!contactId) {
+      query.value = "";
+      stateFilter.value = null;
+      readinessFilter.value = null;
+      oversizedFilter.value = null;
+      offset.value = 0;
+      await load();
+    }
+
+    return true;
+  }
+
   return {
     board,
     counters,
@@ -188,8 +246,11 @@ export function useMailFollowup() {
     isLoading,
     isSaving,
     errorMessage,
+    conflict,
+    formError,
 
     load,
+    submitContact,
     filterBy,
     filterByReadiness,
     filterByScope,

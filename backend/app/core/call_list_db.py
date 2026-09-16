@@ -60,7 +60,12 @@ CREATE TABLE IF NOT EXISTS lists (
     columns         TEXT    NOT NULL DEFAULT '[]',
     created_at      TEXT    NOT NULL,
     created_by      TEXT    NOT NULL DEFAULT '',
-    archived        INTEGER NOT NULL DEFAULT 0
+    archived        INTEGER NOT NULL DEFAULT 0,
+    -- Die Sammelliste der von Hand im Mailversand angelegten Betriebe. Es
+    -- gibt höchstens eine; gesucht wird sie über dieses Kennzeichen und
+    -- nicht über den Namen, damit ein Umbenennen sie nicht verliert. NULL
+    -- wie 0 heißt „kam aus einer Datei" — nachträglich hinzugekommen.
+    manual          INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS contacts (
@@ -296,6 +301,7 @@ _ADDED_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {
             "corrects_event_id INTEGER REFERENCES events (id) ON DELETE SET NULL",
         ),
     ),
+    "lists": (("manual", "manual INTEGER"),),
     "mail_status": (
         ("build_readiness", "build_readiness TEXT"),
         ("oversized", "oversized INTEGER"),
@@ -395,13 +401,34 @@ def insert_list(
     source_filename: str,
     columns: str,
     created_by: str,
+    manual: bool = False,
 ) -> None:
     conn.execute(
         "INSERT INTO lists"
-        " (id, name, source_filename, columns, created_at, created_by, archived)"
-        " VALUES (?, ?, ?, ?, ?, ?, 0)",
-        (list_id, name, source_filename, columns, now(), created_by),
+        " (id, name, source_filename, columns, created_at, created_by, archived,"
+        "  manual)"
+        " VALUES (?, ?, ?, ?, ?, ?, 0, ?)",
+        (
+            list_id,
+            name,
+            source_filename,
+            columns,
+            now(),
+            created_by,
+            1 if manual else 0,
+        ),
     )
+
+
+def find_manual_list(conn: sqlite3.Connection) -> sqlite3.Row | None:
+    """Die Sammelliste der von Hand angelegten Betriebe, oder `None`.
+
+    Über das Kennzeichen und nicht über den Namen: die Liste steht in der
+    Listenverwaltung wie jede andere und darf dort umbenannt werden.
+    """
+    return conn.execute(
+        "SELECT * FROM lists WHERE manual = 1 ORDER BY created_at LIMIT 1"
+    ).fetchone()
 
 
 def all_lists(conn: sqlite3.Connection) -> list[sqlite3.Row]:
@@ -509,6 +536,92 @@ def insert_contacts(conn: sqlite3.Connection, rows: Sequence[Sequence[object]]) 
         f" VALUES ({placeholders})",
         rows,
     )
+
+
+def insert_contact(
+    conn: sqlite3.Connection,
+    *,
+    contact_id: str,
+    list_id: str,
+    state: str,
+    fields: dict[str, str],
+) -> None:
+    """Einen einzelnen Kontakt anlegen — der von Hand erfasste Betrieb.
+
+    Eigene Funktion neben `insert_contacts`, obwohl beide dasselbe INSERT
+    machen: dort kommt eine ganze Datei in fester Spaltenreihenfolge an, hier
+    ein Formular mit benannten Feldern. `position` hängt sich hinten an die
+    Liste, damit die Reihenfolge der Erfassung erhalten bleibt.
+
+    `attempts` bleibt bei 0: es hat niemand angerufen.
+    """
+    position = int(
+        conn.execute(
+            "SELECT COALESCE(MAX(position), -1) + 1 AS next FROM contacts"
+            " WHERE list_id = ?",
+            (list_id,),
+        ).fetchone()["next"]
+    )
+
+    conn.execute(
+        "INSERT INTO contacts"
+        " (id, list_id, position, betrieb, telefon, telefon_key, email, ort,"
+        "  plz, website, gewerk, note, state, updated_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            contact_id,
+            list_id,
+            position,
+            fields["betrieb"],
+            fields["telefon"],
+            phone_key(fields["telefon"]),
+            fields["email"],
+            fields["ort"],
+            fields["plz"],
+            fields["website"],
+            fields["gewerk"],
+            fields["note"],
+            state,
+            now(),
+        ),
+    )
+
+
+#: Was sich an einem von Hand erfassten Kontakt ändern lässt. Der Zustand
+#: steht bewusst nicht darin: der ändert sich über Anruf-Ergebnisse und
+#: Richtigstellungen, nie über ein Formular.
+_EDITABLE_CONTACT_COLUMNS = frozenset(
+    {"betrieb", "telefon", "email", "ort", "plz", "website", "gewerk", "note"}
+)
+
+
+def update_contact_fields(
+    conn: sqlite3.Connection, contact_id: str, fields: dict[str, str]
+) -> None:
+    """Stammdaten eines Kontakts überschreiben.
+
+    Die Spaltennamen werden in den SQL-Text interpoliert und deshalb vorher
+    gegen `_EDITABLE_CONTACT_COLUMNS` geprüft — dieselbe Vorsichtsmaßnahme
+    wie in `auth_db.update_user_fields`. `telefon_key` zieht automatisch nach:
+    er ist abgeleitet, und eine Nummer, die sich ändert, ohne dass ihr
+    Schlüssel es tut, wäre in der Doppelprüfung unsichtbar.
+    """
+    unknown = set(fields) - _EDITABLE_CONTACT_COLUMNS
+    if unknown:
+        raise ValueError(f"Unbekannte Kontaktspalten: {sorted(unknown)}")
+
+    assignments = [f"{column} = ?" for column in fields]
+    values: list[object] = list(fields.values())
+
+    if "telefon" in fields:
+        assignments.append("telefon_key = ?")
+        values.append(phone_key(fields["telefon"]))
+
+    assignments.append("updated_at = ?")
+    values.append(now())
+    values.append(contact_id)
+
+    conn.execute(f"UPDATE contacts SET {', '.join(assignments)} WHERE id = ?", values)
 
 
 def find_contact(conn: sqlite3.Connection, contact_id: str) -> sqlite3.Row | None:
@@ -799,6 +912,21 @@ def insert_event(
     )
 
     return int(cursor.lastrowid or 0)
+
+
+def latest_event_id(conn: sqlite3.Connection, contact_id: str) -> int | None:
+    """Die jüngste Protokollzeile dieses Kontakts, oder `None`.
+
+    Nur sie darf richtiggestellt werden — sie allein bestimmt den Zustand des
+    Kontakts. Dieselbe Regel wie im Entscheidungs-Protokoll, hier gebraucht,
+    damit eine geänderte Adresse auf die Zeile zeigen kann, die sie ersetzt.
+    """
+    row = conn.execute(
+        "SELECT id FROM events WHERE contact_id = ? ORDER BY id DESC LIMIT 1",
+        (contact_id,),
+    ).fetchone()
+
+    return None if row is None else int(row["id"])
 
 
 def events_of_contact(conn: sqlite3.Connection, contact_id: str) -> list[sqlite3.Row]:
@@ -1241,7 +1369,7 @@ _MAIL_SELECT = (
     " c.id AS contact_id, c.betrieb, c.telefon, c.email, c.ort, c.plz,"
     " c.website, c.gewerk, c.prio, c.befunde, c.extras,"
     " c.note, c.list_id, l.name AS list_name,"
-    " l.archived AS list_archived,"
+    " l.archived AS list_archived, COALESCE(l.manual, 0) AS list_manual,"
     " m.state AS stored_state, m.build_readiness AS stored_readiness,"
     " m.sent_at, m.answered_at, m.followed_up_at,"
     " m.note AS mail_note, m.updated_at AS mail_updated_at,"

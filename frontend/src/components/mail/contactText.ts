@@ -97,7 +97,9 @@ export function contactText(entry: MailEntry, scopeLabel = "Bigger than expected
     ...line("Antwort am", moment(entry.answered_at)),
 
     ...block("Befunde", entry.befunde),
-    ...block("Anmerkung aus dem Telefonat", entry.note),
+    // „aus dem Telefonat" stimmt nur, wo telefoniert wurde – am von Hand
+    // erfassten Betrieb kommt die Anmerkung aus dem Formular.
+    ...block(entry.manual ? "Notiz" : "Anmerkung aus dem Telefonat", entry.note),
     ...block("Anmerkung zum Versand", entry.mail_note),
   ];
 

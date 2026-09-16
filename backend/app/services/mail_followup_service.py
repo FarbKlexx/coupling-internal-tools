@@ -39,7 +39,12 @@ from io import BytesIO
 
 from app.core import call_list_db as db
 from app.core.csv_utils import csv_rows_to_str
-from app.schemas.call_list import ContactField
+from app.schemas.call_list import (
+    BlacklistSource,
+    CallOutcome,
+    ContactField,
+    ContactState,
+)
 from app.schemas.mail_followup import (
     MAIL_ACTIONS,
     MAIL_FOLLOWUP_DAYS,
@@ -47,6 +52,7 @@ from app.schemas.mail_followup import (
     MAIL_STATE_LABELS,
     MAIL_TIMEOUT_DAYS,
     MAIL_TRANSITIONS,
+    MANUAL_LIST_NAME,
     MAX_MAIL_PAGE_SIZE,
     READINESS_LABELS,
     READINESS_OPTIONS,
@@ -57,8 +63,10 @@ from app.schemas.mail_followup import (
     MailEntry,
     MailState,
     MailUpdateRequest,
+    ManualEntryRequest,
 )
-from app.services.call_list_service import CallListExport
+from app.services import call_list_service
+from app.services.call_list_service import CallListError, CallListExport
 
 #: Kodierung der Ausgabe. Mit BOM, weil diese Datei in Excel geöffnet wird —
 #: ohne sie steht dort „Zaunbau MÃ¼ller". Dieselbe Begründung wie bei den
@@ -72,6 +80,16 @@ class MailFollowupError(Exception):
 
 class MailFollowupNotFoundError(MailFollowupError):
     """Diese Zusage gibt es nicht (mehr) → 404."""
+
+
+class MailFollowupConflictError(MailFollowupError):
+    """Diese Nummer ist schon bekannt → 409.
+
+    Eigener Fehler und eigener Status, weil die Oberfläche darauf anders
+    antwortet als auf einen Tippfehler: sie nennt den Befund und bietet an,
+    ihn zu übergehen. Dasselbe Verfahren wie beim Löschen einer Liste mit
+    Protokoll.
+    """
 
 
 def _cutoff() -> db.MailCutoffs:
@@ -184,6 +202,7 @@ def _entry(row: sqlite3.Row) -> MailEntry:
         list_id=row["list_id"],
         list_name=row["list_name"] or "",
         list_archived=bool(row["list_archived"]),
+        manual=bool(row["list_manual"]),
         promised_at=row["promised_at"],
         promised_by=row["promised_by"] or "",
         note=row["note"] or "",
@@ -497,6 +516,323 @@ def set_state(
         )
 
 
+# --------------------------------------------------------------------------
+# Von Hand erfasste Betriebe
+# --------------------------------------------------------------------------
+#
+# Der Mailversand hat keine eigenen Kontakte — auch diese nicht. Was hier
+# entsteht, ist ein Kontakt der Telefonakquise im Zustand `zugesagt`, in einer
+# eigenen Liste, mit einer Protokollzeile als Nachweis. Alles andere wäre eine
+# zweite Art Zeile, die überall mitgedacht werden müsste: in der Suche, in den
+# Ausgaben, in der Doppelprüfung.
+#
+# Damit gelten für sie dieselben Regeln wie für importierte Zeilen, und das
+# ist der Punkt: eine Zusage ist eine Zusage, gleich woher der Betrieb kam.
+
+
+def _manual_list_id(conn: sqlite3.Connection, username: str) -> str:
+    """Die Sammelliste der erfassten Betriebe — angelegt beim ersten Eintrag.
+
+    Beim ersten und nicht beim Start der Anwendung: eine leere Liste in der
+    Listenverwaltung, die nie jemand benutzt, wäre eine Frage ohne Antwort.
+    """
+    row = db.find_manual_list(conn)
+
+    if row is not None:
+        return str(row["id"])
+
+    list_id = db.new_id()
+    db.insert_list(
+        conn,
+        list_id=list_id,
+        name=MANUAL_LIST_NAME,
+        source_filename="",
+        columns="[]",
+        created_by=username,
+        manual=True,
+    )
+
+    return list_id
+
+
+def _manual_fields(request: ManualEntryRequest) -> dict[str, str]:
+    """Das Formular als Kontaktspalten, alles ohne Randleerzeichen.
+
+    Die Adresse geht durch dieselbe Prüfung wie die aus dem Telefonat — eine
+    getippte Adresse ist nicht vertrauenswürdiger als eine erfragte. Deren
+    Meldung ist allerdings die der Telefonakquise, und für den Aufrufer hier
+    muss es eine des Mailversands sein: dieselbe Übersetzung an der
+    Außenkante, die auch die CSV-Bausteine machen.
+    """
+    try:
+        email = call_list_service.validated_email(request.email)
+    except CallListError as exc:
+        raise MailFollowupError(str(exc)) from exc
+
+    betrieb = request.betrieb.strip()
+
+    if not betrieb:
+        raise MailFollowupError(
+            "Ohne Betrieb geht es nicht — bitte den Namen eintragen."
+        )
+
+    if not email:
+        raise MailFollowupError(
+            "Ohne E-Mail-Adresse geht es nicht: die Zeile ist dazu da, dass eine "
+            "Mail hinausgeht."
+        )
+
+    return {
+        "betrieb": betrieb,
+        "email": email,
+        "telefon": request.telefon.strip(),
+        "ort": request.ort.strip(),
+        "plz": request.plz.strip(),
+        "website": request.website.strip(),
+        "gewerk": request.gewerk.strip(),
+        "note": request.note.strip(),
+    }
+
+
+def _check_number(
+    conn: sqlite3.Connection, fields: dict[str, str], *, force: bool
+) -> str:
+    """Prüfen, ob diese Nummer schon bekannt ist. Liefert ihren Schlüssel.
+
+    Dieselbe Prüfung wie beim Import und mit denselben Meldungen
+    (`call_list_service.blocked_reason`) — ein Betrieb, den wir schon anrufen,
+    soll nicht daneben noch eine Zusage bekommen. Ohne Nummer gibt es nichts
+    zu prüfen; das ist der Preis dafür, dass die Nummer freiwillig ist.
+
+    `force` übergeht den Befund, nachdem die Meldung ihn benannt hat — der
+    Weg, den auch das Löschen einer Liste nimmt: erst 409 mit dem Grund, dann
+    die ausdrückliche Bestätigung.
+    """
+    key = db.phone_key(fields["telefon"])
+
+    if not key or force:
+        return key
+
+    reason = call_list_service.blocked_reason(
+        fields["betrieb"],
+        key,
+        db.phone_key_owners(conn),
+        db.blacklist_lookup(conn, [key]),
+    )
+
+    if reason is not None:
+        raise MailFollowupConflictError(reason)
+
+    return key
+
+
+def _block_number(
+    conn: sqlite3.Connection, key: str, fields: dict[str, str], *, username: str
+) -> None:
+    """Die Nummer sperren, damit kein Import denselben Betrieb noch einmal holt.
+
+    Dieselbe Rolle wie beim Import, nur mit eigener Herkunft: „von Hand
+    erfasst" statt „importiert". Ohne diesen Eintrag wäre der Betrieb nur
+    geschützt, solange die Sammelliste aktiv ist — und die Regel dieser
+    Anwendung ist, dass eine Nummer, die einmal im Bestand war, nicht noch
+    einmal hereinkommt.
+    """
+    if not key:
+        return
+
+    row = db.find_manual_list(conn)
+
+    db.add_to_blacklist(
+        conn,
+        [
+            [
+                key,
+                fields["telefon"],
+                fields["betrieb"],
+                BlacklistSource.ERFASST.value,
+                str(row["id"]) if row else "",
+                str(row["name"]) if row else "",
+                "",
+                db.now(),
+                username,
+            ]
+        ],
+    )
+
+
+def create_entry(
+    request: ManualEntryRequest,
+    *,
+    user_id: str,
+    username: str,
+    query: str = "",
+    state: MailState | None = None,
+    readiness: BuildReadiness | None = None,
+    oversized: bool | None = None,
+    offset: int = 0,
+    limit: int = MAIL_PAGE_SIZE,
+) -> MailBoard:
+    """Einen Betrieb von Hand anlegen — Kontakt, Zusage und Nachweis in einem.
+
+    Drei Schreibvorgänge in einer Transaktion, weil sie zusammen erst eine
+    Zusage ergeben: der Kontakt (Zustand `zugesagt`, ohne Anrufversuch — es
+    hat ja niemand angerufen), die Protokollzeile (wer wann für welche
+    Adresse), und die Sperre der Nummer.
+
+    Die Protokollzeile ist nicht Beiwerk: sie ist derselbe Nachweis, den ein
+    Anruf hinterlässt, und der einzige Grund, warum in der Zeile später
+    „Zusage am … von …" steht.
+    """
+    offset, limit = _limits(offset, limit)
+    cutoff = _cutoff()
+    fields = _manual_fields(request)
+
+    with db.connect() as conn:
+        with db.transaction(conn):
+            key = _check_number(conn, fields, force=request.force)
+            list_id = _manual_list_id(conn, username)
+            contact_id = db.new_id()
+
+            db.insert_contact(
+                conn,
+                contact_id=contact_id,
+                list_id=list_id,
+                state=ContactState.ZUGESAGT.value,
+                fields=fields,
+            )
+            db.insert_event(
+                conn,
+                contact_id=contact_id,
+                list_id=list_id,
+                betrieb=fields["betrieb"],
+                telefon=fields["telefon"],
+                user_id=user_id,
+                username=username,
+                outcome=CallOutcome.ZUGESAGT.value,
+                note=fields["note"],
+                email=fields["email"],
+                due_at=None,
+                appointment_at=None,
+            )
+            _block_number(conn, key, fields, username=username)
+            db.bump_revision(conn)
+
+        return _board(
+            conn,
+            cutoff=cutoff,
+            query=query,
+            state=state,
+            readiness=readiness,
+            oversized=oversized,
+            offset=offset,
+            limit=limit,
+        )
+
+
+def update_entry(
+    contact_id: str,
+    request: ManualEntryRequest,
+    *,
+    user_id: str,
+    username: str,
+    query: str = "",
+    state: MailState | None = None,
+    readiness: BuildReadiness | None = None,
+    oversized: bool | None = None,
+    offset: int = 0,
+    limit: int = MAIL_PAGE_SIZE,
+) -> MailBoard:
+    """Die Stammdaten eines von Hand erfassten Betriebs ändern.
+
+    **Nur** dieser: was aus einer Anrufliste kam, gehört der Telefonakquise.
+    Zwei Oberflächen auf denselben Kontakt wären zwei Wahrheiten, und die
+    Zeile drüben trägt Zustand, Wiedervorlage und Anrufzähler, von denen hier
+    nichts zu sehen ist.
+
+    Eine geänderte **Adresse** hängt eine Protokollzeile an, die auf die
+    bisherige zeigt (`corrects_event_id`) — dieselbe Mechanik wie die
+    Richtigstellung im Anrufprotokoll, und aus demselben Grund: der Nachweis
+    muss die Adresse nennen, für die die Zusage jetzt gilt. Ein Tippfehler im
+    Namen tut das nicht, es ist derselbe Betrieb; deshalb bleibt es bei der
+    Adresse als Auslöser.
+    """
+    offset, limit = _limits(offset, limit)
+    cutoff = _cutoff()
+    fields = _manual_fields(request)
+
+    with db.connect() as conn:
+        with db.transaction(conn):
+            row = db.find_mail_entry(conn, contact_id, cutoff)
+
+            if row is None:
+                raise MailFollowupNotFoundError(
+                    "Zu diesem Betrieb steht keine Zusage (mehr) in der Liste. "
+                    "Bitte die Seite neu laden."
+                )
+
+            if not row["list_manual"]:
+                raise MailFollowupError(
+                    f"„{row['betrieb']}“ kommt aus der Liste "
+                    f"„{row['list_name']}“ und wird dort gepflegt. Ändern "
+                    "lassen sich hier nur von Hand erfasste Betriebe."
+                )
+
+            # Aus der Nummer gerechnet statt aus einer weiteren Spalte der
+            # Mailzeile: der Schlüssel ist abgeleitet, und die Versandliste
+            # hat mit ihm sonst nichts zu tun.
+            old_key = db.phone_key(str(row["telefon"] or ""))
+            key = db.phone_key(fields["telefon"])
+
+            if key != old_key:
+                # Nur die *geänderte* Nummer wird geprüft: die eigene steht in
+                # der Sperrliste, seit dieser Betrieb angelegt wurde, und ein
+                # Formular, das an seinen eigenen Daten scheitert, ließe sich
+                # überhaupt nicht mehr absenden.
+                _check_number(conn, fields, force=request.force)
+
+            db.update_contact_fields(conn, contact_id, fields)
+
+            if fields["email"] != row["email"]:
+                # Die Zusage gilt ab jetzt für eine andere Adresse. Angehängt
+                # statt überschrieben: das Protokoll kennt kein UPDATE.
+                db.insert_event(
+                    conn,
+                    contact_id=contact_id,
+                    list_id=str(row["list_id"]),
+                    betrieb=fields["betrieb"],
+                    telefon=fields["telefon"],
+                    user_id=user_id,
+                    username=username,
+                    outcome=CallOutcome.ZUGESAGT.value,
+                    note=fields["note"],
+                    email=fields["email"],
+                    due_at=None,
+                    appointment_at=None,
+                    corrects_event_id=db.latest_event_id(conn, contact_id),
+                )
+
+            if key != old_key:
+                # Die alte Nummer freigeben und die neue sperren: sonst
+                # blockierte ein Zahlendreher für immer eine Nummer, die
+                # einem ganz anderen Betrieb gehört.
+                if old_key:
+                    db.remove_from_blacklist(conn, old_key)
+                _block_number(conn, key, fields, username=username)
+
+            db.bump_revision(conn)
+
+        return _board(
+            conn,
+            cutoff=cutoff,
+            query=query,
+            state=state,
+            readiness=readiness,
+            oversized=oversized,
+            offset=offset,
+            limit=limit,
+        )
+
+
 def export_board() -> CallListExport:
     """Die Versandliste als CSV.
 
@@ -575,9 +911,12 @@ def export_board() -> CallListExport:
 
 
 __all__ = [
+    "MailFollowupConflictError",
     "MailFollowupError",
     "MailFollowupNotFoundError",
+    "create_entry",
     "export_board",
     "get_board",
     "set_state",
+    "update_entry",
 ]

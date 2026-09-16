@@ -34,6 +34,11 @@
  * Zeile ist die Liste leer, und die Marker verschwinden mitsamt ihrem
  * Trenner.
  *
+ * Nicht jede Zeile kommt aus einer Anrufliste: mit „+ Betrieb" lässt sich
+ * eine von Hand anlegen — für die, die wir ohne Liste akquirieren. Was dabei
+ * entsteht, ist trotzdem eine Zusage der Telefonakquise samt Protokollzeile;
+ * die Zeile trägt `manual` und nur sie bekommt den Stift zum Ändern.
+ *
  * Quer zu *beiden* liegt **„Bigger than expected"**: der Umfang der Seite.
  * Der eine Marker, der die anderen nicht ersetzt, sondern neben ihnen steht —
  * eine Seite kann „In Development" und größer als ein Onepager sein, und
@@ -54,6 +59,8 @@ import {
 } from "@/api/mail_followup.api";
 import { formatMoment } from "@/components/calls/callTime";
 import ContactWebsiteLink from "@/components/calls/ContactWebsiteLink.vue";
+import ManualEntryDialog from "./ManualEntryDialog.vue";
+import type { ManualEntry } from "@/api/mail_followup.api";
 import { contactText } from "./contactText";
 
 const props = defineProps<{
@@ -81,6 +88,12 @@ const props = defineProps<{
       oversized?: boolean;
     },
   ) => Promise<boolean>;
+  /** Einen von Hand erfassten Betrieb anlegen (`null`) oder ändern. */
+  submitContact: (entry: ManualEntry, contactId: string | null) => Promise<boolean>;
+  /** Der Befund zu einer schon bekannten Nummer, oder `null`. */
+  conflict: string | null;
+  /** Jede andere Meldung des Formulars – sie gehört in den Dialog. */
+  formError: string | null;
 }>();
 
 const query = defineModel<string>("query", { required: true });
@@ -275,6 +288,24 @@ function countOf(state: MailState | null): number {
   if (!props.board) return 0;
 
   return state === null ? props.board.counters.gesamt : props.board.counters[state];
+}
+
+/**
+ * Der Dialog für den von Hand erfassten Betrieb.
+ *
+ * `null` = zu, `"neu"` = anlegen, sonst die Zeile, die geändert wird. Ein
+ * Zustand statt zweier Schalter, weil es zwei sich ausschließende Fälle sind
+ * — und weil derselbe Dialog beide bedient.
+ */
+const manualDialog = ref<MailEntry | "neu" | null>(null);
+
+async function submitManual(entry: ManualEntry) {
+  const target = manualDialog.value;
+  if (target === null) return;
+
+  const saved = await props.submitContact(entry, target === "neu" ? null : target.contact_id);
+
+  if (saved) manualDialog.value = null;
 }
 
 /** Welche Zeile gerade eine Anmerkung bekommt – immer höchstens eine. */
@@ -478,11 +509,36 @@ function waiting(entry: MailEntry): string {
         {{ board.counters.ohne_email }} ohne E-Mail-Adresse
       </p>
 
-      <a :href="exportUrl()" class="chip ml-auto" download>
-        <span class="material-symbols-outlined" style="font-size: 16px">download</span>
-        Als CSV
-      </a>
+      <span class="ml-auto flex items-center gap-2">
+        <!-- Der eine Knopf, der etwas Neues anlegt: gefüllt, damit er sich
+             von den Filtern und der Ausgabe daneben unterscheidet. -->
+        <button
+          type="button"
+          class="flex items-center gap-1 rounded-md bg-blue-600 px-3 py-2 text-sm font-medium hover:bg-blue-500 transition-colors"
+          data-new-contact
+          title="Einen Betrieb von Hand anlegen – für die, die niemand angerufen hat"
+          @click="manualDialog = 'neu'"
+        >
+          <span class="material-symbols-outlined" style="font-size: 18px">add</span>
+          Betrieb
+        </button>
+
+        <a :href="exportUrl()" class="chip" download>
+          <span class="material-symbols-outlined" style="font-size: 16px">download</span>
+          Als CSV
+        </a>
+      </span>
     </div>
+
+    <ManualEntryDialog
+      v-if="manualDialog"
+      :entry="manualDialog === 'neu' ? null : manualDialog"
+      :is-busy="isSaving"
+      :conflict="conflict"
+      :error-message="formError"
+      @close="manualDialog = null"
+      @submit="submitManual"
+    />
 
     <p v-if="isLoading && !board" class="text-sm light-grey-text">Versandliste wird geladen …</p>
 
@@ -583,19 +639,36 @@ function waiting(entry: MailEntry): string {
             <!-- Alles über diesen Betrieb als Text – oben rechts, weil der
                  Knopf nichts an der Zeile ändert und deshalb nicht zwischen
                  die Knöpfe gehört, die es tun. -->
-            <button
-              type="button"
-              class="chip"
-              :class="copied === entry.contact_id ? 'chip--on' : ''"
-              data-copy
-              :title="`Alle Angaben zu ${entry.betrieb} als Text kopieren`"
-              @click="copyEntry(entry)"
-            >
-              <span class="material-symbols-outlined" style="font-size: 16px">
-                {{ copied === entry.contact_id ? "check" : "content_copy" }}
-              </span>
-              {{ copied === entry.contact_id ? "Kopiert" : "Kopieren" }}
-            </button>
+            <span class="flex items-center justify-end gap-2">
+              <!-- Nur an der von Hand erfassten Zeile: was aus einer
+                   Anrufliste kam, gehört der Telefonakquise, und zwei
+                   Oberflächen auf denselben Kontakt wären zwei Wahrheiten. -->
+              <button
+                v-if="entry.manual"
+                type="button"
+                class="chip"
+                data-edit
+                :title="`Die Angaben zu ${entry.betrieb} ändern`"
+                @click="manualDialog = entry"
+              >
+                <span class="material-symbols-outlined" style="font-size: 16px">edit</span>
+                Bearbeiten
+              </button>
+
+              <button
+                type="button"
+                class="chip"
+                :class="copied === entry.contact_id ? 'chip--on' : ''"
+                data-copy
+                :title="`Alle Angaben zu ${entry.betrieb} als Text kopieren`"
+                @click="copyEntry(entry)"
+              >
+                <span class="material-symbols-outlined" style="font-size: 16px">
+                  {{ copied === entry.contact_id ? "check" : "content_copy" }}
+                </span>
+                {{ copied === entry.contact_id ? "Kopiert" : "Kopieren" }}
+              </button>
+            </span>
 
             <p v-if="entry.sent_at">
               versendet {{ formatMoment(entry.sent_at) }}
@@ -617,8 +690,10 @@ function waiting(entry: MailEntry): string {
           </div>
         </div>
 
+        <!-- „Telefonat" stimmt nur, wo telefoniert wurde: am von Hand
+             erfassten Betrieb ist es die Anmerkung aus dem Formular. -->
         <p v-if="entry.note" class="text-xs text-zinc-500 break-words whitespace-pre-line">
-          Telefonat: „{{ entry.note }}“
+          {{ entry.manual ? "Notiz" : "Telefonat" }}: „{{ entry.note }}“
         </p>
 
         <!-- Die Knöpfe dieser Zeile – aus `entry.actions`, nicht aus einer

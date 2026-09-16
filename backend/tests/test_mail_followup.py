@@ -679,6 +679,233 @@ def test_a_note_can_be_written_without_touching_the_state(zusagen, call_db):
 
 
 # ------------------------------
+# Von Hand erfasste Betriebe
+# ------------------------------
+
+
+def _create(client, expected=201, **fields):
+    """Einen Betrieb von Hand anlegen, wie es das Formular tut."""
+    body = {"betrieb": "Dachdecker Wolff", "email": "info@wolff-dach.de"}
+    body.update(fields)
+    response = client.post("/mailversand/contacts", json=body)
+    assert response.status_code == expected, response.text
+    return response.json()
+
+
+def _edit(client, contact_id, expected=200, **fields):
+    body = {"betrieb": "Dachdecker Wolff", "email": "info@wolff-dach.de"}
+    body.update(fields)
+    response = client.patch(f"/mailversand/contacts/{contact_id}", json=body)
+    assert response.status_code == expected, response.text
+    return response.json()
+
+
+def _row(board, betrieb):
+    return next(e for e in board["entries"] if e["betrieb"] == betrieb)
+
+
+def test_a_manual_entry_is_a_promise_like_any_other(zusagen):
+    """Der Mailversand hat keine eigenen Kontakte — auch hier nicht.
+
+    Was entsteht, ist ein Kontakt der Telefonakquise im Zustand `zugesagt`,
+    in einer eigenen Liste, mit einer Protokollzeile als Nachweis.
+    """
+    client, _ = zusagen
+    board = _create(client, telefon="05221 999", ort="Bünde", note="Messe Hannover")
+    entry = _row(board, "Dachdecker Wolff")
+
+    assert entry["state"] == "offen"
+    assert entry["manual"] is True
+    assert entry["list_name"] == "Manuell erfasst"
+    assert entry["email"] == "info@wolff-dach.de"
+    assert entry["note"] == "Messe Hannover"
+    # Der Nachweis: wer wann. Ohne die Protokollzeile stünde hier nichts.
+    assert entry["promised_at"]
+    assert entry["promised_by"] == "chefin"
+    # Und sie ist eine ganz normale Zeile: der Versand-Knopf ist da.
+    assert "versendet" in entry["actions"]
+    assert board["counters"]["gesamt"] == 3
+
+
+def test_the_manual_entry_stands_in_the_call_protocol(zusagen):
+    """Eine Zusage ist eine Zusage, gleich woher der Betrieb kam."""
+    client, _ = zusagen
+    _create(client, telefon="05221 999")
+
+    decisions = client.get("/telefonakquise/decisions").json()
+    latest = decisions["entries"][0]
+
+    assert latest["betrieb"] == "Dachdecker Wolff"
+    assert latest["outcome"] == "zugesagt"
+    assert latest["username"] == "chefin"
+
+
+def test_a_manual_entry_is_never_called_by_the_workbench(zusagen):
+    """Sie steht schon auf „zugesagt" — der Arbeitsplatz holt sie nicht.
+
+    Sonst bekäme jemand einen Betrieb vorgelegt, dem er gerade eine Mail
+    schreiben wollte.
+    """
+    client, _ = zusagen
+    _create(client, telefon="05221 999")
+
+    state = client.get("/telefonakquise/state").json()
+
+    assert state["contact"] is None
+    assert state["counters"]["zugesagt"] == 3
+
+
+def test_a_number_we_already_work_on_is_refused_and_can_be_forced(zusagen):
+    """Dieselbe Prüfung wie beim Import, mit derselben Meldung.
+
+    Und derselbe Rückweg wie beim Löschen einer Liste: erst der Befund, dann
+    die ausdrückliche Bestätigung.
+    """
+    client, _ = zusagen
+    body = _create(client, telefon="05221 111", expected=409)
+
+    assert "Handwerker Herford" in body["detail"]
+
+    board = _create(client, telefon="05221 111", force=True)
+
+    assert _row(board, "Dachdecker Wolff")["manual"] is True
+
+
+def test_the_manual_number_blocks_the_next_import(zusagen, call_db):
+    """Sonst holte die nächste Analyse denselben Betrieb in die Anrufliste."""
+    client, _ = zusagen
+    _create(client, telefon="05224 4711")
+
+    again = ("Betrieb;Telefon\r\n" "Dachdecker Wolff;05224 4711\r\n").encode("utf-8")
+    analyse = client.post(
+        "/telefonakquise/lists/analyse",
+        files={"file": ("zweite.csv", again, "text/csv")},
+    )
+    assert analyse.status_code == 200, analyse.text
+    result = analyse.json()
+
+    assert result["contacts"] == 0
+    # Solange die Sammelliste aktiv ist, nennt die Meldung sie: das ist der
+    # Ort, an dem der Betrieb gerade bearbeitet wird.
+    assert "Manuell erfasst" in result["duplicates"][0]["reason"]
+
+    # Und danach greift die Sperre. Sie ist der Grund, dass Archivieren die
+    # Nummern gesperrt hält — mit der Herkunft in der Meldung, denn „schon
+    # einmal importiert" wäre für eine Nummer, die nie in einer Datei stand,
+    # schlicht falsch.
+    lists = client.get("/telefonakquise/state").json()["lists"]
+    manual = next(entry for entry in lists if entry["name"] == "Manuell erfasst")
+    archived = client.patch(
+        f"/telefonakquise/lists/{manual['id']}", json={"archived": True}
+    )
+    assert archived.status_code == 200, archived.text
+
+    result = client.post(
+        "/telefonakquise/lists/analyse",
+        files={"file": ("dritte.csv", again, "text/csv")},
+    ).json()
+
+    assert result["contacts"] == 0
+    assert "von Hand erfasst" in result["duplicates"][0]["reason"]
+
+
+def test_only_a_manual_row_can_be_edited_here(zusagen):
+    """Was aus einer Anrufliste kam, gehört der Telefonakquise.
+
+    Zwei Oberflächen auf denselben Kontakt wären zwei Wahrheiten — die Zeile
+    drüben trägt Zustand, Wiedervorlage und Anrufzähler.
+    """
+    client, ids = zusagen
+    body = _edit(client, ids[0], expected=400)
+
+    assert "Handwerker Herford" in body["detail"]
+
+
+def test_a_corrected_address_appends_to_the_record(zusagen):
+    """Die Zusage gilt ab jetzt für eine andere Adresse — das muss dastehen.
+
+    Angehängt statt überschrieben: dasselbe Verfahren wie die
+    Richtigstellung im Anrufprotokoll, weil `events` kein UPDATE kennt.
+    """
+    client, _ = zusagen
+    created = _create(client, telefon="05221 999")
+    contact_id = _row(created, "Dachdecker Wolff")["contact_id"]
+
+    board = _edit(client, contact_id, email="buero@wolff-dach.de", telefon="05221 999")
+    entry = _row(board, "Dachdecker Wolff")
+
+    assert entry["email"] == "buero@wolff-dach.de"
+
+    decisions = client.get("/telefonakquise/decisions").json()["entries"]
+
+    assert decisions[0]["email"] == "buero@wolff-dach.de"
+    assert decisions[0]["corrects_event_id"] is not None
+    # Die alte Zeile bleibt lesbar — das ist der Unterschied zwischen
+    # „berichtigt" und „nie passiert".
+    assert decisions[1]["email"] == "info@wolff-dach.de"
+
+
+def test_a_typo_in_the_name_is_no_correction(zusagen):
+    """Ein anders geschriebener Betrieb ist derselbe Betrieb.
+
+    Das Protokoll hält fest, für welche *Adresse* die Zusage gilt; einen
+    Namen zu berichtigen ist keine neue Einwilligung.
+    """
+    client, _ = zusagen
+    created = _create(client, betrieb="Dachdecker Wolf", telefon="05221 999")
+    contact_id = _row(created, "Dachdecker Wolf")["contact_id"]
+
+    before = len(client.get("/telefonakquise/decisions").json()["entries"])
+    board = _edit(client, contact_id, betrieb="Dachdecker Wolff", telefon="05221 999")
+
+    assert _row(board, "Dachdecker Wolff")["contact_id"] == contact_id
+    assert len(client.get("/telefonakquise/decisions").json()["entries"]) == before
+
+
+def test_a_corrected_number_releases_the_wrong_one(zusagen):
+    """Sonst sperrte ein Zahlendreher für immer eine fremde Nummer."""
+    client, _ = zusagen
+    created = _create(client, telefon="05221 99")
+    contact_id = _row(created, "Dachdecker Wolff")["contact_id"]
+
+    _edit(client, contact_id, telefon="05221 999")
+
+    blocked = {
+        entry["telefon_key"]
+        for entry in client.get("/telefonakquise/blacklist").json()["entries"]
+    }
+
+    assert "0522199" not in blocked
+    assert "05221999" in blocked
+
+
+def test_an_entry_without_a_business_or_an_address_is_refused(zusagen):
+    """Beide sind Pflicht — und Leerzeichen sind keine Eingabe."""
+    client, _ = zusagen
+
+    _create(client, betrieb="   ", expected=400)
+    _create(client, email="   ", expected=400)
+    _create(client, email="keine-adresse", expected=400)
+    # Ganz fehlend faengt Pydantic ab, bevor der Service es sieht.
+    assert (
+        client.post("/mailversand/contacts", json={"betrieb": "X"}).status_code == 422
+    )
+
+
+def test_the_manual_list_is_created_once_and_then_reused(zusagen):
+    client, _ = zusagen
+    _create(client, telefon="05221 999")
+    _create(client, betrieb="Fliesen Kamp", email="kamp@example.de")
+
+    lists = client.get("/telefonakquise/state").json()["lists"]
+    manual = [entry for entry in lists if entry["name"] == "Manuell erfasst"]
+
+    assert len(manual) == 1
+    assert manual[0]["counters"]["gesamt"] == 2
+    assert manual[0]["counters"]["zugesagt"] == 2
+
+
+# ------------------------------
 # Die Bau-Einschätzung
 # ------------------------------
 

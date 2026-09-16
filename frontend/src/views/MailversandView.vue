@@ -8,7 +8,9 @@
         hinterhertelefoniert –, nach {{ timeoutDays }} Tagen gilt sie als unbeantwortet. Beides
         setzt niemand, beides ergibt sich aus dem Versanddatum. Die Marker daneben sagen, wo die
         Website steht – und „Bigger than expected“ als einziger von ihnen etwas über ihren Umfang,
-        weshalb er sich mit jedem anderen zusammen setzen lässt.
+        weshalb er sich mit jedem anderen zusammen setzen lässt. Betriebe ohne Anrufliste kommen
+        über „+ Betrieb“ herein: sie werden als Zusage angelegt, mit Protokolleintrag wie jede
+        andere.
       </p>
     </div>
 
@@ -44,6 +46,9 @@
       :filter-by-scope="filterByScope"
       :go-to-page="goToPage"
       :save="save"
+      :submit-contact="submitContact"
+      :conflict="conflict"
+      :form-error="formError"
     />
   </div>
 </template>
@@ -67,7 +72,10 @@ const {
   isLoading,
   isSaving,
   errorMessage,
+  conflict,
+  formError,
   load,
+  submitContact,
   filterBy,
   filterByReadiness,
   filterByScope,

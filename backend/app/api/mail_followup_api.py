@@ -1,7 +1,7 @@
 """HTTP-Schicht des Mailversands.
 
-Drei Endpunkte: die Ansicht lesen, einen Zustand setzen, alles als CSV
-herausholen. Der schreibende Aufruf antwortet mit der ganzen Ansicht, wie
+Fünf Endpunkte: die Ansicht lesen, einen Zustand setzen, einen Betrieb von
+Hand anlegen, dessen Stammdaten ändern, alles als CSV herausholen. Der schreibende Aufruf antwortet mit der ganzen Ansicht, wie
 überall in dieser Anwendung — und nimmt dafür Suche, Filter und Seite als
 Query-Parameter entgegen, damit die Liste nach dem Klick dort stehen bleibt,
 wo sie war (dasselbe Verfahren wie beim Freigeben einer gesperrten Nummer).
@@ -29,13 +29,17 @@ from app.schemas.mail_followup import (
     MailBoard,
     MailState,
     MailUpdateRequest,
+    ManualEntryRequest,
 )
 from app.services.mail_followup_service import (
+    MailFollowupConflictError,
     MailFollowupError,
     MailFollowupNotFoundError,
+    create_entry,
     export_board,
     get_board,
     set_state,
+    update_entry,
 )
 
 # Berechtigung, hinter der dieser Router hängt. `main.py` liest die Konstante
@@ -47,7 +51,12 @@ router = APIRouter(prefix="/mailversand", tags=["mailversand"])
 
 
 def _fail(exc: MailFollowupError) -> HTTPException:
-    status = 404 if isinstance(exc, MailFollowupNotFoundError) else 400
+    if isinstance(exc, MailFollowupNotFoundError):
+        status = 404
+    elif isinstance(exc, MailFollowupConflictError):
+        status = 409
+    else:
+        status = 400
 
     return HTTPException(status_code=status, detail=str(exc))
 
@@ -104,6 +113,75 @@ def change_state(
         return set_state(
             contact_id,
             request,
+            username=user.username,
+            query=q,
+            state=state,
+            readiness=readiness,
+            oversized=oversized,
+            offset=offset,
+            limit=limit,
+        )
+    except MailFollowupError as exc:
+        raise _fail(exc) from exc
+
+
+@router.post("/contacts", response_model=MailBoard, status_code=201)
+def create_contact(
+    request: ManualEntryRequest,
+    q: str = Query(default="", max_length=200),
+    state: MailState | None = Query(default=None),
+    readiness: BuildReadiness | None = Query(default=None),
+    oversized: bool | None = Query(default=None),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=MAIL_PAGE_SIZE, ge=1, le=MAX_MAIL_PAGE_SIZE),
+    user: CurrentUser = Depends(current_user),
+) -> MailBoard:
+    """Einen Betrieb von Hand anlegen — für die, die niemand angerufen hat.
+
+    Antwortet mit der ganzen Ansicht, wie jeder Schreibzugriff hier. 409, wenn
+    die Nummer schon bekannt ist: die Meldung nennt, wo sie steht, und
+    `force` im Körper übergeht den Befund danach ausdrücklich.
+    """
+    try:
+        return create_entry(
+            request,
+            user_id=user.id,
+            username=user.username,
+            query=q,
+            state=state,
+            readiness=readiness,
+            oversized=oversized,
+            offset=offset,
+            limit=limit,
+        )
+    except MailFollowupError as exc:
+        raise _fail(exc) from exc
+
+
+@router.patch("/contacts/{contact_id}", response_model=MailBoard)
+def edit_contact(
+    contact_id: str,
+    request: ManualEntryRequest,
+    q: str = Query(default="", max_length=200),
+    state: MailState | None = Query(default=None),
+    readiness: BuildReadiness | None = Query(default=None),
+    oversized: bool | None = Query(default=None),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=MAIL_PAGE_SIZE, ge=1, le=MAX_MAIL_PAGE_SIZE),
+    user: CurrentUser = Depends(current_user),
+) -> MailBoard:
+    """Die Stammdaten eines von Hand erfassten Betriebs ändern.
+
+    PATCH statt POST, weil unter derselben Adresse schon der Versandstand
+    geschrieben wird: die Methode trennt „was ist aus der Zusage geworden" von
+    „wer ist dieser Betrieb". Importierte Zeilen lehnt der Service ab — die
+    gehören der Telefonakquise.
+    """
+    try:
+        return update_entry(
+            contact_id,
+            request,
+            user_id=user.id,
             username=user.username,
             query=q,
             state=state,
