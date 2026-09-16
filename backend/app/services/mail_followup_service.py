@@ -10,11 +10,12 @@ Vier Entscheidungen prägen dieses Modul:
   Telefonakquise im Zustand `zugesagt`. Ein Betrieb, dessen Zusage
   richtiggestellt wird, verschwindet damit von selbst aus der Liste — und
   nicht erst, wenn jemand daran denkt.
-* **Die Frist wird gerechnet, nicht geschrieben.** „Keine Antwort nach 30
-  Tagen" folgt aus dem Versanddatum (siehe `MailState` und `_MAIL_STATE` im
-  Datenmodul). Es gibt in dieser Anwendung keinen Hintergrundjob, und ein
-  Feld, das erst beim nächsten Klick nachgezogen würde, wäre bis dahin
-  falsch.
+* **Die Fristen werden gerechnet, nicht geschrieben.** „Nachfassen nach 10
+  Tagen" und „keine Antwort nach 30 Tagen" folgen beide aus dem Versanddatum
+  (siehe `MailState` und `_MAIL_STATE` im Datenmodul). Es gibt in dieser
+  Anwendung keinen Hintergrundjob, und ein Feld, das erst beim nächsten Klick
+  nachgezogen würde, wäre bis dahin falsch. Dass beides rückwirkend für längst
+  verschickte Zeilen gilt, ist keine Migration, sondern dieselbe Rechnung.
 * **Die Bau-Einschätzung ist eine zweite Dimension**, kein sechster
   Zustand: `BuildReadiness` sagt, ob aus der bestehenden Website eine neue
   werden kann — und, mit `in_development`/`ready_to_mail`, dass sie gebaut
@@ -41,6 +42,7 @@ from app.core.csv_utils import csv_rows_to_str
 from app.schemas.call_list import ContactField
 from app.schemas.mail_followup import (
     MAIL_ACTIONS,
+    MAIL_FOLLOWUP_DAYS,
     MAIL_PAGE_SIZE,
     MAIL_STATE_LABELS,
     MAIL_TIMEOUT_DAYS,
@@ -72,15 +74,23 @@ class MailFollowupNotFoundError(MailFollowupError):
     """Diese Zusage gibt es nicht (mehr) → 404."""
 
 
-def _cutoff() -> str:
-    """Der Zeitpunkt, vor dem ein Versand als unbeantwortet gilt.
+def _cutoff() -> db.MailCutoffs:
+    """Die beiden Zeitpunkte, vor denen ein Versand fällig wird.
 
     Einmal pro Anfrage gerechnet und dann durchgereicht: Liste, Zähler und
-    Schreibpfad sollen denselben Stichtag benutzen, sonst wechselt eine Zeile
-    zwischen zwei Abfragen derselben Antwort die Gruppe.
+    Schreibpfad sollen dieselben Stichtage benutzen, sonst wechselt eine Zeile
+    zwischen zwei Abfragen derselben Antwort die Gruppe. Aus *einem*
+    `now()` gerechnet, damit die beiden Fristen nicht einen Wimpernschlag
+    auseinanderliegen.
     """
-    moment = datetime.now(timezone.utc) - timedelta(days=MAIL_TIMEOUT_DAYS)
-    return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
+    now = datetime.now(timezone.utc)
+
+    def stamp(days: int) -> str:
+        return (now - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    return db.MailCutoffs(
+        answer=stamp(MAIL_TIMEOUT_DAYS), followup=stamp(MAIL_FOLLOWUP_DAYS)
+    )
 
 
 def _parse(stamp: str | None) -> datetime | None:
@@ -184,11 +194,12 @@ def _entry(row: sqlite3.Row) -> MailEntry:
         readiness_actions=_readiness_actions(state),
         oversized=bool(row["oversized_flag"]),
         # Der einzige Fall, in dem sich der angezeigte vom gespeicherten
-        # Zustand unterscheidet: die abgelaufene Frist. Ohne diesen Hinweis
+        # Zustand unterscheidet: eine abgelaufene Frist. Ohne diesen Hinweis
         # sähe die Zeile aus, als hätte jemand sie abgeschlossen.
         automatic=state is not stored,
         sent_at=row["sent_at"],
         answered_at=row["answered_at"],
+        followed_up_at=row["followed_up_at"],
         days_since_sent=_days_since(row["sent_at"]),
         mail_note=row["mail_note"] or "",
         updated_at=row["mail_updated_at"],
@@ -199,7 +210,7 @@ def _entry(row: sqlite3.Row) -> MailEntry:
 
 def _counters(
     conn: sqlite3.Connection,
-    cutoff: str,
+    cutoff: db.MailCutoffs,
     *,
     state: MailState | None,
     readiness: BuildReadiness | None,
@@ -241,6 +252,8 @@ def _counters(
         gesamt=sum(total for total, _ in totals.values()),
         offen=count(MailState.OFFEN),
         versendet=count(MailState.VERSENDET),
+        nachfassen=count(MailState.NACHFASSEN),
+        nachgefasst=count(MailState.NACHGEFASST),
         positiv=count(MailState.POSITIV),
         abgelehnt=count(MailState.ABGELEHNT),
         keine_antwort=count(MailState.KEINE_ANTWORT),
@@ -257,7 +270,7 @@ def _counters(
 def _board(
     conn: sqlite3.Connection,
     *,
-    cutoff: str,
+    cutoff: db.MailCutoffs,
     query: str,
     state: MailState | None,
     readiness: BuildReadiness | None,
@@ -324,27 +337,35 @@ def get_board(
         )
 
 
-def _times(row: sqlite3.Row, target: MailState) -> tuple[str | None, str | None]:
-    """Versand- und Antwortdatum nach diesem Übergang.
+def _times(
+    row: sqlite3.Row, target: MailState
+) -> tuple[str | None, str | None, str | None]:
+    """Versand-, Antwort- und Nachfassdatum nach diesem Übergang.
 
-    * `versendet` setzt das Versanddatum **neu** — auch beim Nachfassen, denn
-      genau dann soll die Frist von vorn laufen.
+    * `versendet` setzt das Versanddatum **neu** — auch beim Nachfassen per
+      Mail, denn genau dann soll die Frist von vorn laufen. Ein Anruf zur
+      *alten* Mail gehört dann nicht mehr dazu, also fällt er weg.
+    * `nachgefasst` schreibt das Datum des Anrufs und lässt das Versanddatum
+      stehen: die lange Frist läuft weiter ab dem Versand, sonst ließe sich
+      „keine Antwort" durch Anrufe beliebig hinausschieben.
     * eine Antwort lässt das Versanddatum stehen: „am 3. geschrieben, am 9.
       geantwortet" ist die Auskunft, für die die Liste da ist.
     * `keine_antwort` ist keine Antwort und bekommt deshalb kein Antwortdatum.
-    * `offen` verwirft beides — es ist der Rückweg aus dem Fehlklick, und ein
+    * `offen` verwirft alles — es ist der Rückweg aus dem Fehlklick, und ein
       Versanddatum ohne Versand wäre schlimmer als keines.
     """
     now = db.now()
 
     if target is MailState.VERSENDET:
-        return now, None
+        return now, None, None
+    if target is MailState.NACHGEFASST:
+        return row["sent_at"], None, now
     if target in (MailState.POSITIV, MailState.ABGELEHNT):
-        return row["sent_at"], now
+        return row["sent_at"], now, row["followed_up_at"]
     if target is MailState.KEINE_ANTWORT:
-        return row["sent_at"], None
+        return row["sent_at"], None, row["followed_up_at"]
 
-    return None, None
+    return None, None, None
 
 
 def set_state(
@@ -396,10 +417,11 @@ def set_state(
                 # nicht der angezeigte — sonst schriebe ein Notizzettel die
                 # abgelaufene Frist als Entscheidung fest.
                 stored = MailState(row["stored_state"] or MailState.OFFEN.value)
-                target, sent_at, answered_at = (
+                target, sent_at, answered_at, followed_up_at = (
                     stored,
                     row["sent_at"],
                     row["answered_at"],
+                    row["followed_up_at"],
                 )
             elif target not in _actions(row, current):
                 raise MailFollowupError(
@@ -409,7 +431,7 @@ def set_state(
                     "Seite neu laden."
                 )
             else:
-                sent_at, answered_at = _times(row, target)
+                sent_at, answered_at, followed_up_at = _times(row, target)
 
             if request.readiness is not None and target is not MailState.OFFEN:
                 # Die Einschätzung gehört zum Weg bis zur Mail. Danach ist sie
@@ -427,6 +449,7 @@ def set_state(
                 state=target.value,
                 sent_at=sent_at,
                 answered_at=answered_at,
+                followed_up_at=followed_up_at,
                 # Fehlt der Marker, bleibt der gesetzte stehen: ein Klick auf
                 # „Mail versendet" darf eine Einschätzung nicht verwerfen.
                 # Entfernt wird sie mit `unbewertet`, nicht durch Weglassen.
@@ -498,6 +521,7 @@ def export_board() -> CallListExport:
         "Umfang",
         "Mail versendet am (UTC)",
         "Tage seit Versand",
+        "Nachgefasst am (UTC)",
         "Antwort am (UTC)",
         "Zuletzt geändert von",
         "Anmerkung (Telefonat)",
@@ -533,6 +557,7 @@ def export_board() -> CallListExport:
             SCOPE_MARKER.label if entry.oversized else "",
             entry.sent_at or "",
             "" if entry.days_since_sent is None else str(entry.days_since_sent),
+            entry.followed_up_at or "",
             entry.answered_at or "",
             entry.updated_by,
             entry.note,

@@ -14,6 +14,11 @@
  * Beschriftung, Beschreibung und Tonlage der Knöpfe reisen ebenfalls als
  * Daten mit (`actions`). Was hier steht, ist reine Darstellung.
  *
+ * Zwei der Reiter füllen sich von selbst: `nachfassen` nach zehn,
+ * `keine_antwort` nach dreißig Tagen ohne Antwort. Beides rechnet das Backend
+ * aus dem Versanddatum — die Oberfläche sieht davon nur, dass eine Zeile in
+ * einem anderen Reiter steht und `automatic` trägt.
+ *
  * Quer zu den Reitern liegt die **Bau-Einschätzung**: vier Marker je Zeile,
  * die sagen, wo die Website steht — ob aus der bestehenden eine neue werden
  * kann, ob sie gebaut wird, und ob sie fertig ist und nur noch zum Betrieb
@@ -59,6 +64,8 @@ const props = defineProps<{
    *  Antwort. `null`, solange nichts geladen ist. */
   scopeMarker: ScopeMarkerInfo | null;
   timeoutDays: number;
+  /** Die kürzere Frist, nach der angerufen werden soll. */
+  followupDays: number;
   isLoading: boolean;
   isSaving: boolean;
   filterBy: (state: MailState | null) => void;
@@ -104,6 +111,8 @@ const SCOPE_ICON = "layers";
 const ICONS: Record<MailState, string> = {
   offen: "drafts",
   versendet: "send",
+  nachfassen: "phone_callback",
+  nachgefasst: "phone_in_talk",
   positiv: "mark_email_read",
   abgelehnt: "do_not_disturb_on",
   keine_antwort: "hourglass_disabled",
@@ -241,6 +250,8 @@ const TABS: { id: MailState | null; label: string }[] = [
   { id: null, label: "Alle" },
   { id: "offen", label: "Offen" },
   { id: "versendet", label: "Verschickt" },
+  { id: "nachfassen", label: "Nachfassen" },
+  { id: "nachgefasst", label: "Nachgefasst" },
   { id: "positiv", label: "Antwort positiv" },
   { id: "abgelehnt", label: "Abgelehnt" },
   { id: "keine_antwort", label: "Keine Antwort" },
@@ -289,12 +300,20 @@ function toneClass(tone: MailActionInfo["tone"]): string {
   return "outcome";
 }
 
-/** Farbe des Zustands in der Zeile. */
+/**
+ * Farbe des Zustands in der Zeile.
+ *
+ * Bernstein heißt in dieser Anwendung „hier ist noch etwas zu tun" – und
+ * genau das sind die beiden abgelaufenen Fristen, weshalb „nachfassen" sie
+ * mit „keine Antwort" teilt (unterschieden werden sie durch Symbol und
+ * Beschriftung). „nachgefasst" wartet wie „verschickt" und ist deshalb blau:
+ * es ist dasselbe Warten, nur eines mit einem Anruf dahinter.
+ */
 function stateClass(state: MailState): string {
   if (state === "positiv") return "text-emerald-400";
   if (state === "abgelehnt") return "text-red-400";
-  if (state === "keine_antwort") return "text-amber-400";
-  if (state === "versendet") return "text-blue-300";
+  if (state === "keine_antwort" || state === "nachfassen") return "text-amber-400";
+  if (state === "versendet" || state === "nachgefasst") return "text-blue-300";
   return "light-grey-text";
 }
 
@@ -333,6 +352,23 @@ async function copyEntry(entry: MailEntry) {
   copied.value = entry.contact_id;
   clearTimeout(copiedTimer);
   copiedTimer = setTimeout(() => (copied.value = null), 2000);
+}
+
+/**
+ * Warum dieser Zustand dasteht, ohne dass jemand geklickt hat.
+ *
+ * Zwei Fristen, zwei Sätze: ohne die Unterscheidung stünde an einer Zeile,
+ * die zum Anruf fällig ist, die Begründung der ganz anderen Frist.
+ */
+function automaticTitle(entry: MailEntry): string {
+  if (entry.state === "nachfassen") {
+    return (
+      `Automatisch, weil die Mail seit ${props.followupDays} Tagen ` +
+      "unbeantwortet ist – jetzt anrufen."
+    );
+  }
+
+  return `Automatisch, weil seit ${props.timeoutDays} Tagen keine Antwort kam.`;
 }
 
 /** „seit 12 Tagen" – die Zahl kommt gerechnet aus dem Backend. */
@@ -477,7 +513,7 @@ function waiting(entry: MailEntry): string {
               <span
                 v-if="entry.automatic"
                 class="text-xs text-zinc-500"
-                :title="`Automatisch, weil seit ${timeoutDays} Tagen keine Antwort kam.`"
+                :title="automaticTitle(entry)"
               >
                 automatisch
               </span>
@@ -563,10 +599,19 @@ function waiting(entry: MailEntry): string {
 
             <p v-if="entry.sent_at">
               versendet {{ formatMoment(entry.sent_at) }}
-              <span :class="entry.state === 'keine_antwort' ? 'text-amber-400' : ''">
+              <span
+                :class="
+                  entry.state === 'keine_antwort' || entry.state === 'nachfassen'
+                    ? 'text-amber-400'
+                    : ''
+                "
+              >
                 · {{ waiting(entry) }}
               </span>
             </p>
+            <!-- Der Anruf steht zwischen Versand und Antwort, weil er
+                 zeitlich dorthin gehört. -->
+            <p v-if="entry.followed_up_at">nachgefasst {{ formatMoment(entry.followed_up_at) }}</p>
             <p v-if="entry.answered_at">Antwort {{ formatMoment(entry.answered_at) }}</p>
             <p v-if="entry.updated_by">zuletzt {{ entry.updated_by }}</p>
           </div>

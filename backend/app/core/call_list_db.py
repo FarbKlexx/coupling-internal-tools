@@ -44,13 +44,13 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterator, Sequence
+from typing import Iterator, NamedTuple, Sequence
 
 DEFAULT_DB_PATH = "data/calls.db"
 
 BUSY_TIMEOUT_MS = 5000
 
-SCHEMA_VERSION = "4"
+SCHEMA_VERSION = "5"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS lists (
@@ -133,14 +133,19 @@ CREATE INDEX IF NOT EXISTS idx_blacklist_created ON blacklist (created_at DESC);
 -- Mailversand: was aus einer Zusage geworden ist.
 --
 -- Eine Zeile entsteht erst mit dem ersten Klick; wer keine hat, steht auf
--- `offen`. Der Zustand `keine_antwort` wird hier nie gespeichert, wenn er aus
--- der Frist folgt — er wird beim Lesen aus `sent_at` gerechnet, siehe
+-- `offen`. Die Zustände `nachfassen` und `keine_antwort` werden hier nie
+-- gespeichert — sie werden beim Lesen aus `sent_at` gerechnet, siehe
 -- `_MAIL_STATE`.
 CREATE TABLE IF NOT EXISTS mail_status (
     contact_id  TEXT    PRIMARY KEY REFERENCES contacts (id) ON DELETE CASCADE,
     state       TEXT    NOT NULL DEFAULT 'offen',
     sent_at     TEXT,
     answered_at TEXT,
+    -- Wann telefonisch nachgefasst wurde. Eigene Spalte und nicht bloß
+    -- `updated_at`: die nächste Anmerkung überschriebe das wieder, und
+    -- „wann haben wir angerufen?" ist genau die Frage, die beim zweiten
+    -- Anruf gestellt wird. Nachträglich hinzugekommen.
+    followed_up_at TEXT,
     note        TEXT    NOT NULL DEFAULT '',
     updated_at  TEXT    NOT NULL,
     updated_by  TEXT    NOT NULL DEFAULT '',
@@ -294,6 +299,7 @@ _ADDED_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {
     "mail_status": (
         ("build_readiness", "build_readiness TEXT"),
         ("oversized", "oversized INTEGER"),
+        ("followed_up_at", "followed_up_at TEXT"),
     ),
 }
 
@@ -1104,25 +1110,71 @@ def drop_blacklist_of_list(conn: sqlite3.Connection, list_id: str) -> int:
 # Mailversand
 # --------------------------------------------------------------------------
 
+
+class MailCutoffs(NamedTuple):
+    """Die beiden Stichtage, ab denen eine versendete Mail fällig wird.
+
+    `answer` ist jetzt minus der langen Frist („keine Antwort"), `followup`
+    jetzt minus der kurzen („nachfassen"). Zusammen als ein Wert, weil sie
+    zusammengehören: beide werden einmal pro Anfrage gerechnet und dann durch
+    jede Abfrage gereicht, damit Liste, Zähler und Schreibpfad denselben
+    Moment benutzen. Getrennt weitergereicht wäre die nächste Fehlerquelle
+    die Reihenfolge ihrer `?`.
+
+    Ausgerechnet wird beides im Service — er kennt die Fristen, dieses Modul
+    kennt nur die Vergleiche.
+    """
+
+    answer: str
+    followup: str
+
+
 #: Der Zustand einer Zusage im Mailversand, wie ihn jede Abfrage berechnet.
 #:
-#: Zwei Dinge stecken darin. Erstens: eine Zusage ohne Zeile in `mail_status`
+#: Drei Dinge stecken darin. Erstens: eine Zusage ohne Zeile in `mail_status`
 #: steht auf `offen` — der Ausgangszustand braucht keinen Datensatz, sonst
 #: müsste jeder Import Zeilen anlegen, die niemand angeklickt hat. Zweitens:
-#: eine versendete Mail, auf die seit der Frist nichts kam, *ist* „keine
-#: Antwort" — das steht nirgends geschrieben, sondern folgt aus `sent_at`.
+#: eine versendete Mail, auf die seit der langen Frist nichts kam, *ist*
+#: „keine Antwort". Drittens, davor: nach der kurzen Frist ist sie
+#: „nachfassen", also fällig zum Anruf. Beides steht nirgends geschrieben,
+#: sondern folgt aus `sent_at`.
+#:
+#: Die Reihenfolge der beiden Zweige ist load-bearing: die **lange** Frist
+#: wird zuerst geprüft, sonst bliebe eine 40 Tage alte Mail für immer auf
+#: „nachfassen" hängen und käme nie bei „keine Antwort" an.
+#:
+#: `nachgefasst` zählt beim ersten Zweig mit (auch ein Anruf macht aus dem
+#: Warten irgendwann ein Ende), beim zweiten nicht: dass angerufen wurde, ist
+#: genau die Auskunft, die die Zeile aus dem Reiter nimmt.
 #:
 #: Gerechnet statt gespeichert, weil es in dieser Anwendung keinen
 #: Hintergrundjob gibt: ein Feld, das erst beim nächsten Schreibzugriff
 #: nachgezogen würde, wäre bis dahin falsch — und zwar genau in der Ansicht,
-#: die es beantworten soll. Der Preis ist ein `?` (der Stichtag) in jeder
-#: Abfrage, die diesen Ausdruck verwendet.
+#: die es beantworten soll. Es gilt damit auch rückwirkend für jede Zeile,
+#: die längst verschickt war, als es diese Frist noch nicht gab. Der Preis
+#: sind zwei `?` (die Stichtage, in dieser Reihenfolge) in jeder Abfrage, die
+#: diesen Ausdruck verwendet — `_state_params` liefert sie.
 _MAIL_STATE = (
-    "CASE WHEN COALESCE(m.state, 'offen') = 'versendet'"
+    "CASE WHEN COALESCE(m.state, 'offen') IN ('versendet', 'nachgefasst')"
     "       AND m.sent_at IS NOT NULL AND m.sent_at <= ?"
     "     THEN 'keine_antwort'"
+    "     WHEN COALESCE(m.state, 'offen') = 'versendet'"
+    "       AND m.sent_at IS NOT NULL AND m.sent_at <= ?"
+    "     THEN 'nachfassen'"
     "     ELSE COALESCE(m.state, 'offen') END"
 )
+
+
+def _state_params(cutoff: MailCutoffs) -> list[object]:
+    """Die `?` von `_MAIL_STATE`, in der Reihenfolge seiner Zweige.
+
+    Einzige Stelle, die diese Reihenfolge kennt: der Ausdruck steht in der
+    Spaltenliste *und* im Filter, und zwei Stichtage von Hand einzufädeln ist
+    genau die Sorte Arbeit, bei der irgendwann die kurze Frist im langen
+    Vergleich landet.
+    """
+    return [cutoff.answer, cutoff.followup]
+
 
 #: Die Zusagen und sonst nichts. Archivierte Listen zählen mit: eine Zusage
 #: gilt weiter, auch wenn die Anrufrunde beendet ist, und die Mail muss
@@ -1191,7 +1243,7 @@ _MAIL_SELECT = (
     " c.note, c.list_id, l.name AS list_name,"
     " l.archived AS list_archived,"
     " m.state AS stored_state, m.build_readiness AS stored_readiness,"
-    " m.sent_at, m.answered_at,"
+    " m.sent_at, m.answered_at, m.followed_up_at,"
     " m.note AS mail_note, m.updated_at AS mail_updated_at,"
     " m.updated_by AS mail_updated_by,"
     " (SELECT e.occurred_at FROM events e"
@@ -1211,10 +1263,12 @@ _MAIL_SELECT = (
 _MAIL_ORDER = (
     " ORDER BY CASE mail_state"
     "     WHEN 'offen' THEN 0"
-    "     WHEN 'keine_antwort' THEN 1"
-    "     WHEN 'versendet' THEN 2"
-    "     WHEN 'positiv' THEN 3"
-    "     ELSE 4 END,"
+    "     WHEN 'nachfassen' THEN 1"
+    "     WHEN 'keine_antwort' THEN 2"
+    "     WHEN 'nachgefasst' THEN 3"
+    "     WHEN 'versendet' THEN 4"
+    "     WHEN 'positiv' THEN 5"
+    "     ELSE 6 END,"
     "   l.created_at, c.position, c.id"
 )
 
@@ -1224,7 +1278,7 @@ def _mail_filter(
     state: str | None,
     readiness: str | None,
     oversized: bool | None,
-    cutoff: str,
+    cutoff: MailCutoffs,
 ) -> tuple[str, list[object]]:
     """Suche, Versandstand, Bau-Einschätzung und Umfang als SQL plus Parameter.
 
@@ -1236,8 +1290,8 @@ def _mail_filter(
     („verschickt, in Arbeit und größer als gedacht").
 
     Gibt die Parameter **vollständig** und in der Reihenfolge der Bedingungen
-    zurück, den Stichtag des Zustandsfilters eingeschlossen. Vorher hat der
-    Aufrufer ihn selbst dazwischengeschoben — bei zwei Filtern wäre diese
+    zurück, die Stichtage des Zustandsfilters eingeschlossen. Vorher hat der
+    Aufrufer sie selbst dazwischengeschoben — bei zwei Filtern wäre diese
     Fädelarbeit die nächste Fehlerquelle.
     """
     where = ""
@@ -1254,11 +1308,12 @@ def _mail_filter(
         where += " AND (" + " OR ".join(conditions) + ")"
 
     if state:
-        # Der Stichtag ein zweites Mal: gefiltert wird über den *gerechneten*
+        # Die Stichtage ein zweites Mal: gefiltert wird über den *gerechneten*
         # Zustand, sonst zeigte der Filter „keine Antwort" nur die von Hand
-        # abgeschlossenen Zeilen.
+        # abgeschlossenen Zeilen — und „nachfassen" wäre überhaupt nicht
+        # filterbar, weil es diesen Wert in der Spalte nie gibt.
         where += f" AND {_MAIL_STATE} = ?"
-        params += [cutoff, state]
+        params += _state_params(cutoff) + [state]
 
     if readiness:
         # Verschickte Zusagen fallen hier von selbst heraus: `_MAIL_READINESS`
@@ -1277,7 +1332,7 @@ def _mail_filter(
 def mail_page(
     conn: sqlite3.Connection,
     *,
-    cutoff: str,
+    cutoff: MailCutoffs,
     query: str = "",
     state: str | None = None,
     readiness: str | None = None,
@@ -1287,11 +1342,11 @@ def mail_page(
 ) -> tuple[list[sqlite3.Row], int, int]:
     """Ein Ausschnitt der Versandliste, plus Treffer und Gesamtzahl.
 
-    `cutoff` ist der Zeitpunkt, vor dem ein Versand als unbeantwortet gilt
-    (jetzt minus Frist). Er wird durchgereicht statt hier gerechnet, damit
-    Liste, Zähler und Schreibpfad einer Anfrage denselben Stichtag benutzen —
-    sonst könnte eine Zeile zwischen zwei Abfragen derselben Antwort die
-    Gruppe wechseln.
+    `cutoff` sind die beiden Zeitpunkte, vor denen ein Versand fällig wird
+    (jetzt minus der jeweiligen Frist). Sie werden durchgereicht statt hier
+    gerechnet, damit Liste, Zähler und Schreibpfad einer Anfrage dieselben
+    Stichtage benutzen — sonst könnte eine Zeile zwischen zwei Abfragen
+    derselben Antwort die Gruppe wechseln.
     """
     where, filter_params = _mail_filter(query, state, readiness, oversized, cutoff)
 
@@ -1314,9 +1369,10 @@ def mail_page(
             + where
             + _MAIL_ORDER
             + " LIMIT ? OFFSET ?",
-            # Der Stichtag zuerst: er steht im `?` der Spaltenliste, die
-            # Filterparameter dahinter in der Reihenfolge ihrer Bedingungen.
-            [cutoff] + filter_params + [limit, offset],
+            # Die Stichtage zuerst: sie stehen in den `?` der Spaltenliste,
+            # die Filterparameter dahinter in der Reihenfolge ihrer
+            # Bedingungen.
+            _state_params(cutoff) + filter_params + [limit, offset],
         ).fetchall()
     )
 
@@ -1325,7 +1381,7 @@ def mail_page(
 
 def mail_totals(
     conn: sqlite3.Connection,
-    cutoff: str,
+    cutoff: MailCutoffs,
     readiness: str | None = None,
     oversized: bool | None = None,
 ) -> dict[str, tuple[int, int]]:
@@ -1351,9 +1407,9 @@ def mail_totals(
         + _MAIL_FROM
         + where
         + " GROUP BY mail_state",
-        # Der Stichtag zuerst: er steht im `?` der Spaltenliste, die
+        # Die Stichtage zuerst: sie stehen in den `?` der Spaltenliste, die
         # Filterparameter dahinter — wie in `mail_page`.
-        [cutoff] + params,
+        _state_params(cutoff) + params,
     ).fetchall()
 
     return {
@@ -1364,7 +1420,7 @@ def mail_totals(
 
 def mail_readiness_totals(
     conn: sqlite3.Connection,
-    cutoff: str,
+    cutoff: MailCutoffs,
     state: str | None = None,
     oversized: bool | None = None,
 ) -> dict[str, int]:
@@ -1402,7 +1458,7 @@ def mail_readiness_totals(
 
 def mail_oversized_total(
     conn: sqlite3.Connection,
-    cutoff: str,
+    cutoff: MailCutoffs,
     state: str | None = None,
     readiness: str | None = None,
 ) -> int:
@@ -1427,7 +1483,7 @@ def mail_oversized_total(
 
 
 def find_mail_entry(
-    conn: sqlite3.Connection, contact_id: str, cutoff: str
+    conn: sqlite3.Connection, contact_id: str, cutoff: MailCutoffs
 ) -> sqlite3.Row | None:
     """Eine Zeile der Versandliste, oder `None`.
 
@@ -1437,15 +1493,18 @@ def find_mail_entry(
     """
     return conn.execute(
         "SELECT" + _MAIL_SELECT + _MAIL_FROM + " AND c.id = ?",
-        (cutoff, contact_id),
+        _state_params(cutoff) + [contact_id],
     ).fetchone()
 
 
-def all_mail_entries(conn: sqlite3.Connection, cutoff: str) -> list[sqlite3.Row]:
+def all_mail_entries(
+    conn: sqlite3.Connection, cutoff: MailCutoffs
+) -> list[sqlite3.Row]:
     """Die ganze Versandliste — für die Ausgabe."""
     return list(
         conn.execute(
-            "SELECT" + _MAIL_SELECT + _MAIL_FROM + _MAIL_ORDER, (cutoff,)
+            "SELECT" + _MAIL_SELECT + _MAIL_FROM + _MAIL_ORDER,
+            _state_params(cutoff),
         ).fetchall()
     )
 
@@ -1457,6 +1516,7 @@ def set_mail_status(
     state: str,
     sent_at: str | None,
     answered_at: str | None,
+    followed_up_at: str | None,
     note: str,
     readiness: str,
     oversized: bool,
@@ -1477,13 +1537,14 @@ def set_mail_status(
     """
     conn.execute(
         "INSERT INTO mail_status"
-        " (contact_id, state, sent_at, answered_at, note, build_readiness,"
-        "  oversized, updated_at, updated_by)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        " (contact_id, state, sent_at, answered_at, followed_up_at, note,"
+        "  build_readiness, oversized, updated_at, updated_by)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         " ON CONFLICT(contact_id) DO UPDATE SET"
         "   state = excluded.state,"
         "   sent_at = excluded.sent_at,"
         "   answered_at = excluded.answered_at,"
+        "   followed_up_at = excluded.followed_up_at,"
         "   note = excluded.note,"
         "   build_readiness = excluded.build_readiness,"
         "   oversized = excluded.oversized,"
@@ -1494,6 +1555,7 @@ def set_mail_status(
             state,
             sent_at,
             answered_at,
+            followed_up_at,
             note,
             readiness,
             1 if oversized else 0,

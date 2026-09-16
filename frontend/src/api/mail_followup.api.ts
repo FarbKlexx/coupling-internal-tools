@@ -19,7 +19,15 @@ import type { ContactField } from "./call_list.api";
  * jeder ID ein Symbol zuordnet. `mailStates.test.ts` hält beide Seiten
  * zusammen, nach dem Muster von `callOutcomes.test.ts`.
  */
-export const MAIL_STATES = ["offen", "versendet", "positiv", "abgelehnt", "keine_antwort"] as const;
+export const MAIL_STATES = [
+  "offen",
+  "versendet",
+  "nachfassen",
+  "nachgefasst",
+  "positiv",
+  "abgelehnt",
+  "keine_antwort",
+] as const;
 
 export type MailState = (typeof MAIL_STATES)[number];
 
@@ -143,6 +151,8 @@ export interface MailEntry {
   automatic: boolean;
   sent_at: string | null;
   answered_at: string | null;
+  /** Wann telefonisch nachgefasst wurde – `null`, solange niemand angerufen hat. */
+  followed_up_at: string | null;
   days_since_sent: number | null;
   /** Anmerkung zum Versand – getrennt von der aus dem Telefonat. */
   mail_note: string;
@@ -175,6 +185,10 @@ export interface MailCounters {
   gesamt: number;
   offen: number;
   versendet: number;
+  /** Fällig zum Anrufen – die zweite Zahl, die auf null laufen soll. */
+  nachfassen: number;
+  /** Angerufen, wartet weiter. */
+  nachgefasst: number;
   positiv: number;
   abgelehnt: number;
   keine_antwort: number;
@@ -217,6 +231,8 @@ export interface MailBoard {
   scope_marker: ScopeMarkerInfo;
   /** Die Frist, nach der ohne Antwort „keine Antwort" gilt. */
   timeout_days: number;
+  /** Die kürzere Frist, nach der nachtelefoniert werden soll. */
+  followup_days: number;
 }
 
 /** Die Sicht, aus der ein Klick kam – sie reist mit, damit die Liste steht. */

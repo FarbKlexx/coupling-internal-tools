@@ -19,8 +19,8 @@ import {
  *
  * Anders als der Arbeitsstand der Telefonakquise wird hier **nicht gepollt**.
  * Diese Liste ändert sich nicht von selbst: es gibt keine Frist, die im
- * Minutentakt etwas fällig macht, und die 30 Tage sind am nächsten Tag noch
- * rechtzeitig zu sehen. Ein Hintergrundabruf würde nur die Zeile umsortieren,
+ * Minutentakt etwas fällig macht, und die 10 bzw. 30 Tage sind am nächsten Tag
+ * noch rechtzeitig zu sehen. Ein Hintergrundabruf würde nur die Zeile umsortieren,
  * an der gerade jemand arbeitet.
  */
 export function useMailFollowup() {
@@ -49,6 +49,7 @@ export function useMailFollowup() {
   const readinessOptions = computed(() => board.value?.readiness_options ?? []);
   const scopeMarker = computed(() => board.value?.scope_marker ?? null);
   const timeoutDays = computed(() => board.value?.timeout_days ?? 30);
+  const followupDays = computed(() => board.value?.followup_days ?? 10);
 
   function view(): MailView {
     return {
@@ -177,6 +178,7 @@ export function useMailFollowup() {
     entries,
     actions,
     timeoutDays,
+    followupDays,
     readinessOptions,
     scopeMarker,
     query,

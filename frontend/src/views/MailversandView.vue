@@ -3,11 +3,12 @@
     <div class="space-y-1">
       <h2 class="text-lg font-semibold">Mailversand</h2>
       <p class="text-xs text-zinc-500">
-        Jede Zusage aus der Telefonakquise mit dem, was daraus geworden ist. Ohne Antwort gilt eine
-        versendete Mail nach {{ timeoutDays }} Tagen als unbeantwortet – das setzt niemand, das
-        ergibt sich aus dem Versanddatum. Die Marker daneben sagen, wo die Website steht – und
-        „Bigger than expected“ als einziger von ihnen etwas über ihren Umfang, weshalb er sich mit
-        jedem anderen zusammen setzen lässt.
+        Jede Zusage aus der Telefonakquise mit dem, was daraus geworden ist. Bleibt eine versendete
+        Mail {{ followupDays }} Tage ohne Antwort, rückt sie in den Reiter „Nachfassen“ – dort wird
+        hinterhertelefoniert –, nach {{ timeoutDays }} Tagen gilt sie als unbeantwortet. Beides
+        setzt niemand, beides ergibt sich aus dem Versanddatum. Die Marker daneben sagen, wo die
+        Website steht – und „Bigger than expected“ als einziger von ihnen etwas über ihren Umfang,
+        weshalb er sich mit jedem anderen zusammen setzen lässt.
       </p>
     </div>
 
@@ -35,6 +36,7 @@
       :readiness-options="readinessOptions"
       :scope-marker="scopeMarker"
       :timeout-days="timeoutDays"
+      :followup-days="followupDays"
       :is-loading="isLoading"
       :is-saving="isSaving"
       :filter-by="filterBy"
@@ -57,6 +59,7 @@ const {
   readinessOptions,
   scopeMarker,
   timeoutDays,
+  followupDays,
   query,
   stateFilter,
   readinessFilter,

@@ -34,12 +34,14 @@ von `BuildReadiness`: als Wert dieser Spur wäre der Umfang beim nächsten
 Bauschritt wieder verschwunden, und er ist die Auskunft, die über den ganzen
 Bau stehen bleiben soll.
 
-Der Zustand `keine_antwort` wird **nicht geschrieben, sondern gerechnet**:
-eine versendete Mail, auf die seit `MAIL_TIMEOUT_DAYS` Tagen nichts kam,
-erscheint als „keine Antwort". Es gibt in dieser Anwendung keinen
-Hintergrundjob, und ein Feld, das erst beim nächsten Aufruf nachgezogen wird,
-wäre in der Zwischenzeit falsch. Abgeleitet ist es immer aktuell — und eine
-Antwort, die am 31. Tag doch noch kommt, lässt sich weiter eintragen.
+Zwei Zustände werden **nicht geschrieben, sondern gerechnet**, beide aus dem
+Versanddatum: nach `MAIL_FOLLOWUP_DAYS` Tagen ohne Antwort erscheint eine
+versendete Mail als `nachfassen` („jetzt hinterhertelefonieren"), nach
+`MAIL_TIMEOUT_DAYS` Tagen als `keine_antwort`. Es gibt in dieser Anwendung
+keinen Hintergrundjob, und ein Feld, das erst beim nächsten Aufruf nachgezogen
+wird, wäre in der Zwischenzeit falsch. Abgeleitet ist es immer aktuell — es
+gilt rückwirkend für jede Zeile, die schon vor dieser Frist verschickt wurde,
+und eine Antwort, die am 31. Tag doch noch kommt, lässt sich weiter eintragen.
 """
 
 from enum import Enum
@@ -53,6 +55,13 @@ from app.schemas.call_list import ContactField, OutcomeTone
 #: Nachfassen mehr als Warten.
 MAIL_TIMEOUT_DAYS = 30
 
+#: Nach wie vielen Tagen ohne Antwort zum Telefon gegriffen werden soll. Wie
+#: die Frist darüber eine fachliche Größe: eine Mail, die zehn Tage
+#: unbeantwortet liegt, ist gelesen oder liegengeblieben — beides beantwortet
+#: nur ein Anruf. Kleiner als `MAIL_TIMEOUT_DAYS`, sonst gäbe es den
+#: Zwischenstand nie (`_MAIL_STATE` prüft die längere Frist zuerst).
+MAIL_FOLLOWUP_DAYS = 10
+
 #: Seitengröße der Liste. Sie hat keine Obergrenze — jede Zusage bleibt darin
 #: stehen, auch nach Jahren —, also wird geblättert.
 MAIL_PAGE_SIZE = 50
@@ -64,16 +73,26 @@ MAX_MAIL_NOTE = 500
 class MailState(str, Enum):
     """Wo eine Zusage im Mailversand steht. Gespeichert wird der Slug.
 
-    `keine_antwort` ist der eine Zustand, der auch *ohne* Eintragung
-    entstehen kann: er ergibt sich aus dem Versanddatum, sobald die Frist
-    abgelaufen ist (siehe Modulkommentar). Von Hand angeklickt werden darf er
-    trotzdem — wer weiß, dass nichts mehr kommt, muss nicht 30 Tage warten.
+    `nachfassen` und `keine_antwort` sind die beiden Zustände, die auch *ohne*
+    Eintragung entstehen: sie ergeben sich aus dem Versanddatum, sobald die
+    jeweilige Frist abgelaufen ist (siehe Modulkommentar). `keine_antwort`
+    darf trotzdem von Hand angeklickt werden — wer weiß, dass nichts mehr
+    kommt, muss nicht 30 Tage warten. `nachfassen` nicht: es ist keine
+    Entscheidung, sondern eine Fälligkeit, und die stellt niemand von Hand.
     """
 
     #: Zusage steht, Mail ist noch nicht heraus. Der Ausgangszustand jeder
     #: Zusage, und der einzige, für den es keine Zeile in der Datenbank gibt.
     OFFEN = "offen"
     VERSENDET = "versendet"
+    #: Fällig zum Hinterhertelefonieren: die Mail ist seit
+    #: `MAIL_FOLLOWUP_DAYS` Tagen heraus und nichts kam zurück. Wird nie
+    #: gespeichert — gespeichert steht dort weiter `versendet`.
+    NACHFASSEN = "nachfassen"
+    #: Es wurde telefonisch nachgefasst. Die Zeile wartet weiter, taucht aber
+    #: nicht mehr unter „Nachfassen" auf; die Frist bis `keine_antwort` läuft
+    #: unverändert ab dem Versand weiter.
+    NACHGEFASST = "nachgefasst"
     POSITIV = "positiv"
     ABGELEHNT = "abgelehnt"
     KEINE_ANTWORT = "keine_antwort"
@@ -82,6 +101,8 @@ class MailState(str, Enum):
 MAIL_STATE_LABELS: dict[MailState, str] = {
     MailState.OFFEN: "Mail noch nicht versendet",
     MailState.VERSENDET: "Mail versendet – wartet auf Antwort",
+    MailState.NACHFASSEN: "nachfassen – jetzt anrufen",
+    MailState.NACHGEFASST: "nachgefasst – wartet weiter",
     MailState.POSITIV: "Antwort positiv",
     MailState.ABGELEHNT: "Angebot abgelehnt",
     MailState.KEINE_ANTWORT: "keine Antwort",
@@ -101,14 +122,37 @@ MAIL_STATE_LABELS: dict[MailState, str] = {
 #:   heraus ist, wäre eine Behauptung über niemanden.
 #: * `positiv`/`abgelehnt` erlauben einander: ein Betrieb, der zunächst
 #:   interessiert war und dann absagt, ist der Normalfall, nicht der Fehler.
-#: * `keine_antwort` erlaubt „versendet" — das ist das Nachfassen, und es setzt
-#:   die Frist neu.
+#: * `keine_antwort` erlaubt „versendet" — das ist das Nachfassen per Mail, und
+#:   es setzt die Frist neu.
+#: * `nachfassen` führt als einziger Zustand auf `nachgefasst`: der Knopf ist
+#:   die Quittung des Anrufs, und wo nichts fällig ist, gibt es nichts zu
+#:   quittieren. Er steht dort an erster Stelle, weil er die Handlung ist, für
+#:   die der Reiter da ist.
+#: * `nachgefasst` ist kein Ziel und `nachfassen` keines: der eine wird nur aus
+#:   der Fälligkeit heraus gesetzt, der andere überhaupt nie — er *entsteht*
+#:   aus dem Versanddatum. Deshalb taucht `nachfassen` nur als Zeile auf, nie
+#:   in einer.
 #: * `offen` steht überall als Rückweg: der Fehlklick gehört zum Werkzeug.
 MAIL_TRANSITIONS: dict[MailState, tuple[MailState, ...]] = {
     MailState.OFFEN: (MailState.VERSENDET,),
     MailState.VERSENDET: (
         MailState.POSITIV,
         MailState.ABGELEHNT,
+        MailState.KEINE_ANTWORT,
+        MailState.OFFEN,
+    ),
+    MailState.NACHFASSEN: (
+        MailState.NACHGEFASST,
+        MailState.POSITIV,
+        MailState.ABGELEHNT,
+        MailState.VERSENDET,
+        MailState.KEINE_ANTWORT,
+        MailState.OFFEN,
+    ),
+    MailState.NACHGEFASST: (
+        MailState.POSITIV,
+        MailState.ABGELEHNT,
+        MailState.VERSENDET,
         MailState.KEINE_ANTWORT,
         MailState.OFFEN,
     ),
@@ -148,6 +192,17 @@ MAIL_ACTIONS: tuple[MailActionInfo, ...] = (
             "Die E-Mail ist heraus. Ab jetzt läuft die Frist von "
             f"{MAIL_TIMEOUT_DAYS} Tagen, nach der die Zeile ohne Antwort als "
             "„keine Antwort“ erscheint."
+        ),
+        tone=OutcomeTone.NEUTRAL,
+    ),
+    MailActionInfo(
+        id=MailState.NACHGEFASST,
+        label="Nachgefasst",
+        description=(
+            "Telefonisch nachgefasst – die Zeile verlässt den Reiter und "
+            "wartet weiter. Die Frist bis „keine Antwort“ läuft unverändert ab "
+            "dem Versand: dieser Knopf hält fest, dass angerufen wurde, nicht, "
+            "was dabei herauskam."
         ),
         tone=OutcomeTone.NEUTRAL,
     ),
@@ -399,6 +454,11 @@ class MailEntry(BaseModel):
     automatic: bool
     sent_at: str | None
     answered_at: str | None
+    #: Wann telefonisch nachgefasst wurde, oder `null`. Steht neben
+    #: `sent_at`/`answered_at`, weil es dieselbe Art Auskunft ist: ein
+    #: Zeitpunkt, an dem jemand etwas getan hat. `updated_at` reicht dafür
+    #: nicht — die nächste Anmerkung überschreibt es.
+    followed_up_at: str | None
     #: Volle Tage seit dem Versand, oder `null`, solange nichts heraus ist.
     #: Gerechnet, damit „seit 12 Tagen" nicht in jeder Oberfläche neu
     #: entsteht.
@@ -434,6 +494,12 @@ class MailCounters(BaseModel):
     gesamt: int
     offen: int
     versendet: int
+    #: Fällig zum Anrufen — die zweite Zahl, die auf null laufen soll. Sie
+    #: entsteht von selbst, sobald eine Mail lange genug unbeantwortet liegt.
+    nachfassen: int
+    #: Angerufen, wartet weiter. Steht neben `versendet`, weil es dasselbe
+    #: Warten ist — nur eines, hinter dem schon ein Anruf steht.
+    nachgefasst: int
     positiv: int
     abgelehnt: int
     keine_antwort: int
@@ -492,6 +558,9 @@ class MailBoard(BaseModel):
     scope_marker: ScopeMarkerInfo = SCOPE_MARKER
     #: Die Frist, damit die Oberfläche sie nennen kann, ohne sie zu kennen.
     timeout_days: int = MAIL_TIMEOUT_DAYS
+    #: Die kürzere Frist, nach der angerufen werden soll — aus demselben
+    #: Grund mitgeschickt.
+    followup_days: int = MAIL_FOLLOWUP_DAYS
 
 
 class MailUpdateRequest(BaseModel):

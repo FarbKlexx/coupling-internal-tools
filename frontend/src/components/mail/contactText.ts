@@ -93,6 +93,7 @@ export function contactText(entry: MailEntry, scopeLabel = "Bigger than expected
       "Mail versendet am",
       entry.sent_at ? `${moment(entry.sent_at)} (${waiting(entry.days_since_sent)})` : "",
     ),
+    ...line("Nachgefasst am", moment(entry.followed_up_at)),
     ...line("Antwort am", moment(entry.answered_at)),
 
     ...block("Befunde", entry.befunde),

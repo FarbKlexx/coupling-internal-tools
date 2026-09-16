@@ -6,10 +6,10 @@ Zwei Dinge sind hier interessant genug für Tests, und beide betreffen den
 * Die Liste hat **keine eigenen Kontakte**. Sie zeigt genau die Zusagen der
   Telefonakquise, und sie muss sich mitbewegen, wenn dort eine Zusage
   zurückgenommen wird.
-* Der Zustand „keine Antwort" wird **gerechnet**. Es gibt keinen
-  Hintergrundjob, der ihn setzt — er folgt aus dem Versanddatum, und genau
-  das lässt sich nur prüfen, indem ein Versanddatum von gestern-vor-40-Tagen
-  in die Datenbank geschrieben wird.
+* Die Zustände „nachfassen" und „keine Antwort" werden **gerechnet**. Es gibt
+  keinen Hintergrundjob, der sie setzt — sie folgen aus dem Versanddatum, und
+  genau das lässt sich nur prüfen, indem ein Versanddatum von
+  gestern-vor-40-Tagen in die Datenbank geschrieben wird.
 
 Die Zusagen entstehen hier über die echte HTTP-Oberfläche (Import → Anruf →
 Zusage), nicht durch direktes INSERT: sonst prüft der Test eine Datenlage,
@@ -24,6 +24,7 @@ import pytest
 from app.core import call_list_db as db
 from app.schemas.access import Page
 from app.schemas.mail_followup import (
+    MAIL_FOLLOWUP_DAYS,
     MAIL_TIMEOUT_DAYS,
     MAIL_TRANSITIONS,
     READINESS_OPTIONS,
@@ -345,15 +346,15 @@ def test_a_send_without_an_answer_becomes_unanswered_after_the_deadline(
     assert board["counters"]["versendet"] == 0
 
 
-def test_one_day_short_of_the_deadline_is_still_waiting(zusagen, call_db):
+def test_one_day_short_of_the_deadline_is_not_yet_unanswered(zusagen, call_db):
+    """Am 29. Tag ist die Zeile fällig zum Anruf, aber nicht abgeschrieben."""
     client, ids = zusagen
     _click(client, ids[0], "versendet")
 
     _backdate(call_db, ids[0], MAIL_TIMEOUT_DAYS - 1)
     entry = next(e for e in _board(client)["entries"] if e["contact_id"] == ids[0])
 
-    assert entry["state"] == "versendet"
-    assert entry["automatic"] is False
+    assert entry["state"] == "nachfassen"
 
 
 def test_a_late_answer_can_still_be_recorded(zusagen, call_db):
@@ -394,6 +395,186 @@ def test_marking_it_by_hand_needs_no_deadline(zusagen):
     assert entry["state"] == "keine_antwort"
     assert entry["automatic"] is False
     assert entry["answered_at"] is None
+
+
+# ------------------------------
+# Die kürzere Frist: nachfassen
+# ------------------------------
+
+
+def test_a_send_becomes_due_for_a_call_after_the_shorter_deadline(zusagen, call_db):
+    """Der Zwischenstand zwischen „wartet" und „abgeschrieben".
+
+    Nach zehn Tagen ist die Mail gelesen oder liegengeblieben — beides
+    beantwortet nur ein Anruf. Wie „keine Antwort" folgt das aus dem
+    Versanddatum und gilt damit rückwirkend für jede Zeile, die schon vorher
+    verschickt war.
+    """
+    client, ids = zusagen
+    _click(client, ids[0], "versendet")
+
+    _backdate(call_db, ids[0], MAIL_FOLLOWUP_DAYS + 1)
+    board = _board(client)
+    entry = _entry(board, ids[0])
+
+    assert entry["state"] == "nachfassen"
+    # Angezeigt, nicht angeklickt: niemand stellt eine Fälligkeit von Hand.
+    assert entry["automatic"] is True
+    assert entry["days_since_sent"] == MAIL_FOLLOWUP_DAYS + 1
+    assert board["counters"]["nachfassen"] == 1
+    assert board["counters"]["versendet"] == 0
+    assert board["counters"]["keine_antwort"] == 0
+
+
+def test_one_day_short_of_the_call_deadline_is_still_waiting(zusagen, call_db):
+    client, ids = zusagen
+    _click(client, ids[0], "versendet")
+
+    _backdate(call_db, ids[0], MAIL_FOLLOWUP_DAYS - 1)
+    entry = _entry(_board(client), ids[0])
+
+    assert entry["state"] == "versendet"
+    assert entry["automatic"] is False
+
+
+def test_the_tab_finds_the_rows_that_are_due(zusagen, call_db):
+    """Der Reiter filtert über den *gerechneten* Zustand.
+
+    In der Spalte steht „versendet" — gäbe es den Filter nur darauf, wäre der
+    Reiter, für den das Ganze gebaut ist, immer leer.
+    """
+    client, ids = zusagen
+    _click(client, ids[0], "versendet")
+    _backdate(call_db, ids[0], MAIL_FOLLOWUP_DAYS + 2)
+
+    board = _board(client, state="nachfassen")
+
+    assert [entry["contact_id"] for entry in board["entries"]] == [ids[0]]
+    assert board["matched"] == 1
+
+
+def test_the_call_is_recorded_and_takes_the_row_out_of_the_tab(zusagen, call_db):
+    """„Nachgefasst" hält fest, dass angerufen wurde — mehr nicht.
+
+    Das Versanddatum bleibt stehen, damit die lange Frist weiterläuft; sonst
+    ließe sich „keine Antwort" durch Anrufe beliebig hinausschieben.
+    """
+    client, ids = zusagen
+    _click(client, ids[0], "versendet")
+    _backdate(call_db, ids[0], MAIL_FOLLOWUP_DAYS + 3)
+    sent_at = _entry(_board(client), ids[0])["sent_at"]
+
+    board = _click(client, ids[0], "nachgefasst")
+    entry = _entry(board, ids[0])
+
+    assert entry["state"] == "nachgefasst"
+    assert entry["automatic"] is False
+    assert entry["followed_up_at"]
+    assert entry["sent_at"] == sent_at
+    assert entry["answered_at"] is None
+    assert board["counters"]["nachfassen"] == 0
+    assert board["counters"]["nachgefasst"] == 1
+
+
+def test_the_button_exists_only_where_something_is_due(zusagen):
+    """Wo nichts fällig ist, gibt es nichts zu quittieren."""
+    client, ids = zusagen
+    board = _click(client, ids[0], "versendet")
+
+    assert "nachgefasst" not in _entry(board, ids[0])["actions"]
+
+    body = _click(client, ids[0], "nachgefasst", expected=400)
+
+    assert "Erster Betrieb" in body["detail"]
+
+
+def test_a_followed_up_row_still_runs_out_after_the_long_deadline(zusagen, call_db):
+    """Ein Anruf hält die Zeile nicht ewig offen.
+
+    Nach 30 Tagen ist auch eine nachtelefonierte Zusage unbeantwortet — sonst
+    bliebe sie für immer unter „wartet weiter" stehen.
+    """
+    client, ids = zusagen
+    _click(client, ids[0], "versendet")
+    _backdate(call_db, ids[0], MAIL_FOLLOWUP_DAYS + 1)
+    _click(client, ids[0], "nachgefasst")
+
+    _backdate(call_db, ids[0], MAIL_TIMEOUT_DAYS + 1)
+    entry = _entry(_board(client), ids[0])
+
+    assert entry["state"] == "keine_antwort"
+    assert entry["automatic"] is True
+    # Der Anruf bleibt trotzdem verzeichnet — er hat stattgefunden.
+    assert entry["followed_up_at"]
+
+
+def test_sending_again_starts_over(zusagen, call_db):
+    """Eine neue Mail macht den Anruf zur alten gegenstandslos."""
+    client, ids = zusagen
+    _click(client, ids[0], "versendet")
+    _backdate(call_db, ids[0], MAIL_FOLLOWUP_DAYS + 1)
+    _click(client, ids[0], "nachgefasst")
+
+    entry = _entry(_click(client, ids[0], "versendet"), ids[0])
+
+    assert entry["state"] == "versendet"
+    assert entry["days_since_sent"] == 0
+    assert entry["followed_up_at"] is None
+
+
+def test_a_note_on_a_due_row_does_not_freeze_the_deadline(zusagen, call_db):
+    """Dieselbe Regel wie bei der langen Frist, eine Stufe früher.
+
+    Gespeichert steht dort weiter „versendet"; schriebe die Notiz den
+    angezeigten Zustand fest, wäre die Zeile ab dem 30. Tag nicht mehr
+    „keine Antwort", sondern für immer „nachfassen".
+    """
+    client, ids = zusagen
+    _click(client, ids[0], "versendet")
+    _backdate(call_db, ids[0], MAIL_FOLLOWUP_DAYS + 1)
+
+    response = client.post(
+        f"/mailversand/contacts/{ids[0]}",
+        json={"note": "Mailbox, nochmal versuchen"},
+    )
+    assert response.status_code == 200, response.text
+    entry = _entry(response.json(), ids[0])
+
+    assert entry["mail_note"] == "Mailbox, nochmal versuchen"
+    assert entry["state"] == "nachfassen"
+    assert entry["followed_up_at"] is None
+
+    _backdate(call_db, ids[0], MAIL_TIMEOUT_DAYS + 1)
+
+    assert _entry(_board(client), ids[0])["state"] == "keine_antwort"
+
+
+def test_a_database_from_before_the_call_deadline_gets_the_new_column(zusagen, call_db):
+    """`CREATE TABLE IF NOT EXISTS` fasst eine vorhandene Tabelle nicht an.
+
+    In Produktion liegt `calls.db` auf einem Volume und überlebt jeden Build:
+    dort steht eine `mail_status` ohne `followed_up_at`, mit Zeilen, auf die
+    längst geklickt wurde. Genau die sollen die neue Frist rückwirkend
+    bekommen.
+    """
+    client, ids = zusagen
+    _click(client, ids[0], "versendet")
+    _backdate(call_db, ids[0], MAIL_FOLLOWUP_DAYS + 4)
+
+    conn = sqlite3.connect(call_db)
+    # Die Spalte wieder entfernen — der Zustand einer Datenbank von vor
+    # diesem Update, mitsamt ihrer Zeile.
+    conn.execute("ALTER TABLE mail_status DROP COLUMN followed_up_at")
+    conn.commit()
+    conn.close()
+
+    db.init_schema()
+
+    entry = _entry(_board(client), ids[0])
+
+    assert entry["state"] == "nachfassen"
+    assert entry["followed_up_at"] is None
+    assert "nachgefasst" in entry["actions"]
 
 
 # ------------------------------
@@ -449,6 +630,7 @@ def test_the_export_names_the_state_and_why_it_is_set(zusagen, call_db):
     # Mit BOM, weil diese Datei in Excel geöffnet wird.
     assert response.content.startswith(b"\xef\xbb\xbf")
     assert "keine Antwort" in text
+    assert "Nachgefasst am (UTC)" in text
     assert "Erster Betrieb" in text
     assert "Dritter Betrieb" in text
 
@@ -457,11 +639,19 @@ def test_every_state_can_be_reached_from_somewhere(zusagen):
     """Ein Zustand, in den kein Übergang führt, wäre toter Code.
 
     Billig zu prüfen und genau die Sorte Lücke, die beim Nachtragen eines
-    sechsten Zustands entsteht.
+    weiteren Zustands entsteht.
+
+    Bis auf `nachfassen`: der wird nie gesetzt, sondern *entsteht* aus dem
+    Versanddatum. Ein Knopf dorthin wäre eine Fälligkeit von Hand, und die
+    gibt es nicht — dass er trotzdem gebraucht wird, prüfen die Tests der
+    kürzeren Frist.
     """
     reachable = {target for targets in MAIL_TRANSITIONS.values() for target in targets}
 
-    assert reachable == set(MailState)
+    assert reachable == set(MailState) - {MailState.NACHFASSEN}
+    # Als *Zeile* muss er dagegen dastehen, sonst hätte die fällige Zusage
+    # keine Knöpfe.
+    assert MailState.NACHFASSEN in MAIL_TRANSITIONS
 
 
 def test_a_note_can_be_written_without_touching_the_state(zusagen, call_db):

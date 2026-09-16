@@ -29,6 +29,12 @@ const actions: MailActionInfo[] = [
     description: "Die E-Mail ist heraus.",
     tone: "neutral",
   },
+  {
+    id: "nachgefasst",
+    label: "Nachgefasst",
+    description: "Telefonisch nachgefasst.",
+    tone: "neutral",
+  },
   { id: "positiv", label: "Antwort positiv", description: "Will weitermachen.", tone: "positive" },
   { id: "abgelehnt", label: "Angebot abgelehnt", description: "Hat abgelehnt.", tone: "negative" },
   { id: "keine_antwort", label: "keine Antwort", description: "Von Hand.", tone: "neutral" },
@@ -78,6 +84,7 @@ const entry: MailEntry = {
   automatic: false,
   sent_at: null,
   answered_at: null,
+  followed_up_at: null,
   days_since_sent: null,
   mail_note: "",
   updated_at: null,
@@ -94,6 +101,8 @@ function board(...entries: MailEntry[]): MailBoard {
       gesamt: rows.length,
       offen: rows.length,
       versendet: 0,
+      nachfassen: rows.filter((row) => row.state === "nachfassen").length,
+      nachgefasst: rows.filter((row) => row.state === "nachgefasst").length,
       positiv: 0,
       abgelehnt: 0,
       keine_antwort: 0,
@@ -114,6 +123,7 @@ function board(...entries: MailEntry[]): MailBoard {
     readiness_options: readinessOptions,
     scope_marker: scopeMarker,
     timeout_days: 30,
+    followup_days: 10,
   };
 }
 
@@ -142,6 +152,7 @@ function mountList(
       readinessOptions,
       scopeMarker,
       timeoutDays: 30,
+      followupDays: 10,
       isLoading: false,
       isSaving: false,
       filterBy,
@@ -170,7 +181,16 @@ describe("MailFollowupList", () => {
 
     const tabs = wrapper.findAll("[role='tab']").map((tab) => tab.attributes("data-tab"));
 
-    expect(tabs).toEqual(["alle", "offen", "versendet", "positiv", "abgelehnt", "keine_antwort"]);
+    expect(tabs).toEqual([
+      "alle",
+      "offen",
+      "versendet",
+      "nachfassen",
+      "nachgefasst",
+      "positiv",
+      "abgelehnt",
+      "keine_antwort",
+    ]);
   });
 
   it("filtert beim Klick auf einen Reiter", async () => {
@@ -297,6 +317,61 @@ describe("MailFollowupList", () => {
     expect(wrapper.text()).toContain("seit 46 Tagen");
   });
 
+  it("begruendet die faellige Zeile mit der kuerzeren Frist", async () => {
+    // Zwei Fristen, zwei Begruendungen: stuende an der faelligen Zeile der
+    // Satz der langen Frist, sagte der Hinweis das Gegenteil von dem, was
+    // der Reiter meint.
+    const { wrapper, save } = mountList([
+      {
+        ...entry,
+        state: "nachfassen",
+        state_label: "nachfassen – jetzt anrufen",
+        automatic: true,
+        sent_at: "2026-09-04T09:00:00Z",
+        days_since_sent: 12,
+        readiness_actions: [],
+        actions: ["nachgefasst", "positiv", "abgelehnt", "versendet", "offen"],
+      },
+    ]);
+
+    const hint = wrapper.findAll("li span").find((span) => span.text() === "automatisch");
+
+    expect(hint?.attributes("title")).toContain("10 Tagen");
+    expect(hint?.attributes("title")).not.toContain("30 Tagen");
+
+    // Und der Knopf, fuer den der Reiter da ist, schickt seinen Zustand –
+    // wie jeder andere, denn er kommt aus derselben Tabelle.
+    const button = wrapper.findAll("li button").find((b) => b.text().includes("Nachgefasst"));
+    await button?.trigger("click");
+
+    expect(save).toHaveBeenCalledWith("k1", { state: "nachgefasst" });
+  });
+
+  it("nennt den Anruf an der Zeile und im kopierten Text", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+
+    const { wrapper } = mountList([
+      {
+        ...entry,
+        state: "nachgefasst",
+        state_label: "nachgefasst – wartet weiter",
+        sent_at: "2026-09-01T09:00:00Z",
+        followed_up_at: "2026-09-12T14:30:00Z",
+        days_since_sent: 15,
+        readiness_actions: [],
+        actions: ["positiv", "abgelehnt", "versendet", "offen"],
+      },
+    ]);
+
+    expect(wrapper.text()).toContain("nachgefasst");
+
+    await wrapper.find("li [data-copy]").trigger("click");
+
+    // Mit Jahr, wie alles in diesem Text: er verlaesst die Anwendung.
+    expect(writeText.mock.calls[0]?.[0]).toContain("Nachgefasst am: 12.09.2026");
+  });
+
   it("sagt bei leerer Liste, woher die Zeilen kaemen", () => {
     const empty: MailBoard = { ...board(), entries: [], total: 0, matched: 0 };
     const wrapper = mount(MailFollowupList, {
@@ -306,6 +381,7 @@ describe("MailFollowupList", () => {
         readinessOptions,
         scopeMarker,
         timeoutDays: 30,
+        followupDays: 10,
         isLoading: false,
         isSaving: false,
         filterBy: vi.fn(),
