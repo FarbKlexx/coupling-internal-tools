@@ -13,6 +13,7 @@ import pytest
 from app.core import call_list_db as db
 from app.schemas.call_list import (
     CALLBACK_LEAD_MINUTES,
+    FOLLOWUP_OUTCOMES,
     OUTCOMES,
     POOL_STATES,
     BlacklistAddRequest,
@@ -42,6 +43,9 @@ from app.services.call_list_service import (
     remove_blacklist_entry,
     search_contacts,
     update_list,
+)
+from app.services.call_list_service import (
+    _cutoff as _cutoffs,
 )
 
 pytestmark = pytest.mark.usefixtures("call_db")
@@ -277,7 +281,7 @@ def test_an_email_asked_for_during_the_call_is_written_to_the_contact():
     _answer(contact_id, CallOutcome.ZUGESAGT, email=" info@erster.de ")
 
     with db.connect() as conn:
-        row = db.find_contact(conn, contact_id)
+        row = db.find_contact(conn, contact_id, _cutoffs())
 
     assert row["email"] == "info@erster.de"
 
@@ -293,7 +297,7 @@ def test_a_known_address_survives_an_outcome_that_does_not_mention_it():
     _answer(second.id, CallOutcome.ZUGESAGT, note="nur eine Notiz")
 
     with db.connect() as conn:
-        row = db.find_contact(conn, second.id)
+        row = db.find_contact(conn, second.id, _cutoffs())
 
     assert row["email"] == "zwei@example.de"
 
@@ -323,7 +327,7 @@ def test_a_wrong_number_does_not_count_as_an_attempt():
     _answer(contact_id, CallOutcome.NUMMER_FALSCH)
 
     with db.connect() as conn:
-        row = db.find_contact(conn, contact_id)
+        row = db.find_contact(conn, contact_id, _cutoffs())
 
     assert row["attempts"] == 0
     assert row["state"] == ContactState.UNGUELTIG.value
@@ -351,7 +355,7 @@ def test_no_demand_is_our_own_assessment_and_stays_out_of_the_refusals():
     assert after.contact.id != contact_id
 
     with db.connect() as conn:
-        row = db.find_contact(conn, contact_id)
+        row = db.find_contact(conn, contact_id, _cutoffs())
 
     assert row["state"] == ContactState.KEIN_BEDARF.value
     assert row["attempts"] == 0
@@ -385,7 +389,7 @@ def test_an_unreachable_contact_leaves_the_counter_and_comes_back_later():
     assert after.contact.betrieb == "Zweiter Betrieb"
 
     with db.connect() as conn:
-        row = db.find_contact(conn, contact_id)
+        row = db.find_contact(conn, contact_id, _cutoffs())
 
     assert row["attempts"] == 1
 
@@ -427,7 +431,7 @@ def test_an_absent_contact_person_defers_like_an_unreachable_one():
     assert after.next_due_at is not None
 
     with db.connect() as conn:
-        row = db.find_contact(conn, contact_id)
+        row = db.find_contact(conn, contact_id, _cutoffs())
 
     assert row["state"] == ContactState.WIEDERVORLAGE.value
     # Der Betrieb wurde erreicht — das war ein Versuch.
@@ -495,7 +499,7 @@ def test_a_callback_appears_before_the_agreed_time():
     assert after.counters.wiedervorlage == 1
 
     with db.connect() as conn:
-        row = db.find_contact(conn, contact_id)
+        row = db.find_contact(conn, contact_id, _cutoffs())
 
     assert row["state"] == ContactState.RUECKRUF.value
 
@@ -626,7 +630,7 @@ def test_a_correction_does_not_count_as_a_second_call():
     _correct(_latest_decision().event_id, CallOutcome.ABGELEHNT)
 
     with db.connect() as conn:
-        assert db.find_contact(conn, contact_id)["attempts"] == 1
+        assert db.find_contact(conn, contact_id, _cutoffs())["attempts"] == 1
 
 
 def test_a_correction_can_put_a_contact_back_into_the_pool():
@@ -967,7 +971,9 @@ def test_without_any_list_there_is_nothing_to_do_and_that_is_not_an_error():
     assert state.counters.offen == 0
     assert state.next_due_at is None
     # Die Knöpfe kommen trotzdem mit — das Frontend baut seine Oberfläche daraus.
-    assert len(state.outcomes) == len(OUTCOMES)
+    # Beide Kataloge: der gewöhnliche Anruf und das Nachfassen. Welche
+    # Knöpfe eine Zeile *zeigt*, steht an ihr.
+    assert len(state.outcomes) == len(OUTCOMES) + len(FOLLOWUP_OUTCOMES)
 
 
 def test_when_everything_is_deferred_the_state_says_when_it_comes_back():
@@ -1003,6 +1009,11 @@ def test_the_pool_states_of_the_schema_and_the_database_module_agree():
         "rueckruf",
     }
     assert "'rueckruf', 'offen', 'wiedervorlage'" in db._POOL_FILTER
+    # Der vierte Fall gehört bewusst nicht in diese Menge: eine Zusage steht
+    # im Vorrat nicht wegen ihres Zustands, sondern solange ihre Mail zum
+    # Nachfassen fällig ist — und das entscheidet der Versandstand.
+    assert "c.state = 'zugesagt'" in db._POOL_FILTER
+    assert "'nachfassen'" in db._POOL_FILTER
 
 
 # --------------------------------------------------------------------------

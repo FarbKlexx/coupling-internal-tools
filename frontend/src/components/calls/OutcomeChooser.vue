@@ -53,6 +53,14 @@ const ICONS: Record<CallOutcome, string> = {
   kein_bedarf: "do_not_disturb_on",
   abgelehnt: "block",
   nummer_falsch: "wrong_location",
+  // Die Ergebnisse des Nachfass-Anrufs. „Nachgefasst" bekommt dasselbe
+  // Symbol wie der Versandstand drüben, damit dieselbe Sache gleich
+  // aussieht; „niemanden erreicht" teilt sich das Symbol mit seinem
+  // Gegenstück aus dem Erstanruf, weil es dieselbe Auskunft ist.
+  nachgefasst: "phone_in_talk",
+  nachfassen_nicht_erreicht: "phone_missed",
+  nachfassen_positiv: "thumb_up",
+  nachfassen_abgelehnt: "thumb_down",
 };
 
 /** Welches Ergebnis wartet gerade auf einen Zeitpunkt? */

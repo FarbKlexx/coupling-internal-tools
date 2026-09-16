@@ -48,7 +48,7 @@ from enum import Enum
 
 from pydantic import BaseModel, Field
 
-from app.schemas.call_list import MAX_EMAIL, ContactField, OutcomeTone
+from app.schemas.call_list import MAX_EMAIL, CallOutcome, ContactField, OutcomeTone
 
 #: Nach wie vielen Tagen ohne Antwort eine versendete Mail als unbeantwortet
 #: gilt. Kein technischer Wert, sondern eine fachliche Frist: danach lohnt
@@ -170,6 +170,24 @@ MAIL_TRANSITIONS: dict[MailState, tuple[MailState, ...]] = {
         MailState.ABGELEHNT,
         MailState.OFFEN,
     ),
+}
+
+
+#: Was ein **Nachfass-Anruf** am Versandstand ändert.
+#:
+#: Die Brücke zwischen den beiden Werkzeugen: der Anrufer trägt in der
+#: Telefonakquise ein Anruf-Ergebnis ein, und dieselbe Handlung setzt hier den
+#: Versandstand. Sie steht in dieser Datei und nicht bei den Anruf-Ergebnissen,
+#: weil dieses Modul jenes kennen darf und nicht umgekehrt.
+#:
+#: `nachfassen_nicht_erreicht` fehlt bewusst: niemanden erreicht zu haben
+#: sagt nichts über die Mail. Der Kontakt wird aufgeschoben und kommt wieder,
+#: der Versandstand bleibt „versendet" — und damit bleibt die Zeile im Reiter
+#: „Nachfassen".
+FOLLOWUP_MAIL_STATES: dict[CallOutcome, "MailState"] = {
+    CallOutcome.NACHGEFASST: MailState.NACHGEFASST,
+    CallOutcome.NACHFASSEN_POSITIV: MailState.POSITIV,
+    CallOutcome.NACHFASSEN_ABGELEHNT: MailState.ABGELEHNT,
 }
 
 

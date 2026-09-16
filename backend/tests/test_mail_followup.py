@@ -39,6 +39,13 @@ CSV = (
     "Dritter Betrieb;05221 333;Bünde;\r\n"
 ).encode("utf-8")
 
+#: Eine zweite Liste mit einem unberührten Kontakt — für die Rangfolge im
+#: Anrufvorrat braucht es etwas, das *hinter* dem Nachfassen stehen kann.
+NEUE_LISTE = (
+    "Betrieb;Telefon;Ort;E-Mail\r\n"
+    "Vierter Betrieb;05221 444;Kirchlengern;vier@example.de\r\n"
+).encode("utf-8")
+
 
 @pytest.fixture
 def zusagen(client, call_db):
@@ -676,6 +683,263 @@ def test_a_note_can_be_written_without_touching_the_state(zusagen, call_db):
     # die Frist bleibt gerechnet, statt durch die Notiz zementiert zu werden.
     assert entry["state"] == "keine_antwort"
     assert entry["automatic"] is True
+
+
+# ------------------------------
+# Nachfassen am Arbeitsplatz
+# ------------------------------
+
+
+def _state(client):
+    response = client.get("/telefonakquise/state")
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def _outcome(client, contact_id, outcome, expected=200, **body):
+    response = client.post(
+        f"/telefonakquise/contacts/{contact_id}/outcome",
+        json={"outcome": outcome, **body},
+    )
+    assert response.status_code == expected, response.text
+    return response.json()
+
+
+def _due_followup(zusagen, call_db, days=MAIL_FOLLOWUP_DAYS + 1):
+    """Eine Zusage, deren Mail seit `days` Tagen unbeantwortet liegt."""
+    client, ids = zusagen
+    _click(client, ids[0], "versendet")
+    _backdate(call_db, ids[0], days)
+    return client, ids[0]
+
+
+def test_a_due_followup_goes_back_to_the_workbench(zusagen, call_db):
+    """Der Kern: eine Zusage kommt wieder ins Telefon — als Nachfassen.
+
+    Sie steht auf „zugesagt" und wäre nach der alten Regel nie wieder
+    vorgelegt worden. Dass sie es wird, ist der ganze Zweck des Reiters.
+    """
+    client, contact_id = _due_followup(zusagen, call_db)
+    state = _state(client)
+    contact = state["contact"]
+
+    assert contact["id"] == contact_id
+    # Der Zustand bleibt — sonst verschwände die Zeile aus dem Mailversand.
+    assert contact["state"] == "zugesagt"
+    # Und der Anrufer sieht, dass es kein Erstanruf ist.
+    assert contact["followup"]["due"] is True
+    assert contact["followup"]["days_since_sent"] == MAIL_FOLLOWUP_DAYS + 1
+    assert contact["followup"]["sent_at"]
+    assert state["counters"]["nachfassen"] == 1
+    # Die Knöpfe sind die des Nachfassens, nicht die des Erstanrufs.
+    assert contact["outcomes"] == [
+        "nachgefasst",
+        "nachfassen_nicht_erreicht",
+        "nachfassen_positiv",
+        "nachfassen_abgelehnt",
+        "abgelehnt",
+    ]
+
+
+def test_an_initial_call_knows_nothing_of_a_mail(zusagen):
+    """Umgekehrt: wo keine Mail heraus ist, ist auch nichts nachzufassen."""
+    client, _ = zusagen
+    upload = client.post(
+        "/telefonakquise/lists",
+        files={"file": ("zweite.csv", NEUE_LISTE, "text/csv")},
+        data={"name": "Nachschub"},
+    )
+    assert upload.status_code == 200, upload.text
+
+    contact = _state(client)["contact"]
+
+    assert contact["betrieb"] == "Vierter Betrieb"
+    assert contact["followup"] is None
+    assert "zugesagt" in contact["outcomes"]
+    assert "nachgefasst" not in contact["outcomes"]
+
+
+def test_the_followup_waits_behind_a_due_callback(zusagen, call_db):
+    """Ein zugesagter Rückruf ist eine Verabredung mit einem Menschen.
+
+    Er bleibt Rang 1; das Nachfassen kommt direkt danach — also vor jedem
+    Erstanruf.
+    """
+    client, contact_id = _due_followup(zusagen, call_db)
+    client.post(
+        "/telefonakquise/lists",
+        files={"file": ("zweite.csv", NEUE_LISTE, "text/csv")},
+        data={"name": "Nachschub"},
+    )
+
+    # Ohne Rückruf steht das Nachfassen vor dem unberührten Erstanruf.
+    assert _state(client)["contact"]["id"] == contact_id
+
+    # Denselben Erstanruf auf einen fälligen Rückruf setzen …
+    vierter = next(
+        entry
+        for entry in client.get(
+            "/telefonakquise/contacts", params={"q": "Vierter"}
+        ).json()["entries"]
+    )
+    moment = datetime.now(timezone.utc) - timedelta(minutes=5)
+    _outcome(
+        client,
+        vierter["id"],
+        "rueckruf",
+        appointment_at=moment.isoformat(),
+    )
+
+    # … und er zieht am Nachfassen vorbei.
+    assert _state(client)["contact"]["id"] == vierter["id"]
+
+
+def test_a_mail_that_ran_out_of_time_is_not_called_again(zusagen, call_db):
+    """Was abgeschrieben ist, gehört nicht an die Spitze der Warteschlange.
+
+    Dieselbe Regel wie im Mailversand: nach der langen Frist steht dort
+    „keine Antwort", und dieselbe Rechnung entscheidet hier.
+    """
+    client, _ = _due_followup(zusagen, call_db, days=MAIL_TIMEOUT_DAYS + 1)
+
+    assert _state(client)["contact"] is None
+    assert _state(client)["counters"]["nachfassen"] == 0
+
+
+def test_the_followup_call_is_recorded_without_losing_the_promise(zusagen, call_db):
+    """Der Anruf setzt den Versandstand — und lässt die Zusage stehen."""
+    client, contact_id = _due_followup(zusagen, call_db)
+    sent_at = _entry(_board(client), contact_id)["sent_at"]
+
+    state = _outcome(client, contact_id, "nachgefasst")
+
+    # Der Kontakt ist aus der Warteschlange und immer noch eine Zusage.
+    assert state["contact"] is None
+    assert state["counters"]["nachfassen"] == 0
+    assert state["counters"]["zugesagt"] == 2
+
+    entry = _entry(_board(client), contact_id)
+
+    assert entry["state"] == "nachgefasst"
+    assert entry["followed_up_at"]
+    # Das Versanddatum bleibt: die lange Frist läuft weiter ab dem Versand,
+    # sonst ließe sie sich durch Anrufe beliebig hinausschieben.
+    assert entry["sent_at"] == sent_at
+
+    # Und im Protokoll steht, dass angerufen wurde.
+    latest = client.get("/telefonakquise/decisions").json()["entries"][0]
+
+    assert latest["outcome"] == "nachgefasst"
+    assert latest["contact_id"] == contact_id
+
+
+def test_reaching_nobody_defers_the_followup_and_keeps_the_mail_where_it_is(
+    zusagen, call_db
+):
+    """Niemanden erreicht zu haben sagt nichts über die Mail."""
+    client, contact_id = _due_followup(zusagen, call_db)
+
+    state = _outcome(
+        client, contact_id, "nachfassen_nicht_erreicht", snooze_minutes=120
+    )
+
+    assert state["contact"] is None
+    assert state["next_due_at"]
+    # Aufgeschoben heißt: zählt gerade nicht mit, ist aber nicht erledigt.
+    assert state["counters"]["nachfassen"] == 0
+
+    entry = _entry(_board(client), contact_id)
+
+    assert entry["state"] == "nachfassen"
+    assert entry["followed_up_at"] is None
+
+
+def test_confirmed_interest_is_an_answer_even_by_telephone(zusagen, call_db):
+    client, contact_id = _due_followup(zusagen, call_db)
+
+    _outcome(client, contact_id, "nachfassen_positiv")
+    entry = _entry(_board(client), contact_id)
+
+    assert entry["state"] == "positiv"
+    assert entry["answered_at"]
+
+
+def test_no_interest_ends_the_offer_but_not_the_consent(zusagen, call_db):
+    """Der Unterschied, auf dem die ganze Telefonakquise steht."""
+    client, contact_id = _due_followup(zusagen, call_db)
+
+    _outcome(client, contact_id, "nachfassen_abgelehnt")
+    entry = _entry(_board(client), contact_id)
+
+    assert entry["state"] == "abgelehnt"
+    # Die Zusage gilt weiter — die Zeile steht noch in der Versandliste.
+    assert entry["contact_id"] == contact_id
+
+
+def test_a_refusal_on_the_followup_call_ends_the_promise(zusagen, call_db):
+    """Der Werbewiderspruch ist in jedem Gespräch eintragbar.
+
+    Er ist das einzige Ergebnis des großen Katalogs, das am Nachfass-Kontakt
+    angeboten wird — und das einzige, das die Zusage beendet.
+    """
+    client, contact_id = _due_followup(zusagen, call_db)
+
+    _outcome(client, contact_id, "abgelehnt")
+    board = _board(client)
+
+    assert [entry["contact_id"] for entry in board["entries"]] != [contact_id]
+    assert board["total"] == 1
+
+
+def test_the_two_catalogues_do_not_mix(zusagen, call_db):
+    """Die Oberfläche kann keinen Knopf zeigen, den das Schreiben ablehnt.
+
+    Geprüft wird hier die andere Hälfte: dass das Schreiben ihn ablehnt.
+    """
+    client, contact_id = _due_followup(zusagen, call_db)
+
+    # „Nicht erreichbar" aus dem großen Katalog machte aus der Zusage eine
+    # Wiedervorlage — und die Zeile wäre aus dem Mailversand verschwunden.
+    body = _outcome(client, contact_id, "nicht_erreichbar", expected=400)
+    assert "Erster Betrieb" in body["detail"]
+
+    client.post(
+        "/telefonakquise/lists",
+        files={"file": ("zweite.csv", NEUE_LISTE, "text/csv")},
+        data={"name": "Nachschub"},
+    )
+    # Solange das Nachfassen fällig ist, steht es vorn — erst abräumen.
+    _outcome(client, contact_id, "nachgefasst")
+    vierter = _state(client)["contact"]
+
+    # Und andersherum: „Nachgefasst" an einem Betrieb, dem nie jemand
+    # geschrieben hat, wäre eine Aussage über eine Mail, die es nicht gibt.
+    body = _outcome(client, vierter["id"], "nachgefasst", expected=400)
+    assert "Vierter Betrieb" in body["detail"]
+
+
+def test_a_followup_entry_is_corrected_within_its_own_catalogue(zusagen, call_db):
+    """Eine Richtigstellung bewegt auch den Versandstand mit.
+
+    Sie geht durch dieselbe Stelle wie der Anruf (`_write_outcome`) — sonst
+    liefen Protokoll und Versandliste auseinander.
+    """
+    client, contact_id = _due_followup(zusagen, call_db)
+    _outcome(client, contact_id, "nachgefasst")
+
+    decision = client.get("/telefonakquise/decisions").json()["entries"][0]
+
+    assert decision["correctable"] is True
+    assert "nachfassen_abgelehnt" in decision["outcomes"]
+    assert "zugesagt" not in decision["outcomes"]
+
+    fixed = client.post(
+        f"/telefonakquise/decisions/{decision['event_id']}/correct",
+        json={"outcome": "nachfassen_abgelehnt"},
+    )
+    assert fixed.status_code == 200, fixed.text
+
+    assert _entry(_board(client), contact_id)["state"] == "abgelehnt"
 
 
 # ------------------------------

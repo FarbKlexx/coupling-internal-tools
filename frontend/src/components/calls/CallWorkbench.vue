@@ -62,10 +62,57 @@ const website = computed(() => contactWebsite(props.contact?.website ?? ""));
  * „Nummer falsch" den Zähler bewusst nicht erhöhen – auch eine
  * richtiggestellte Entscheidung ist Vorgeschichte.
  */
+/**
+ * Der Nachfass-Hinweis: dieser Betrieb hat schon zugesagt *und* eine Mail.
+ *
+ * Die wichtigste Auskunft des ganzen Kastens, weil sie die erste Sekunde des
+ * Gesprächs bestimmt: „guten Tag, wir hatten Ihnen am 5. eine Mail
+ * geschickt" statt „guten Tag, Coupling Media". Deshalb steht sie oben, laut
+ * und ungefragt – und deshalb verdrängt sie den allgemeinen
+ * „Wiederanruf"-Hinweis, der daneben nur wiederholte, dass der Betrieb schon
+ * einmal dran war.
+ *
+ * `due` kommt aus dem Backend: ob nachzufassen ist, entscheidet dieselbe
+ * Frist, die im Mailversand den Reiter „Nachfassen" füllt.
+ */
+const followup = computed(() => {
+  const contact = props.contact;
+  const info = contact?.followup;
+  if (!contact || !info?.due) return null;
+
+  const days = info.days_since_sent;
+
+  return {
+    sentAt: formatMoment(info.sent_at),
+    since:
+      days === 0 ? "heute verschickt" : `seit ${days} ${days === 1 ? "Tag" : "Tagen"} ohne Antwort`,
+    mailNote: info.mail_note,
+    last: contact.history[0] ?? null,
+  };
+});
+
+/**
+ * Die Ergebnisse, die an *diesem* Kontakt etwas tun.
+ *
+ * Die IDs kommen mit dem Kontakt (`contact.outcomes`) und geben auch die
+ * Reihenfolge vor; Beschriftung und Tonlage stehen im Katalog der Antwort.
+ * Ein Nachfass-Anruf bekommt damit andere Knöpfe als ein Erstanruf, ohne
+ * dass diese Komponente die Regel dafür kennt.
+ */
+const contactOutcomes = computed(() => {
+  const catalogue = props.outcomes;
+
+  return (props.contact?.outcomes ?? []).flatMap((id) =>
+    catalogue.filter((info) => info.id === id),
+  );
+});
+
 const revisit = computed(() => {
   const contact = props.contact;
   const last = contact?.history[0];
   if (!contact || !last) return null;
+  // Beim Nachfassen sagt der eigene Kasten schon alles, was hier stünde.
+  if (followup.value) return null;
 
   const callback = contact.state === "rueckruf";
   const attempts = contact.attempts;
@@ -115,6 +162,14 @@ function answer(choice: OutcomeChoice) {
       <div class="content-box px-5 py-3 min-w-36">
         <p class="eyebrow">Noch anzurufen</p>
         <p class="text-3xl font-semibold leading-tight">{{ counters.offen }}</p>
+      </div>
+      <!-- Nur wenn etwas ansteht: eine Kachel mit einer Null beantwortet
+           eine Frage, die niemand gestellt hat. -->
+      <div v-if="counters.nachfassen" class="content-box px-5 py-3 min-w-36">
+        <p class="eyebrow">Nachzufassen</p>
+        <p class="text-3xl font-semibold leading-tight text-amber-400">
+          {{ counters.nachfassen }}
+        </p>
       </div>
       <div class="content-box px-4 py-3">
         <p class="eyebrow">Wiedervorlage</p>
@@ -188,6 +243,35 @@ function answer(choice: OutcomeChoice) {
           </p>
         </div>
         <span v-if="contact.prio" class="badge shrink-0">{{ contact.prio }}</span>
+      </div>
+
+      <!-- Nachfassen: kein Erstanruf. Steht über allem anderen und ist
+           bewusst der auffälligste Kasten der Seite – wer ihn übersieht,
+           meldet sich, als sei es das erste Gespräch. -->
+      <div
+        v-if="followup"
+        data-followup
+        class="rounded-md border-2 border-amber-500/70 bg-amber-500/10 px-4 py-3 space-y-1"
+      >
+        <p class="flex items-center gap-2 text-base font-semibold text-amber-300">
+          <span class="material-symbols-outlined text-[20px] leading-none">forward_to_inbox</span>
+          Nachfassen – kein Erstanruf
+        </p>
+        <p class="text-sm text-amber-100">
+          Mail am <strong>{{ followup.sentAt }}</strong> verschickt ·
+          <strong>{{ followup.since }}</strong>
+        </p>
+        <p v-if="followup.last" class="text-xs light-grey-text">
+          Zusage {{ formatMoment(followup.last.occurred_at) }} ·
+          {{ followup.last.username }}
+          <template v-if="followup.last.email"> · an {{ followup.last.email }}</template>
+        </p>
+        <p v-if="followup.last?.note" class="text-xs light-grey-text whitespace-pre-line">
+          Telefonat: „{{ followup.last.note }}“
+        </p>
+        <p v-if="followup.mailNote" class="text-xs light-grey-text whitespace-pre-line">
+          Versand: „{{ followup.mailNote }}“
+        </p>
       </div>
 
       <!-- Vorgeschichte: ungefragt und vor der Nummer, nicht eingeklappt darunter -->
@@ -336,12 +420,14 @@ function answer(choice: OutcomeChoice) {
 
       <!-- Ergebnis -->
       <div class="space-y-2">
-        <p class="eyebrow">Ergebnis des Anrufs</p>
+        <p class="eyebrow">
+          {{ followup ? "Ergebnis des Nachfass-Anrufs" : "Ergebnis des Anrufs" }}
+        </p>
         <!-- `:key` setzt den Wähler beim Wechsel des Betriebs zurück: eine
              halb aufgeklappte Zeitauswahl gehörte zum vorigen Gespräch. -->
         <OutcomeChooser
           :key="contact.id"
-          :outcomes="outcomes"
+          :outcomes="contactOutcomes"
           :disabled="isSaving"
           @submit="answer"
         />

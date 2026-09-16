@@ -73,17 +73,24 @@ describe("Anruf-Ergebnisse", () => {
     expect(iconIds().sort()).toEqual([...CALL_OUTCOMES].sort());
   });
 
-  it("tauchen alle in der Knopfliste des Backends auf", () => {
-    // `OUTCOMES` ist, was der Anrufer sieht. Ein Ergebnis, das im Enum steht
-    // und dort fehlt, waere ein Zustand, den niemand erreichen kann.
+  it("tauchen alle in einer der beiden Knopflisten des Backends auf", () => {
+    // Zwei Kataloge: `OUTCOMES` ist der Erstanruf, `FOLLOWUP_OUTCOMES` das
+    // Nachfassen. Ein Ergebnis, das im Enum steht und in keinem von beiden,
+    // waere ein Zustand, den niemand erreichen kann.
     const source = read(SCHEMA);
-    const buttons = source.match(/OUTCOMES: tuple\[OutcomeInfo, \.\.\.\] = \(([\s\S]*?)\n\)/)?.[1];
+    const catalogues = [
+      ...source.matchAll(/OUTCOMES: tuple\[OutcomeInfo, \.\.\.\] = \(([\s\S]*?)\n\)/g),
+    ]
+      .map((match) => match[1] ?? "")
+      .join("\n");
 
-    expect(buttons, "OUTCOMES-Liste im Backend nicht gefunden").toBeTruthy();
+    expect(catalogues, "OUTCOMES-Listen im Backend nicht gefunden").toBeTruthy();
 
     for (const outcome of CALL_OUTCOMES) {
       const member = outcome.toUpperCase();
-      expect(buttons, `CallOutcome.${member} fehlt in OUTCOMES`).toContain(`CallOutcome.${member}`);
+      expect(catalogues, `CallOutcome.${member} fehlt in den Knopflisten`).toContain(
+        `CallOutcome.${member}`,
+      );
     }
   });
 });

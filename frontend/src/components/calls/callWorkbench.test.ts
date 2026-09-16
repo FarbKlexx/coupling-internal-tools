@@ -17,6 +17,7 @@ const counters: CallCounters = {
   offen: 3,
   wiedervorlage: 0,
   zugesagt: 0,
+  nachfassen: 0,
   kein_bedarf: 0,
   abgelehnt: 0,
   ungueltig: 0,
@@ -57,6 +58,23 @@ const outcomes: OutcomeInfo[] = [
     time_input: "appointment",
     resulting_state: "rueckruf",
   },
+  // Die beiden Nachfass-Ergebnisse: derselbe Katalog, andere Zeile.
+  {
+    id: "nachgefasst",
+    label: "Nachgefasst – schaut es sich an",
+    description: "Erreicht, die Mail ist bekannt.",
+    tone: "positive",
+    time_input: "none",
+    resulting_state: "zugesagt",
+  },
+  {
+    id: "nachfassen_nicht_erreicht",
+    label: "Niemanden erreicht",
+    description: "Kommt später zurück.",
+    tone: "neutral",
+    time_input: "snooze",
+    resulting_state: "zugesagt",
+  },
 ];
 
 const contact: CallContact = {
@@ -84,13 +102,19 @@ const contact: CallContact = {
   appointment_at: null,
   note: "",
   history: [],
+  followup: null,
+  // Der Erstanruf-Katalog; welche Knöpfe eine Zeile zeigt, steht am Kontakt.
+  outcomes: ["zugesagt", "nicht_erreichbar", "ap_nicht_da", "rueckruf"],
 };
 
-function mountWorkbench(overrides: Partial<CallContact> | null = {}) {
+function mountWorkbench(
+  overrides: Partial<CallContact> | null = {},
+  countersOverride: CallCounters = counters,
+) {
   return mount(CallWorkbench, {
     props: {
       contact: overrides === null ? null : { ...contact, ...overrides },
-      counters,
+      counters: countersOverride,
       outcomes,
       nextDueAt: null,
       hasLists: true,
@@ -102,6 +126,76 @@ function mountWorkbench(overrides: Partial<CallContact> | null = {}) {
 }
 
 describe("CallWorkbench", () => {
+  it("macht aus dem Nachfassen keinen Erstanruf", async () => {
+    // Der Kasten entscheidet die erste Sekunde des Gesprächs: „wir hatten
+    // Ihnen am 5. geschrieben" statt „guten Tag, Coupling Media".
+    const wrapper = mountWorkbench({
+      state: "zugesagt",
+      state_label: "Zusage",
+      outcomes: ["nachgefasst", "nachfassen_nicht_erreicht"],
+      followup: {
+        sent_at: "2026-09-05T08:00:00Z",
+        days_since_sent: 11,
+        due: true,
+        mail_note: "Angebot mit Preisliste",
+      },
+      history: [
+        {
+          occurred_at: "2026-08-30T10:00:00Z",
+          username: "anruferin",
+          outcome: "zugesagt",
+          outcome_label: "Zusage – E-Mail erlaubt",
+          note: "will Preise sehen",
+          email: "info@tayfun-design.de",
+          appointment_at: null,
+          due_at: null,
+        },
+      ],
+    });
+    const box = wrapper.get("[data-followup]");
+
+    expect(box.text()).toContain("Nachfassen – kein Erstanruf");
+    expect(box.text()).toContain("seit 11 Tagen ohne Antwort");
+    // Versanddatum und die beiden Anmerkungen – alles, was das Gespräch
+    // braucht, ohne eine zweite Seite zu öffnen.
+    expect(box.text()).toContain("05.09.");
+    expect(box.text()).toContain("will Preise sehen");
+    expect(box.text()).toContain("Angebot mit Preisliste");
+    expect(wrapper.text()).toContain("Ergebnis des Nachfass-Anrufs");
+
+    // Und die Knöpfe sind die des Nachfassens – der Katalog kommt aus dem
+    // Backend, welche davon gelten, steht am Kontakt.
+    const labels = wrapper.findAll("button.outcome").map((button) => button.text());
+
+    // Mit dem Symbol davor, wie der Knopf es rendert.
+    expect(labels).toEqual([
+      "phone_in_talkNachgefasst – schaut es sich an",
+      "phone_missedNiemanden erreicht",
+    ]);
+  });
+
+  it("zeigt den Nachfass-Kasten nicht, solange die Frist laeuft", () => {
+    // Eine Mail von vorgestern ist kein Nachfassen – `due` entscheidet das
+    // im Backend, und die Oberflaeche rechnet es nicht nach.
+    const wrapper = mountWorkbench({
+      followup: {
+        sent_at: "2026-09-14T08:00:00Z",
+        days_since_sent: 2,
+        due: false,
+        mail_note: "",
+      },
+    });
+
+    expect(wrapper.find("[data-followup]").exists()).toBe(false);
+  });
+
+  it("nennt die Zahl der faelligen Nachfass-Anrufe", () => {
+    const wrapper = mountWorkbench({}, { ...counters, nachfassen: 4 });
+
+    expect(wrapper.text()).toContain("Nachzufassen");
+    expect(wrapper.text()).toContain("4");
+  });
+
   it("zeigt den Kontakt mit Nummer, Aufhänger und Zähler", () => {
     const wrapper = mountWorkbench();
 
@@ -117,7 +211,8 @@ describe("CallWorkbench", () => {
     const wrapper = mountWorkbench();
     const labels = wrapper.findAll("button.outcome").map((button) => button.text());
 
-    expect(labels).toHaveLength(outcomes.length);
+    // Nicht der ganze Katalog: welche Knöpfe eine Zeile zeigt, steht an ihr.
+    expect(labels).toHaveLength(contact.outcomes.length);
     expect(labels[0]).toContain("Zusage");
     expect(wrapper.get("button.outcome").classes()).toContain("outcome--positive");
   });

@@ -57,6 +57,9 @@ const decision: CallDecision = {
   corrected: false,
   correctable: true,
   locked_reason: "",
+  // Welche Ergebnisse diese Eintragung ersetzen können – kommt aus dem
+  // Backend, damit das Protokoll keinen Knopf zeigt, der mit 400 antwortet.
+  outcomes: ["zugesagt", "nicht_erreichbar"],
 };
 
 function page(entries: CallDecision[], query = ""): CallDecisionPage {

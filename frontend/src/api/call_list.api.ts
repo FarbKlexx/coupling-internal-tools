@@ -30,6 +30,15 @@ export const CALL_OUTCOMES = [
   "kein_bedarf",
   "abgelehnt",
   "nummer_falsch",
+  // Die Ergebnisse eines **Nachfass-Anrufs**. Sie gibt es nur an einer
+  // Zusage, deren Mail seit der Frist unbeantwortet liegt, und sie lassen den
+  // Zustand des Kontakts unangetastet – er bleibt „zugesagt", sonst
+  // verschwände seine Zeile aus dem Mailversand. Was sie bewegen, ist der
+  // Versandstand.
+  "nachgefasst",
+  "nachfassen_nicht_erreicht",
+  "nachfassen_positiv",
+  "nachfassen_abgelehnt",
 ] as const;
 
 export type CallOutcome = (typeof CALL_OUTCOMES)[number];
@@ -62,6 +71,23 @@ export interface CallEvent {
   due_at: string | null;
 }
 
+/**
+ * Der Versandstand am Kontakt – nur bei Zusagen, deren Mail heraus ist.
+ *
+ * Der Grund, warum dieser Betrieb überhaupt wieder vorgelegt wird: es ist
+ * kein Erstanruf. `due` sagt, ob gerade nachzufassen ist, und kommt gerechnet
+ * aus dem Backend – dieselbe Frist, die drüben den Reiter „Nachfassen" füllt.
+ */
+export interface ContactFollowup {
+  /** Wann die Mail hinausgegangen ist (UTC). */
+  sent_at: string;
+  /** Volle Tage seit dem Versand. */
+  days_since_sent: number;
+  due: boolean;
+  /** Die Anmerkung aus dem Mailversand. */
+  mail_note: string;
+}
+
 export interface CallContact {
   id: string;
   list_id: string;
@@ -86,6 +112,16 @@ export interface CallContact {
   appointment_at: string | null;
   note: string;
   history: CallEvent[];
+  /** Gesetzt, sobald zu diesem Betrieb eine Mail heraus ist. */
+  followup: ContactFollowup | null;
+  /**
+   * Welche Ergebnisse an *diesem* Kontakt etwas Sinnvolles tun.
+   *
+   * Kommt aus derselben Regel, gegen die das Backend beim Schreiben prüft –
+   * die Oberfläche baut sie nicht nach, sonst wächst ihr ein Knopf, der mit
+   * 400 antwortet.
+   */
+  outcomes: CallOutcome[];
 }
 
 export interface CallCounters {
@@ -93,6 +129,8 @@ export interface CallCounters {
   offen: number;
   wiedervorlage: number;
   zugesagt: number;
+  /** Zusagen, deren Mail zum Nachfassen fällig ist – sie stehen ganz vorne. */
+  nachfassen: number;
   /** Eigene Einschätzung „kein Bedarf" – kein Widerspruch des Betriebs. */
   kein_bedarf: number;
   abgelehnt: number;
@@ -224,6 +262,14 @@ export interface CallDecision {
   correctable: boolean;
   /** Warum nicht – leer, solange `correctable` wahr ist. */
   locked_reason: string;
+  /**
+   * Welche Ergebnisse beim Richtigstellen zur Wahl stehen.
+   *
+   * Ein Nachfass-Anruf wird zu einem anderen Nachfass-Ergebnis
+   * richtiggestellt, ein gewöhnlicher Anruf zu einem gewöhnlichen – welcher
+   * Katalog gilt, entscheidet das Backend.
+   */
+  outcomes: CallOutcome[];
 }
 
 /**

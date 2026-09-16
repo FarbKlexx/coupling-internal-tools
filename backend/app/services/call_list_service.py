@@ -32,6 +32,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
+from typing import Sequence
 
 from app.core import call_list_db as db
 from app.core.call_list_csv import (
@@ -55,6 +56,7 @@ from app.schemas.call_list import (
     BLACKLIST_SOURCE_LABELS,
     CALLBACK_LEAD_MINUTES,
     DECISION_PAGE_SIZE,
+    FOLLOWUP_OUTCOMES,
     MAX_BLACKLIST_PAGE_SIZE,
     MAX_DECISION_PAGE_SIZE,
     MAX_EMAIL,
@@ -86,6 +88,7 @@ from app.schemas.call_list import (
     CallState,
     ColumnMappingInfo,
     ContactField,
+    ContactFollowup,
     ContactState,
     ListAnalyseResponse,
     ListImportResponse,
@@ -94,6 +97,13 @@ from app.schemas.call_list import (
     PrioOption,
     SkippedRowInfo,
     TimeInput,
+    allowed_outcomes,
+    correctable_outcomes,
+)
+from app.schemas.mail_followup import (
+    FOLLOWUP_MAIL_STATES,
+    MAIL_FOLLOWUP_DAYS,
+    MAIL_TIMEOUT_DAYS,
 )
 
 
@@ -122,8 +132,24 @@ class CallListExport:
 # --------------------------------------------------------------------------
 
 
+def _cutoff() -> db.MailCutoffs:
+    """Die Stichtage des Mailversands, wie sie auch dort gerechnet werden.
+
+    Der Anrufvorrat braucht sie, seit die Zusagen mit fälliger Mail ganz nach
+    vorne rücken: welcher Betrieb dort steht, entscheidet derselbe Ausdruck,
+    der drüben den Reiter „Nachfassen" füllt. Einmal pro Anfrage gerechnet
+    und dann durchgereicht — sonst könnte ein Kontakt zwischen zwei Abfragen
+    derselben Antwort die Gruppe wechseln.
+    """
+    return db.mail_cutoffs(MAIL_TIMEOUT_DAYS, MAIL_FOLLOWUP_DAYS)
+
+
 def _counters(
-    conn: sqlite3.Connection, moment: str, *, list_id: str | None = None
+    conn: sqlite3.Connection,
+    moment: str,
+    cutoff: db.MailCutoffs,
+    *,
+    list_id: str | None = None,
 ) -> CallCounters:
     """Die Zahlen über dem Kontakt, in einer Abfrage.
 
@@ -151,6 +177,10 @@ def _counters(
         abgelehnt=total(ContactState.ABGELEHNT),
         ungueltig=total(ContactState.UNGUELTIG),
         zugesagt_ohne_email=db.promised_without_email(conn, list_id=list_id),
+        # Nur in der Gesamtübersicht: die Zahl beantwortet „was liegt gerade
+        # an?", und das ist keine Frage an eine einzelne Liste — der
+        # Versandstand hängt am Betrieb, nicht an der Datei, aus der er kam.
+        nachfassen=0 if list_id else db.followup_total(conn, cutoff),
     )
 
 
@@ -161,11 +191,33 @@ def _event(row: sqlite3.Row) -> CallEventInfo:
         occurred_at=row["occurred_at"],
         username=row["username"],
         outcome=outcome,
-        outcome_label=next(info.label for info in OUTCOMES if info.id == outcome),
+        outcome_label=OUTCOME_BY_ID[outcome].label,
         note=row["note"],
         email=row["email"],
         appointment_at=row["appointment_at"],
         due_at=row["due_at"],
+    )
+
+
+def _followup(row: sqlite3.Row) -> ContactFollowup | None:
+    """Der Versandstand am Kontakt, oder `None`.
+
+    `None` heißt: zu diesem Betrieb ist keine Mail heraus — also ein
+    Erstanruf. Steht dort ein Versanddatum, ist es keiner, und das muss der
+    Anrufer sehen, bevor er sich meldet.
+    """
+    sent_at = row["mail_sent_at"]
+
+    if not sent_at:
+        return None
+
+    return ContactFollowup(
+        sent_at=sent_at,
+        # Gerechnet wie überall sonst auch — „seit 12 Tagen" soll in der
+        # Versandliste und am Telefon dieselbe Zahl sein.
+        days_since_sent=db.days_since(sent_at) or 0,
+        due=bool(row["followup_due"]),
+        mail_note=row["mail_note"] or "",
     )
 
 
@@ -197,10 +249,14 @@ def _contact(conn: sqlite3.Connection, row: sqlite3.Row) -> CallContact:
         appointment_at=row["appointment_at"],
         note=row["note"],
         history=[_event(event) for event in db.events_of_contact(conn, row["id"])],
+        followup=_followup(row),
+        outcomes=allowed_outcomes(state),
     )
 
 
-def _list_info(conn: sqlite3.Connection, row: sqlite3.Row, moment: str) -> CallListInfo:
+def _list_info(
+    conn: sqlite3.Connection, row: sqlite3.Row, moment: str, cutoff: db.MailCutoffs
+) -> CallListInfo:
     return CallListInfo(
         id=row["id"],
         name=row["name"],
@@ -208,22 +264,27 @@ def _list_info(conn: sqlite3.Connection, row: sqlite3.Row, moment: str) -> CallL
         created_at=row["created_at"],
         created_by=row["created_by"],
         archived=bool(row["archived"]),
-        counters=_counters(conn, moment, list_id=row["id"]),
+        counters=_counters(conn, moment, cutoff, list_id=row["id"]),
     )
 
 
 def _build_state(conn: sqlite3.Connection) -> CallState:
     """Der ganze Arbeitsstand. Einzige Stelle, die `CallState` erzeugt."""
     moment = db.now()
-    row = db.next_contact(conn, moment)
+    cutoff = _cutoff()
+    row = db.next_contact(conn, moment, cutoff)
 
     return CallState(
         revision=db.revision(conn),
-        counters=_counters(conn, moment),
+        counters=_counters(conn, moment, cutoff),
         contact=_contact(conn, row) if row is not None else None,
-        next_due_at=db.next_due_at(conn, moment),
-        outcomes=list(OUTCOMES),
-        lists=[_list_info(conn, entry, moment) for entry in db.all_lists(conn)],
+        next_due_at=db.next_due_at(conn, moment, cutoff),
+        # Beide Kataloge: welche Knöpfe eine Zeile *zeigt*, steht an ihr
+        # (`contact.outcomes`, `decision.outcomes`) — hier stehen nur
+        # Beschriftung, Beschreibung und Tonlage, und die braucht die
+        # Oberfläche für beide.
+        outcomes=[*OUTCOMES, *FOLLOWUP_OUTCOMES],
+        lists=[_list_info(conn, entry, moment, cutoff) for entry in db.all_lists(conn)],
         blacklist_count=db.blacklist_total(conn),
     )
 
@@ -368,6 +429,7 @@ def _write_outcome(
     *,
     user_id: str,
     username: str,
+    allowed: Sequence[CallOutcome],
     corrects_event_id: int | None = None,
 ) -> None:
     """Zustand und Protokollzeile in einem Zug schreiben.
@@ -380,7 +442,27 @@ def _write_outcome(
     `corrects_event_id`: es benennt die Zeile, die falsch war, und unterdrückt
     den Anrufzähler — eine Korrektur ist kein zweiter Anruf, sondern derselbe,
     anders eingeordnet.
+
+    Welche Ergebnisse zulässig sind, entscheidet der Aufrufer und gibt sie in
+    `allowed` mit: am Arbeitsplatz zählt der Zustand des Kontakts
+    (`allowed_outcomes`), beim Richtigstellen die Eintragung, die ersetzt wird
+    (`correctable_outcomes`). Geprüft wird hier, damit kein Weg daran vorbei
+    führt.
+
+    Hier hängt auch die **Wirkung auf den Mailversand**: ein Nachfass-Anruf
+    setzt dort den Versandstand (`FOLLOWUP_MAIL_STATES`). Dass das an dieser
+    Stelle steht und nicht im Aufrufer, ist derselbe Grund wie beim Protokoll
+    — sonst bekäme die Richtigstellung eines Nachfass-Anrufs die Wirkung
+    nicht mit, und Versandstand und Protokoll liefen auseinander.
     """
+    if request.outcome not in allowed:
+        raise CallListError(
+            f"„{OUTCOME_BY_ID[request.outcome].label}“ passt hier nicht: "
+            f"„{row['betrieb']}“ steht auf "
+            f"„{STATE_LABELS[ContactState(row['state'])]}“. Bitte die Seite "
+            "neu laden."
+        )
+
     email = validated_email(request.email)
     note = request.note.strip()
     due_at, appointment_at = _resolve_times(request.outcome, request)
@@ -419,7 +501,48 @@ def _write_outcome(
         corrects_event_id=corrects_event_id,
     )
 
+    _apply_mail_effect(conn, row, request.outcome, username=username)
     db.bump_revision(conn)
+
+
+def _apply_mail_effect(
+    conn: sqlite3.Connection,
+    row: sqlite3.Row,
+    outcome: CallOutcome,
+    *,
+    username: str,
+) -> None:
+    """Was ein Nachfass-Anruf am Versandstand ändert — oder nichts.
+
+    Die Brücke zum zweiten Werkzeug, und sie geht nur in eine Richtung: der
+    Anruf setzt den Versandstand, das Versanddatum bleibt unangetastet. Sonst
+    ließe sich die Frist bis „keine Antwort" durch Anrufe beliebig
+    hinausschieben.
+
+    „Interesse bestätigt" und „Kein Interesse" tragen ein Antwortdatum, weil
+    genau das passiert ist — die Antwort kam nur am Telefon statt per Mail.
+    „Nachgefasst" trägt den Zeitpunkt des Anrufs.
+
+    `abgelehnt` steht bewusst nicht in der Tabelle: es nimmt dem Kontakt die
+    Zusage, womit die Zeile den Mailversand ohnehin verlässt. Einen
+    Versandstand an einer Zeile zu setzen, die es dort nicht mehr gibt, wäre
+    eine Behauptung über nichts.
+    """
+    target = FOLLOWUP_MAIL_STATES.get(outcome)
+
+    if target is None:
+        return
+
+    moment = db.now()
+
+    db.touch_mail_state(
+        conn,
+        row["id"],
+        state=target.value,
+        answered_at=moment if outcome is not CallOutcome.NACHGEFASST else None,
+        followed_up_at=moment,
+        updated_by=username,
+    )
 
 
 def record_outcome(
@@ -432,7 +555,7 @@ def record_outcome(
     """Ergebnis eines Anrufs festschreiben und den nächsten Kontakt liefern."""
     with db.connect() as conn:
         with db.transaction(conn):
-            row = db.find_contact(conn, contact_id)
+            row = db.find_contact(conn, contact_id, _cutoff())
 
             if row is None:
                 raise CallListNotFoundError("Dieser Kontakt existiert nicht (mehr).")
@@ -443,7 +566,14 @@ def record_outcome(
                     "neu laden."
                 )
 
-            _write_outcome(conn, row, request, user_id=user_id, username=username)
+            _write_outcome(
+                conn,
+                row,
+                request,
+                user_id=user_id,
+                username=username,
+                allowed=allowed_outcomes(ContactState(row["state"])),
+            )
 
         return _build_state(conn)
 
@@ -481,7 +611,7 @@ def _decision(row: sqlite3.Row) -> CallDecision:
         occurred_at=row["occurred_at"],
         username=row["username"],
         outcome=outcome,
-        outcome_label=next(info.label for info in OUTCOMES if info.id == outcome),
+        outcome_label=OUTCOME_BY_ID[outcome].label,
         betrieb=row["betrieb"],
         telefon=row["telefon"],
         list_name=row["list_name"] or "",
@@ -495,6 +625,10 @@ def _decision(row: sqlite3.Row) -> CallDecision:
         corrected=bool(row["correction_count"]),
         correctable=not reason,
         locked_reason=reason,
+        # Am Zustand des *Kontakts* und nicht am Ergebnis dieser Zeile: eine
+        # Zusage wird nachgefasst, alles andere angerufen — dieselbe Regel,
+        # die auch der Arbeitsplatz anwendet.
+        outcomes=allowed_outcomes(state),
     )
 
 
@@ -560,7 +694,9 @@ def search_contacts(
     term = query.strip()[:MAX_SEARCH_TERM]
 
     with db.connect() as conn:
-        rows, matched = db.search_contacts(conn, query=term, limit=limit, offset=offset)
+        rows, matched = db.search_contacts(
+            conn, query=term, limit=limit, offset=offset, cutoff=_cutoff()
+        )
 
         return CallContactPage(
             entries=[_contact(conn, row) for row in rows],
@@ -608,7 +744,7 @@ def correct_outcome(
                     "Eintragung. Ändern lässt sich immer nur die jüngste."
                 )
 
-            contact = db.find_contact(conn, event["contact_id"])
+            contact = db.find_contact(conn, event["contact_id"], _cutoff())
 
             if contact is None:
                 raise CallListNotFoundError(
@@ -627,6 +763,9 @@ def correct_outcome(
                 request,
                 user_id=user_id,
                 username=username,
+                # Maßstab ist die Eintragung, die ersetzt wird — sonst ließe
+                # sich eine irrtümliche Zusage nicht mehr zurücknehmen.
+                allowed=correctable_outcomes(CallOutcome(event["outcome"])),
                 corrects_event_id=event["id"],
             )
 
@@ -1397,7 +1536,7 @@ def export_protocol() -> CallListExport:
         "Richtigstellung von",
     ]
 
-    labels = {info.id.value: info.label for info in OUTCOMES}
+    labels = {info.id.value: info.label for info in OUTCOME_BY_ID.values()}
 
     def corrects(row: sqlite3.Row) -> str:
         if not row["corrects_event_id"] or not row["corrects_occurred_at"]:

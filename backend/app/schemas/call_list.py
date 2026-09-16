@@ -128,6 +128,28 @@ class CallOutcome(str, Enum):
     ABGELEHNT = "abgelehnt"
     NUMMER_FALSCH = "nummer_falsch"
 
+    # Ergebnisse eines **Nachfass-Anrufs**: die Mail liegt seit der Frist
+    # unbeantwortet beim Betrieb, und der Anrufer hakt nach. Sie sind eigene
+    # Werte und nicht die von oben, weil sie den Zustand des Kontakts
+    # **nicht** verändern dürfen: er steht auf `zugesagt`, und genau daran
+    # hängt seine Zeile im Mailversand. Ein „nicht erreichbar" aus der oberen
+    # Gruppe machte daraus eine Wiedervorlage — und die Zusage samt
+    # Versanddatum wäre aus dem Mailversand verschwunden.
+    #
+    # Was sie stattdessen ändern, ist der *Versandstand* (siehe
+    # `FOLLOWUP_MAIL_STATES` in `schemas/mail_followup.py`).
+
+    #: Erreicht, die Mail ist bekannt, der Betrieb meldet sich.
+    NACHGEFASST = "nachgefasst"
+    #: Niemand am Apparat. Kommt nach der gewählten Zeit wieder nach oben.
+    NACHFASSEN_NICHT_ERREICHT = "nachfassen_nicht_erreicht"
+    #: Am Telefon bestätigtes Interesse — Versandstand „Antwort positiv".
+    NACHFASSEN_POSITIV = "nachfassen_positiv"
+    #: Kein Interesse am Angebot. Ausdrücklich *kein* Werbewiderspruch —
+    #: dafür gibt es `ABGELEHNT`, und nur das nimmt den Betrieb aus dem
+    #: Verteiler.
+    NACHFASSEN_ABGELEHNT = "nachfassen_abgelehnt"
+
 
 #: Welchen Zustand ein Ergebnis setzt. Die Tabelle ist die einzige Stelle, an
 #: der aus einem Klick ein Zustand wird.
@@ -139,6 +161,13 @@ OUTCOME_STATES: dict[CallOutcome, ContactState] = {
     CallOutcome.KEIN_BEDARF: ContactState.KEIN_BEDARF,
     CallOutcome.ABGELEHNT: ContactState.ABGELEHNT,
     CallOutcome.NUMMER_FALSCH: ContactState.UNGUELTIG,
+    # Die vier Nachfass-Ergebnisse lassen den Zustand, wie er ist: die Zusage
+    # gilt weiter, und nur so bleibt die Zeile im Mailversand stehen. Was sie
+    # bewegen, ist der Versandstand.
+    CallOutcome.NACHGEFASST: ContactState.ZUGESAGT,
+    CallOutcome.NACHFASSEN_NICHT_ERREICHT: ContactState.ZUGESAGT,
+    CallOutcome.NACHFASSEN_POSITIV: ContactState.ZUGESAGT,
+    CallOutcome.NACHFASSEN_ABGELEHNT: ContactState.ZUGESAGT,
 }
 
 
@@ -264,7 +293,120 @@ OUTCOMES: tuple[OutcomeInfo, ...] = (
 #: *nachschlägt*, statt die Fälle ein zweites Mal aufzuzählen — sonst hätte ein
 #: weiteres Ergebnis mit Wiedervorlage zwei Stellen, und die zweite fällt erst
 #: auf, wenn sie fehlt.
-OUTCOME_BY_ID: dict[CallOutcome, OutcomeInfo] = {info.id: info for info in OUTCOMES}
+#: Die Ergebnisse eines **Nachfass-Anrufs** — eigener Katalog, eigene Knöpfe.
+#:
+#: Getrennt von `OUTCOMES`, weil sie einander ausschließen: am Erstanruf wäre
+#: „Nachgefasst" sinnlos, und am Nachfass-Kontakt richtete „Zusage" nichts aus
+#: (die steht schon) und „nicht erreichbar" richtete Schaden an (die Zusage
+#: verschwände aus dem Mailversand). Welcher Katalog gilt, entscheidet
+#: `allowed_outcomes` — und dieselbe Funktion prüft beim Schreiben.
+#:
+#: Reihenfolge = Reihenfolge der Knöpfe: erst das, was in den meisten Fällen
+#: passiert.
+FOLLOWUP_OUTCOMES: tuple[OutcomeInfo, ...] = (
+    OutcomeInfo(
+        id=CallOutcome.NACHGEFASST,
+        label="Nachgefasst – schaut es sich an",
+        description=(
+            "Erreicht: die Mail ist angekommen, der Betrieb meldet sich. Die "
+            "Zeile verlässt den Reiter „Nachfassen“; die Frist bis „keine "
+            "Antwort“ läuft unverändert ab dem Versand weiter."
+        ),
+        tone=OutcomeTone.POSITIVE,
+        time_input=TimeInput.NONE,
+        resulting_state=ContactState.ZUGESAGT,
+    ),
+    OutcomeInfo(
+        id=CallOutcome.NACHFASSEN_NICHT_ERREICHT,
+        label="Niemanden erreicht",
+        description=(
+            "Niemand am Apparat. Der Betrieb kommt nach der gewählten Zeit "
+            "wieder nach oben; am Versandstand ändert sich nichts."
+        ),
+        tone=OutcomeTone.NEUTRAL,
+        time_input=TimeInput.SNOOZE,
+        resulting_state=ContactState.ZUGESAGT,
+    ),
+    OutcomeInfo(
+        id=CallOutcome.NACHFASSEN_POSITIV,
+        label="Interesse bestätigt",
+        description=(
+            "Am Telefon bestätigt: der Betrieb will weitermachen. Im "
+            "Mailversand steht die Zeile danach auf „Antwort positiv“."
+        ),
+        tone=OutcomeTone.POSITIVE,
+        time_input=TimeInput.NONE,
+        resulting_state=ContactState.ZUGESAGT,
+    ),
+    OutcomeInfo(
+        id=CallOutcome.NACHFASSEN_ABGELEHNT,
+        label="Kein Interesse",
+        description=(
+            "Das Angebot ist vom Tisch – die Einwilligung bleibt bestehen. "
+            "Wer ausdrücklich keine Werbung mehr will, gehört auf "
+            "„Ablehnung – keine Mails“ darunter."
+        ),
+        tone=OutcomeTone.NEGATIVE,
+        time_input=TimeInput.NONE,
+        resulting_state=ContactState.ZUGESAGT,
+    ),
+)
+
+
+#: Alle Ergebnisse beider Kataloge, nachschlagbar über ihre ID.
+OUTCOME_BY_ID: dict[CallOutcome, OutcomeInfo] = {
+    info.id: info for info in (*OUTCOMES, *FOLLOWUP_OUTCOMES)
+}
+
+#: Die Ergebnisse, die es nur am Nachfass-Anruf gibt — in der Reihenfolge
+#: ihrer Knöpfe, weil die Oberfläche sie so rendert.
+FOLLOWUP_OUTCOME_IDS: tuple[CallOutcome, ...] = tuple(
+    info.id for info in FOLLOWUP_OUTCOMES
+)
+
+
+def correctable_outcomes(outcome: CallOutcome) -> list[CallOutcome]:
+    """Welche Ergebnisse beim Richtigstellen *dieser* Eintragung zur Wahl stehen.
+
+    Nicht dieselbe Frage wie `allowed_outcomes`, und darum eine eigene
+    Funktion: dort geht es um den Kontakt, der gerade vorliegt, hier um eine
+    Entscheidung, die schon getroffen wurde. Eine Zusage, die ein Fehlklick
+    war, muss sich in „kein Bedarf" ändern lassen — nach dem Zustand des
+    Kontakts gefragt käme der Nachfass-Katalog heraus, und der Fehlklick
+    bliebe für immer stehen.
+
+    Maßstab ist deshalb die Eintragung selbst: ein Nachfass-Anruf wird zu
+    einem anderen Nachfass-Ergebnis richtiggestellt, ein gewöhnlicher Anruf
+    zu einem gewöhnlichen. Zwischen den Katalogen zu wechseln wäre keine
+    Richtigstellung mehr, sondern eine andere Geschichte.
+    """
+    if outcome in FOLLOWUP_OUTCOME_IDS:
+        return [*FOLLOWUP_OUTCOME_IDS, CallOutcome.ABGELEHNT]
+
+    return [info.id for info in OUTCOMES]
+
+
+def allowed_outcomes(state: ContactState) -> list[CallOutcome]:
+    """Welche Ergebnisse an einem Kontakt in diesem Zustand etwas tun.
+
+    Die einzige Stelle, die das entscheidet — gelesen an drei Orten: der
+    Arbeitsplatz bestückt seine Knöpfe damit, das Entscheidungs-Protokoll
+    seine Richtigstellung, und `_write_outcome` prüft dagegen. Dasselbe
+    Muster wie `MAIL_TRANSITIONS` im Mailversand: die Oberfläche kann keinen
+    Knopf zeigen, den das Schreiben ablehnt.
+
+    Eine **Zusage** bekommt den Nachfass-Katalog — sie ist der einzige
+    Zustand, in dem der Arbeitsplatz einen Kontakt vorlegt, ohne dass es um
+    einen Erstanruf geht. Dazu kommt `abgelehnt` aus dem großen Katalog: der
+    Werbewiderspruch muss in jedem Gespräch eintragbar sein, und er ist das
+    einzige Ergebnis, das die Zusage beenden darf.
+
+    Alle anderen Zustände bekommen den gewöhnlichen Katalog.
+    """
+    if state is ContactState.ZUGESAGT:
+        return [*FOLLOWUP_OUTCOME_IDS, CallOutcome.ABGELEHNT]
+
+    return [info.id for info in OUTCOMES]
 
 
 class ContactField(BaseModel):
@@ -285,6 +427,31 @@ class CallEventInfo(BaseModel):
     email: str
     appointment_at: str | None
     due_at: str | None
+
+
+class ContactFollowup(BaseModel):
+    """Der Versandstand am Kontakt — nur für Zusagen, deren Mail heraus ist.
+
+    Der Grund, warum dieser Betrieb überhaupt wieder vorgelegt wird: es ist
+    kein Erstanruf, sondern ein Nachfassen zu einer Mail, die seit Tagen
+    unbeantwortet liegt. Ohne diese Angaben meldete sich der Anrufer, als
+    wäre es das erste Gespräch — und der Betrieb hat schon zugesagt und eine
+    Mail bekommen.
+
+    `due` kommt gerechnet aus der Datenbank (derselbe Ausdruck, der im
+    Mailversand den Reiter „Nachfassen" füllt) und nicht aus einer Rechnung
+    in der Oberfläche: dieselbe Frist, eine Stelle.
+    """
+
+    #: Wann die Mail hinausgegangen ist (UTC).
+    sent_at: str
+    #: Volle Tage seit dem Versand — die Zahl, die im Gespräch zählt.
+    days_since_sent: int
+    #: Ob gerade nachzufassen ist. Falsch heißt: die Mail ist noch nicht lange
+    #: genug draußen (oder die lange Frist ist schon abgelaufen).
+    due: bool
+    #: Die Anmerkung aus dem Mailversand — was beim letzten Mal notiert wurde.
+    mail_note: str
 
 
 class CallContact(BaseModel):
@@ -322,6 +489,14 @@ class CallContact(BaseModel):
     #: Alle bisherigen Versuche, jüngster zuerst. Erspart einen zweiten Aufruf
     #: und ist die Antwort auf „habe ich hier schon mal angerufen?".
     history: list[CallEventInfo]
+    #: Gesetzt, sobald zu diesem Betrieb eine Mail heraus ist — der
+    #: Unterschied zwischen Erstanruf und Nachfassen. `null` beim Erstanruf.
+    followup: ContactFollowup | None = None
+    #: Welche Ergebnisse an *diesem* Kontakt etwas Sinnvolles tun, in der
+    #: Reihenfolge der Knöpfe. Kommt aus `allowed_outcomes`, gegen die auch
+    #: das Schreiben prüft — die Oberfläche kann deshalb keinen Knopf zeigen,
+    #: der mit 400 antwortet. Dasselbe Muster wie `MailEntry.actions`.
+    outcomes: list[CallOutcome] = Field(default_factory=list)
 
 
 class CallContactPage(BaseModel):
@@ -357,6 +532,10 @@ class CallCounters(BaseModel):
     offen: int
     wiedervorlage: int
     zugesagt: int
+    #: Zusagen, deren Mail zum Nachfassen fällig ist — die stehen im
+    #: Anrufvorrat ganz vorne. Kein eigener Kontaktzustand: in `state` steht
+    #: bei ihnen weiter `zugesagt`, und dort zählen sie auch mit.
+    nachfassen: int = 0
     #: Von uns selbst als „kein Bedarf" eingeschätzt — bewusst getrennt von
     #: `abgelehnt`, das ein Widerspruch des Betriebs ist.
     kein_bedarf: int
@@ -555,6 +734,11 @@ class CallDecision(BaseModel):
     corrected: bool
     #: Ob sich hier noch etwas ändern lässt.
     correctable: bool
+    #: Welche Ergebnisse beim Richtigstellen zur Wahl stehen — dieselbe Regel
+    #: wie am Arbeitsplatz (`allowed_outcomes`, gelesen am Zustand des
+    #: Kontakts). Ohne sie böte das Protokoll einem Erstanruf „Nachgefasst"
+    #: an, was das Schreiben mit 400 ablehnt.
+    outcomes: list[CallOutcome] = Field(default_factory=list)
     #: Warum nicht — leer, solange `correctable` wahr ist.
     locked_reason: str = ""
 

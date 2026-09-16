@@ -53,6 +53,17 @@ const emit = defineEmits<{
   (event: "correct", eventId: number, payload: OutcomePayload): void;
 }>();
 
+/**
+ * Die Ergebnisse, die *diese* Eintragung ersetzen können.
+ *
+ * Die IDs kommen mit der Zeile und geben auch die Reihenfolge vor;
+ * Beschriftung und Tonlage stehen im Katalog der Antwort. Dieselbe Regel
+ * prüft das Backend beim Schreiben – nachgebaut wird sie hier nicht.
+ */
+function outcomesOf(entry: CallDecision): OutcomeInfo[] {
+  return entry.outcomes.flatMap((id) => props.outcomes.filter((info) => info.id === id));
+}
+
 const query = ref("");
 
 // Jede Eingabe geht an die Suche des Composables, die selbst wartet, bevor sie
@@ -282,8 +293,12 @@ function stateClass(entry: CallDecision): string {
             </div>
           </div>
 
+          <!-- Nicht der ganze Katalog: welche Ergebnisse *diese* Eintragung
+               ersetzen können, entscheidet das Backend (`entry.outcomes`).
+               Ein Nachfass-Anruf wird zu einem anderen Nachfass-Ergebnis
+               richtiggestellt, ein Erstanruf zu einem gewöhnlichen. -->
           <OutcomeChooser
-            :outcomes="outcomes"
+            :outcomes="outcomesOf(entry)"
             :disabled="isSaving"
             allow-immediate
             @submit="submit"

@@ -42,7 +42,7 @@ import re
 import sqlite3
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator, NamedTuple, Sequence
 
@@ -389,6 +389,118 @@ def bump_revision(conn: sqlite3.Connection) -> int:
 
 
 # --------------------------------------------------------------------------
+# Fristen des Mailversands
+# --------------------------------------------------------------------------
+#
+# Steht hier oben und nicht im Mailversand-Abschnitt, weil beide Werkzeuge es
+# brauchen: der Versandstand einer Zusage entscheidet auch, ob ihr Betrieb im
+# Anrufvorrat ganz nach vorne rückt (`next_contact`). Eine zweite Rechnung
+# dafür wäre die Sorte Abweichung, die erst auffällt, wenn die Warteschlange
+# etwas anderes behauptet als die Versandliste.
+
+
+class MailCutoffs(NamedTuple):
+    """Die beiden Stichtage, ab denen eine versendete Mail fällig wird.
+
+    `answer` ist jetzt minus der langen Frist („keine Antwort"), `followup`
+    jetzt minus der kurzen („nachfassen"). Zusammen als ein Wert, weil sie
+    zusammengehören: beide werden einmal pro Anfrage gerechnet und dann durch
+    jede Abfrage gereicht, damit Liste, Zähler und Schreibpfad denselben
+    Moment benutzen. Getrennt weitergereicht wäre die nächste Fehlerquelle
+    die Reihenfolge ihrer `?`.
+
+    Ausgerechnet wird beides im Service — er kennt die Fristen, dieses Modul
+    kennt nur die Vergleiche.
+    """
+
+    answer: str
+    followup: str
+
+
+#: Der Zustand einer Zusage im Mailversand, wie ihn jede Abfrage berechnet.
+#:
+#: Drei Dinge stecken darin. Erstens: eine Zusage ohne Zeile in `mail_status`
+#: steht auf `offen` — der Ausgangszustand braucht keinen Datensatz, sonst
+#: müsste jeder Import Zeilen anlegen, die niemand angeklickt hat. Zweitens:
+#: eine versendete Mail, auf die seit der langen Frist nichts kam, *ist*
+#: „keine Antwort". Drittens, davor: nach der kurzen Frist ist sie
+#: „nachfassen", also fällig zum Anruf. Beides steht nirgends geschrieben,
+#: sondern folgt aus `sent_at`.
+#:
+#: Die Reihenfolge der beiden Zweige ist load-bearing: die **lange** Frist
+#: wird zuerst geprüft, sonst bliebe eine 40 Tage alte Mail für immer auf
+#: „nachfassen" hängen und käme nie bei „keine Antwort" an.
+#:
+#: `nachgefasst` zählt beim ersten Zweig mit (auch ein Anruf macht aus dem
+#: Warten irgendwann ein Ende), beim zweiten nicht: dass angerufen wurde, ist
+#: genau die Auskunft, die die Zeile aus dem Reiter nimmt.
+#:
+#: Gerechnet statt gespeichert, weil es in dieser Anwendung keinen
+#: Hintergrundjob gibt: ein Feld, das erst beim nächsten Schreibzugriff
+#: nachgezogen würde, wäre bis dahin falsch — und zwar genau in der Ansicht,
+#: die es beantworten soll. Es gilt damit auch rückwirkend für jede Zeile,
+#: die längst verschickt war, als es diese Frist noch nicht gab. Der Preis
+#: sind zwei `?` (die Stichtage, in dieser Reihenfolge) in jeder Abfrage, die
+#: diesen Ausdruck verwendet — `_state_params` liefert sie.
+_MAIL_STATE = (
+    "CASE WHEN COALESCE(m.state, 'offen') IN ('versendet', 'nachgefasst')"
+    "       AND m.sent_at IS NOT NULL AND m.sent_at <= ?"
+    "     THEN 'keine_antwort'"
+    "     WHEN COALESCE(m.state, 'offen') = 'versendet'"
+    "       AND m.sent_at IS NOT NULL AND m.sent_at <= ?"
+    "     THEN 'nachfassen'"
+    "     ELSE COALESCE(m.state, 'offen') END"
+)
+
+
+def _state_params(cutoff: MailCutoffs) -> list[object]:
+    """Die `?` von `_MAIL_STATE`, in der Reihenfolge seiner Zweige.
+
+    Einzige Stelle, die diese Reihenfolge kennt: der Ausdruck steht in der
+    Spaltenliste *und* im Filter, und zwei Stichtage von Hand einzufädeln ist
+    genau die Sorte Arbeit, bei der irgendwann die kurze Frist im langen
+    Vergleich landet.
+    """
+    return [cutoff.answer, cutoff.followup]
+
+
+def mail_cutoffs(answer_days: int, followup_days: int) -> MailCutoffs:
+    """Die beiden Stichtage, aus *einem* `now()` gerechnet.
+
+    Die Fristen selbst kommen als Zahlen herein: dieses Modul kennt die
+    Schemata nicht, und wie lange „zu lange" ist, entscheidet die Fachschicht.
+    Aus einem Zeitpunkt, damit die beiden nicht einen Wimpernschlag
+    auseinanderliegen.
+    """
+    moment = datetime.now(timezone.utc)
+
+    def stamp(days: int) -> str:
+        return (moment - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    return MailCutoffs(answer=stamp(answer_days), followup=stamp(followup_days))
+
+
+def days_since(stamp: str | None) -> int | None:
+    """Volle Tage seit diesem gespeicherten Zeitpunkt, oder `None`.
+
+    Einmal hier statt in jeder Oberfläche: „seit 12 Tagen" steht in der
+    Versandliste, in deren Ausgabe und am Kontakt des Anrufers.
+    """
+    if not stamp:
+        return None
+
+    try:
+        moment = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+
+    return max((datetime.now(timezone.utc) - moment).days, 0)
+
+
+# --------------------------------------------------------------------------
 # Listen
 # --------------------------------------------------------------------------
 
@@ -624,17 +736,33 @@ def update_contact_fields(
     conn.execute(f"UPDATE contacts SET {', '.join(assignments)} WHERE id = ?", values)
 
 
-def find_contact(conn: sqlite3.Connection, contact_id: str) -> sqlite3.Row | None:
+def find_contact(
+    conn: sqlite3.Connection, contact_id: str, cutoff: MailCutoffs
+) -> sqlite3.Row | None:
+    """Ein Kontakt samt Liste und Versandstand.
+
+    Der Versandstand fährt überall mit, wo ein `CallContact` entsteht: eine
+    Zusage, deren Mail zum Nachfassen fällig ist, wird dem Anrufer anders
+    vorgelegt als ein Erstanruf — und das darf nicht davon abhängen, über
+    welche Abfrage sie gekommen ist.
+    """
     return conn.execute(
-        "SELECT c.*, l.name AS list_name, l.archived AS list_archived"
-        " FROM contacts c JOIN lists l ON l.id = c.list_id"
-        " WHERE c.id = ?",
-        (contact_id,),
+        "SELECT c.*, l.name AS list_name, l.archived AS list_archived,"
+        + _CONTACT_MAIL
+        + " FROM contacts c JOIN lists l ON l.id = c.list_id"
+        + _CONTACT_MAIL_JOIN
+        + " WHERE c.id = ?",
+        _state_params(cutoff) + [contact_id],
     ).fetchone()
 
 
 def search_contacts(
-    conn: sqlite3.Connection, *, query: str, limit: int, offset: int
+    conn: sqlite3.Connection,
+    *,
+    query: str,
+    limit: int,
+    offset: int,
+    cutoff: MailCutoffs,
 ) -> tuple[list[sqlite3.Row], int]:
     """Kontakte zu einem Suchbegriff, plus die Zahl der Treffer.
 
@@ -678,12 +806,14 @@ def search_contacts(
 
     rows = list(
         conn.execute(
-            "SELECT c.*, l.name AS list_name, l.archived AS list_archived"
+            "SELECT c.*, l.name AS list_name, l.archived AS list_archived,"
+            + _CONTACT_MAIL
             + source
+            + _CONTACT_MAIL_JOIN
             + where
             + " ORDER BY l.archived, c.betrieb, c.id"
             " LIMIT ? OFFSET ?",
-            params + [limit, offset],
+            _state_params(cutoff) + params + [limit, offset],
         ).fetchall()
     )
 
@@ -694,50 +824,167 @@ def search_contacts(
 # nicht kennt (`POOL_STATES` in `schemas/call_list.py` ist dieselbe Menge, und
 # `test_call_list_service.py` hält beide zusammen). Die Rangfolge zwischen
 # ihnen steht in `next_contact`.
+#: Der Anrufvorrat: was auf dem Arbeitsplatz landen kann.
+#:
+#: Drei Zustände aus der Anrufliste — und seit dem Nachfassen ein vierter
+#: Fall, der gar nicht aus ihr kommt: eine **Zusage, deren Mail fällig zum
+#: Nachfassen ist**. Sie steht auf `zugesagt` und wäre nach der alten Regel
+#: nie wieder vorgelegt worden; dass sie es wird, ist der ganze Zweck des
+#: Reiters „Nachfassen" im Mailversand.
+#:
+#: Die Fälligkeit ist *nicht* noch einmal formuliert, sondern derselbe
+#: Ausdruck, der sie in der Versandliste erzeugt (`_MAIL_STATE`): eine zweite
+#: Fassung wäre die Stelle, an der Warteschlange und Versandliste
+#: auseinanderlaufen. Der Preis sind die zwei Stichtage als `?` — sie stehen
+#: vor allen anderen Parametern.
+#:
+#: Die Zeilen, die die lange Frist schon überschritten haben, fallen damit von
+#: selbst wieder heraus: `_MAIL_STATE` liefert dort „keine Antwort", und was
+#: abgeschrieben ist, gehört nicht an die Spitze der Warteschlange.
 _POOL_FILTER = (
-    " FROM contacts c JOIN lists l ON l.id = c.list_id"
-    " WHERE l.archived = 0 AND c.state IN ('rueckruf', 'offen', 'wiedervorlage')"
+    " FROM contacts c"
+    " JOIN lists l ON l.id = c.list_id"
+    " LEFT JOIN mail_status m ON m.contact_id = c.id"
+    " WHERE l.archived = 0 AND ("
+    "   c.state IN ('rueckruf', 'offen', 'wiedervorlage')"
+    f"   OR (c.state = 'zugesagt' AND {_MAIL_STATE} = 'nachfassen')"
+    " )"
 )
 
+#: Was eine Kontaktzeile über den Versandstand mitbringt.
+#:
+#: Drei Spalten an jeder Abfrage, die einen `CallContact` liefert, damit der
+#: Anrufer am Nachfass-Kontakt sieht, worum es geht: wann die Mail heraus
+#: ging, was dazu notiert wurde, und ob sie gerade fällig ist. `followup_due`
+#: kommt aus `_MAIL_STATE` und nicht aus einer Rechnung im Frontend — es ist
+#: dieselbe Regel wie im Reiter „Nachfassen", und die soll es genau einmal
+#: geben.
+_CONTACT_MAIL = (
+    " m.sent_at AS mail_sent_at, m.note AS mail_note,"
+    f" ({_MAIL_STATE} = 'nachfassen') AS followup_due"
+)
 
-def next_contact(conn: sqlite3.Connection, moment: str) -> sqlite3.Row | None:
+_CONTACT_MAIL_JOIN = " LEFT JOIN mail_status m ON m.contact_id = c.id"
+
+
+def next_contact(
+    conn: sqlite3.Connection, moment: str, cutoff: MailCutoffs
+) -> sqlite3.Row | None:
     """Der nächste fällige Kontakt, oder `None`.
 
     Die Rangfolge ist Absicht:
 
     1. **vereinbarte Rückrufe**, früheste zuerst — dort wurde eine Zusage
        gemacht, die eingehalten werden muss.
-    2. **noch nie angerufene** Kontakte in der Reihenfolge der Datei; ältere
+    2. **Nachfassen**: Zusagen, deren Mail seit der Frist unbeantwortet ist,
+       älteste Mail zuerst. Vor den Erstanrufen, weil dort schon jemand
+       zugestimmt hat und die Mail nachweislich liegt — aber hinter den
+       Rückrufen, denn die sind einer Person für eine Uhrzeit zugesagt.
+    3. **noch nie angerufene** Kontakte in der Reihenfolge der Datei; ältere
        Listen zuerst.
-    3. **Wiedervorlagen** — „nach hinten in die Liste" heißt: hinter alles,
+    4. **Wiedervorlagen** — „nach hinten in die Liste" heißt: hinter alles,
        was noch nie versucht wurde.
 
-    Für Gruppe 2 ist der zweite Sortierschlüssel konstant leer, damit sie über
-    Liste und Position sortiert; für 1 und 3 sortiert der fällige Zeitpunkt.
+    Der zweite Sortierschlüssel ist die Fälligkeit, für das Nachfassen das
+    Versanddatum und für Gruppe 3 konstant leer, damit sie über Liste und
+    Position sortiert.
+
+    `due_at` gilt auch für die Nachfass-Gruppe: „niemanden erreicht" schiebt
+    dort genauso auf, nur ohne den Zustand des Kontakts anzufassen — sonst
+    fiele die Zusage aus dem Mailversand.
     """
     return conn.execute(
-        "SELECT c.*, l.name AS list_name, l.archived AS list_archived"
+        "SELECT c.*, l.name AS list_name, l.archived AS list_archived,"
+        + _CONTACT_MAIL
         + _POOL_FILTER
         + " AND (c.due_at IS NULL OR c.due_at <= ?)"
-        " ORDER BY CASE c.state"
-        "     WHEN 'rueckruf' THEN 0"
-        "     WHEN 'offen' THEN 1"
-        "     ELSE 2 END,"
-        "   CASE WHEN c.state = 'offen' THEN '' ELSE COALESCE(c.due_at, '') END,"
+        " ORDER BY CASE"
+        "     WHEN c.state = 'rueckruf' THEN 0"
+        "     WHEN c.state = 'zugesagt' THEN 1"
+        "     WHEN c.state = 'offen' THEN 2"
+        "     ELSE 3 END,"
+        "   CASE c.state"
+        "     WHEN 'offen' THEN ''"
+        "     WHEN 'zugesagt' THEN COALESCE(m.sent_at, '')"
+        "     ELSE COALESCE(c.due_at, '') END,"
         "   l.created_at, c.position, c.id"
         " LIMIT 1",
-        (moment,),
+        # Zweimal die Stichtage: einmal für die Spaltenliste, einmal für den
+        # Vorrat selbst — beide enthalten `_MAIL_STATE`.
+        _state_params(cutoff) * 2 + [moment],
     ).fetchone()
 
 
-def next_due_at(conn: sqlite3.Connection, moment: str) -> str | None:
-    """Wann der nächste aufgeschobene Kontakt zurückkommt."""
+def next_due_at(
+    conn: sqlite3.Connection, moment: str, cutoff: MailCutoffs
+) -> str | None:
+    """Wann der nächste aufgeschobene Kontakt zurückkommt.
+
+    Aufgeschobene Nachfass-Kontakte zählen mit: „niemanden erreicht" schiebt
+    auch sie auf, und „nichts zu tun, und jetzt?" wäre ohne sie falsch
+    beantwortet.
+    """
     row = conn.execute(
         "SELECT MIN(c.due_at) AS due" + _POOL_FILTER + " AND c.due_at > ?",
-        (moment,),
+        _state_params(cutoff) + [moment],
     ).fetchone()
 
     return row["due"] if row and row["due"] else None
+
+
+def followup_total(conn: sqlite3.Connection, cutoff: MailCutoffs) -> int:
+    """Wie viele Zusagen gerade zum Nachfassen anstehen.
+
+    Eigene Abfrage statt einer Gruppe in `state_totals`: die Zahl ist kein
+    Kontaktzustand, sondern ein Versandstand — in der Spalte `state` steht
+    bei diesen Zeilen weiter `zugesagt`, und dort soll sie auch mitzählen.
+    Aufgeschobene bleiben draußen, aus demselben Grund wie bei `offen`: an
+    einer Nummer, die erst in zwei Stunden wieder drankommt, arbeitet gerade
+    niemand.
+    """
+    row = conn.execute(
+        "SELECT COUNT(*) AS total"
+        + _POOL_FILTER
+        + " AND c.state = 'zugesagt' AND (c.due_at IS NULL OR c.due_at <= ?)",
+        _state_params(cutoff) + [now()],
+    ).fetchone()
+
+    return int(row["total"])
+
+
+def touch_mail_state(
+    conn: sqlite3.Connection,
+    contact_id: str,
+    *,
+    state: str,
+    answered_at: str | None,
+    followed_up_at: str | None,
+    updated_by: str,
+) -> None:
+    """Nur den Versandstand und seine Zeitpunkte setzen.
+
+    Das schmale Gegenstück zu `set_mail_status`: Anmerkung, Marker und
+    Versanddatum bleiben unangetastet. Gebraucht vom Nachfass-Anruf, der über
+    die Telefonakquise eingetragen wird — er sagt etwas über die Mail aus,
+    aber nichts über die Einschätzung der Website, und er darf das
+    Versanddatum nicht anfassen: die lange Frist läuft weiter ab dem Versand.
+
+    Legt die Zeile an, falls es noch keine gibt. Vorkommen kann das nur über
+    eine Richtigstellung, deren Zeile inzwischen zurückgesetzt wurde — dann
+    ist eine Zeile ohne Versanddatum das ehrlichere Ergebnis als ein Fehler.
+    """
+    conn.execute(
+        "INSERT INTO mail_status"
+        " (contact_id, state, answered_at, followed_up_at, updated_at, updated_by)"
+        " VALUES (?, ?, ?, ?, ?, ?)"
+        " ON CONFLICT(contact_id) DO UPDATE SET"
+        "   state = excluded.state,"
+        "   answered_at = excluded.answered_at,"
+        "   followed_up_at = excluded.followed_up_at,"
+        "   updated_at = excluded.updated_at,"
+        "   updated_by = excluded.updated_by",
+        (contact_id, state, answered_at, followed_up_at, now(), updated_by),
+    )
 
 
 def state_totals(
@@ -1239,69 +1486,10 @@ def drop_blacklist_of_list(conn: sqlite3.Connection, list_id: str) -> int:
 # --------------------------------------------------------------------------
 
 
-class MailCutoffs(NamedTuple):
-    """Die beiden Stichtage, ab denen eine versendete Mail fällig wird.
-
-    `answer` ist jetzt minus der langen Frist („keine Antwort"), `followup`
-    jetzt minus der kurzen („nachfassen"). Zusammen als ein Wert, weil sie
-    zusammengehören: beide werden einmal pro Anfrage gerechnet und dann durch
-    jede Abfrage gereicht, damit Liste, Zähler und Schreibpfad denselben
-    Moment benutzen. Getrennt weitergereicht wäre die nächste Fehlerquelle
-    die Reihenfolge ihrer `?`.
-
-    Ausgerechnet wird beides im Service — er kennt die Fristen, dieses Modul
-    kennt nur die Vergleiche.
-    """
-
-    answer: str
-    followup: str
-
-
-#: Der Zustand einer Zusage im Mailversand, wie ihn jede Abfrage berechnet.
-#:
-#: Drei Dinge stecken darin. Erstens: eine Zusage ohne Zeile in `mail_status`
-#: steht auf `offen` — der Ausgangszustand braucht keinen Datensatz, sonst
-#: müsste jeder Import Zeilen anlegen, die niemand angeklickt hat. Zweitens:
-#: eine versendete Mail, auf die seit der langen Frist nichts kam, *ist*
-#: „keine Antwort". Drittens, davor: nach der kurzen Frist ist sie
-#: „nachfassen", also fällig zum Anruf. Beides steht nirgends geschrieben,
-#: sondern folgt aus `sent_at`.
-#:
-#: Die Reihenfolge der beiden Zweige ist load-bearing: die **lange** Frist
-#: wird zuerst geprüft, sonst bliebe eine 40 Tage alte Mail für immer auf
-#: „nachfassen" hängen und käme nie bei „keine Antwort" an.
-#:
-#: `nachgefasst` zählt beim ersten Zweig mit (auch ein Anruf macht aus dem
-#: Warten irgendwann ein Ende), beim zweiten nicht: dass angerufen wurde, ist
-#: genau die Auskunft, die die Zeile aus dem Reiter nimmt.
-#:
-#: Gerechnet statt gespeichert, weil es in dieser Anwendung keinen
-#: Hintergrundjob gibt: ein Feld, das erst beim nächsten Schreibzugriff
-#: nachgezogen würde, wäre bis dahin falsch — und zwar genau in der Ansicht,
-#: die es beantworten soll. Es gilt damit auch rückwirkend für jede Zeile,
-#: die längst verschickt war, als es diese Frist noch nicht gab. Der Preis
-#: sind zwei `?` (die Stichtage, in dieser Reihenfolge) in jeder Abfrage, die
-#: diesen Ausdruck verwendet — `_state_params` liefert sie.
-_MAIL_STATE = (
-    "CASE WHEN COALESCE(m.state, 'offen') IN ('versendet', 'nachgefasst')"
-    "       AND m.sent_at IS NOT NULL AND m.sent_at <= ?"
-    "     THEN 'keine_antwort'"
-    "     WHEN COALESCE(m.state, 'offen') = 'versendet'"
-    "       AND m.sent_at IS NOT NULL AND m.sent_at <= ?"
-    "     THEN 'nachfassen'"
-    "     ELSE COALESCE(m.state, 'offen') END"
-)
-
-
-def _state_params(cutoff: MailCutoffs) -> list[object]:
-    """Die `?` von `_MAIL_STATE`, in der Reihenfolge seiner Zweige.
-
-    Einzige Stelle, die diese Reihenfolge kennt: der Ausdruck steht in der
-    Spaltenliste *und* im Filter, und zwei Stichtage von Hand einzufädeln ist
-    genau die Sorte Arbeit, bei der irgendwann die kurze Frist im langen
-    Vergleich landet.
-    """
-    return [cutoff.answer, cutoff.followup]
+# Die beiden Stichtage und der Ausdruck, der den Versandstand berechnet
+# (`MailCutoffs`, `_MAIL_STATE`, `_state_params`), stehen weiter oben: seit
+# der Anrufvorrat die Nachfass-Fälligen nach vorne holt, gehören sie nicht
+# mehr allein diesem Abschnitt.
 
 
 #: Die Zusagen und sonst nichts. Archivierte Listen zählen mit: eine Zusage
