@@ -14,6 +14,11 @@
  * Beschriftung, Beschreibung und Tonlage der Knöpfe reisen ebenfalls als
  * Daten mit (`actions`). Was hier steht, ist reine Darstellung.
  *
+ * Der letzte Reiter ist der Ausgang: `kein_bedarf` nimmt eine Zusage aus der
+ * Arbeit, ohne sie zu löschen — unsere eigene Einschätzung, dass sich die
+ * Mail erübrigt (die Website ist schon gut, der Betrieb ist bereits Kunde).
+ * Die Nummer bleibt dabei gesperrt; das erledigt das Backend beim Klick.
+ *
  * Zwei der Reiter füllen sich von selbst: `nachfassen` nach zehn,
  * `keine_antwort` nach dreißig Tagen ohne Antwort. Beides rechnet das Backend
  * aus dem Versanddatum — die Oberfläche sieht davon nur, dass eine Zeile in
@@ -127,8 +132,13 @@ const ICONS: Record<MailState, string> = {
   nachfassen: "phone_callback",
   nachgefasst: "phone_in_talk",
   positiv: "mark_email_read",
-  abgelehnt: "do_not_disturb_on",
+  // Dieselben beiden Symbole wie im Anruf-Katalog (`OutcomeChooser.vue`) für
+  // dieselben beiden Begriffe: `block` ist der Widerspruch des Betriebs,
+  // `do_not_disturb_on` unsere eigene Einschätzung. Wer sie am Telefon
+  // auseinanderhält, soll sie hier nicht neu lernen müssen.
+  abgelehnt: "block",
   keine_antwort: "hourglass_disabled",
+  kein_bedarf: "do_not_disturb_on",
 };
 
 /**
@@ -268,6 +278,9 @@ const TABS: { id: MailState | null; label: string }[] = [
   { id: "positiv", label: "Antwort positiv" },
   { id: "abgelehnt", label: "Abgelehnt" },
   { id: "keine_antwort", label: "Keine Antwort" },
+  // Zuletzt, weil es das Ablagefach ist: hier stehen die Zusagen, an denen
+  // nichts mehr zu tun ist, weil wir sie abgeschrieben haben.
+  { id: "kein_bedarf", label: "Kein Bedarf" },
 ];
 
 /**
@@ -339,10 +352,15 @@ function toneClass(tone: MailActionInfo["tone"]): string {
  * mit „keine Antwort" teilt (unterschieden werden sie durch Symbol und
  * Beschriftung). „nachgefasst" wartet wie „verschickt" und ist deshalb blau:
  * es ist dasselbe Warten, nur eines mit einem Anruf dahinter.
+ *
+ * „kein Bedarf" ist ausdrücklich **nicht** rot: Rot ist der Widerspruch des
+ * Betriebs, und hier hat niemand widersprochen. Gedämpft, weil an der Zeile
+ * nichts mehr zu tun ist.
  */
 function stateClass(state: MailState): string {
   if (state === "positiv") return "text-emerald-400";
   if (state === "abgelehnt") return "text-red-400";
+  if (state === "kein_bedarf") return "text-zinc-500";
   if (state === "keine_antwort" || state === "nachfassen") return "text-amber-400";
   if (state === "versendet" || state === "nachgefasst") return "text-blue-300";
   return "light-grey-text";

@@ -1358,8 +1358,11 @@ def test_a_marker_is_refused_once_the_mail_is_out(zusagen):
 
     body = _mark(client, ids[0], "ready_to_build", expected=400)
 
-    assert "ist heraus" in body["detail"]
-    assert "zurückgesetzt" in body["detail"]
+    # Die Meldung nennt den Zustand, in dem die Zeile steht, statt „die Mail
+    # ist heraus" zu behaupten: seit „kein Bedarf" endet die Bau-Spur auch an
+    # Zeilen, an die nie eine Mail ging.
+    assert "Mail versendet" in body["detail"]
+    assert "noch nicht versendet" in body["detail"]
 
 
 def test_a_send_click_hides_the_marker_but_keeps_it(zusagen):
@@ -1848,3 +1851,193 @@ def test_a_row_carries_the_whole_contact_of_the_call_list(client, call_db):
         {"label": "Ladezeit", "value": "4,2 s"},
         {"label": "CMS", "value": "WordPress 5.2"},
     ]
+
+
+# ------------------------------
+# Kein Bedarf — der Ausgang aus der Arbeitsliste
+# ------------------------------
+#
+# Die Zusage, aus der nichts wird: die bestehende Website ist schon gut, der
+# Betrieb ist längst Kunde. Bis hierher gab es dafür keinen Knopf — aus
+# `offen` führte allein „versendet" heraus, und so blieb die Zeile für immer
+# in der Liste stehen, die abgearbeitet werden soll.
+#
+# Was dabei *nicht* passiert, ist genauso wichtig wie was passiert: der
+# Kontakt bleibt auf `zugesagt` und damit bleibt der Nachweis der Einwilligung
+# bestehen. Verschoben wird der Versandstand, nicht die Zusage.
+
+
+def _blacklist(client, query=""):
+    response = client.get("/telefonakquise/blacklist", params={"q": query})
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_no_interest_takes_the_promise_out_of_the_open_list(zusagen):
+    """Der Fall, für den es den Zustand gibt: angesehen, erübrigt sich.
+
+    „Offen" ist die Zahl, die auf null laufen soll. Eine Zusage, die niemand
+    mehr anschreiben will, gehört nicht hinein — und bis hierher gab es
+    keinen Weg, sie dort herauszubekommen, ohne eine Mail zu behaupten.
+    """
+    client, ids = zusagen
+    assert _board(client)["counters"]["offen"] == 2
+
+    board = _click(client, ids[0], "kein_bedarf")
+
+    assert _entry(board, ids[0])["state"] == "kein_bedarf"
+    # Angeklickt, nicht abgelaufen: der Hinweis „automatisch" gehört den
+    # beiden Fristen.
+    assert _entry(board, ids[0])["automatic"] is False
+    assert board["counters"]["offen"] == 1
+    assert board["counters"]["kein_bedarf"] == 1
+    # Aus der Liste ist sie nicht verschwunden, nur aus „Offen": die Zusage
+    # gilt weiter, und was aus ihr wurde, bleibt nachlesbar.
+    assert board["counters"]["gesamt"] == 2
+    assert [e["contact_id"] for e in _board(client, state="kein_bedarf")["entries"]] == [
+        ids[0]
+    ]
+    assert [e["contact_id"] for e in _board(client, state="offen")["entries"]] == [
+        ids[1]
+    ]
+
+
+def test_no_interest_is_our_judgement_and_not_a_refusal(zusagen):
+    """`kein_bedarf` ist nicht `abgelehnt` — dieselbe Trennung wie am Telefon.
+
+    „Abgelehnt" ist ein Widerspruch des Betriebs, „kein Bedarf" ein Urteil
+    von uns. Beides in einen Topf zu werfen hieße, aus der Liste einen
+    Widerspruch herauszulesen, in der keiner steht.
+    """
+    client, ids = zusagen
+    board = _click(client, ids[0], "kein_bedarf")
+
+    assert board["counters"]["abgelehnt"] == 0
+    assert board["counters"]["kein_bedarf"] == 1
+    # Und die Einwilligung bleibt, wo sie war: der Kontakt steht weiter auf
+    # „Zusage", das Protokoll ist unberührt.
+    entry = _entry(board, ids[0])
+    assert entry["promised_at"] is not None
+    decisions = client.get("/telefonakquise/decisions").json()["entries"]
+    assert [d["outcome"] for d in decisions if d["contact_id"] == ids[0]] == ["zugesagt"]
+
+
+def test_an_answer_of_the_business_is_not_overruled_by_our_judgement(zusagen):
+    """Wo der Betrieb selbst geantwortet hat, gibt es nichts einzuschätzen.
+
+    Die Oberfläche bietet den Knopf dort nicht an — und das Backend nimmt ihn
+    aus demselben Grund nicht an: die Regel steht an einer Stelle.
+    """
+    client, ids = zusagen
+    _click(client, ids[0], "versendet")
+    board = _click(client, ids[0], "positiv")
+
+    assert "kein_bedarf" not in _entry(board, ids[0])["actions"]
+    _click(client, ids[0], "kein_bedarf", expected=400)
+
+
+def test_no_interest_keeps_the_number_out_of_the_next_import(zusagen):
+    """Das Versprechen des Knopfes darf nicht an der Import-Historie hängen.
+
+    In aller Regel steht die Nummer längst in der Sperrliste — aber eine
+    Sperre lässt sich in der Listenverwaltung wieder freigeben, und dann wäre
+    „wird nicht mehr angeschrieben" nur noch eine Vermutung.
+    """
+    client, ids = zusagen
+    key = db.phone_key("05221 111")
+
+    released = client.delete(f"/telefonakquise/blacklist/{key}")
+    assert released.status_code == 200, released.text
+    assert key not in [e["telefon_key"] for e in _blacklist(client)["entries"]]
+
+    _click(client, ids[0], "kein_bedarf")
+
+    entry = next(e for e in _blacklist(client)["entries"] if e["telefon_key"] == key)
+    # Herkunft „von Hand": wer die Zeile später in der Sperrliste sieht, soll
+    # dort keine Einfuhr lesen, die so nicht stattgefunden hat.
+    assert entry["source"] == "manuell"
+
+    again = ("Betrieb;Telefon\r\n" "Erster Betrieb;05221 111\r\n").encode("utf-8")
+    result = client.post(
+        "/telefonakquise/lists/analyse",
+        files={"file": ("zweite.csv", again, "text/csv")},
+    ).json()
+
+    assert result["contacts"] == 0
+
+
+def test_a_promise_without_interest_is_not_called_again(zusagen, call_db):
+    """Was abgeschrieben ist, gehört nicht an die Spitze der Warteschlange.
+
+    Eine fällige Nachfass-Zusage kommt an den Arbeitsplatz zurück — das ist
+    der Zweck des Reiters. „Kein Bedarf" nimmt sie dort wieder heraus, ohne
+    dass jemand daran denken muss, und ohne den Zustand des Kontakts
+    anzufassen.
+    """
+    client, ids = zusagen
+    _click(client, ids[0], "versendet")
+    _backdate(call_db, ids[0], MAIL_FOLLOWUP_DAYS + 1)
+
+    assert _state(client)["contact"]["id"] == ids[0]
+
+    _click(client, ids[0], "kein_bedarf")
+
+    assert _state(client)["contact"] is None
+    # Das Versanddatum bleibt trotzdem stehen: ob die Mail schon heraus war,
+    # als wir den Betrieb abgeschrieben haben, ist die Auskunft, nach der im
+    # Nachhinein gefragt wird.
+    assert _entry(_board(client), ids[0])["sent_at"] is not None
+
+
+def test_no_interest_can_be_taken_back(zusagen):
+    """Der Fehlklick gehört zum Werkzeug — hier erst recht.
+
+    „Zurücksetzen" ist der einzige Weg heraus: wer den Betrieb doch wieder
+    aufnimmt, fängt bei „noch nicht versendet" an, mit einem Versanddatum,
+    das dann auch stimmt.
+    """
+    client, ids = zusagen
+    board = _click(client, ids[0], "kein_bedarf")
+
+    assert _entry(board, ids[0])["actions"] == ["offen"]
+
+    board = _click(client, ids[0], "offen")
+
+    assert _entry(board, ids[0])["state"] == "offen"
+    assert board["counters"]["offen"] == 2
+    assert board["counters"]["kein_bedarf"] == 0
+
+
+def test_the_build_track_ends_with_no_interest_but_keeps_its_value(zusagen):
+    """Dieselbe Regel wie beim Versand: die Bau-Spur führt bis zur Mail.
+
+    Neben „kein Bedarf" ist „Ready to Build" kein Stand mehr, sondern ein
+    Widerspruch. Gespeichert bleibt der Marker trotzdem — sonst müsste jemand
+    die Website ein zweites Mal ansehen, nur weil eine Zeile zurückgeholt
+    wurde.
+    """
+    client, ids = zusagen
+    _mark(client, ids[0], "ready_to_build")
+
+    board = _click(client, ids[0], "kein_bedarf")
+    entry = _entry(board, ids[0])
+
+    assert entry["readiness"] == "unbewertet"
+    assert entry["readiness_actions"] == []
+    # Und ein Marker daran ist eine 400 mit ehrlicher Begründung: hier ist
+    # keine Mail heraus, die Zeile ist abgeschlossen.
+    body = _mark(client, ids[0], "in_development", expected=400)
+    assert "kein Bedarf" in body["detail"]
+
+    entry = _entry(_click(client, ids[0], "offen"), ids[0])
+    assert entry["readiness"] == "ready_to_build"
+
+
+def test_the_export_names_no_interest(zusagen):
+    """Die Ausgabe ist die Tabelle, in der hinterher gesucht wird."""
+    client, ids = zusagen
+    _click(client, ids[0], "kein_bedarf")
+
+    text = client.get("/mailversand/export").content.decode("utf-8-sig")
+
+    assert "kein Bedarf (eingeschätzt)" in text

@@ -276,6 +276,7 @@ def _counters(
         positiv=count(MailState.POSITIV),
         abgelehnt=count(MailState.ABGELEHNT),
         keine_antwort=count(MailState.KEINE_ANTWORT),
+        kein_bedarf=count(MailState.KEIN_BEDARF),
         ohne_email=sum(without for _, without in totals.values()),
         ready_to_build=marked(BuildReadiness.READY_TO_BUILD),
         in_development=marked(BuildReadiness.IN_DEVELOPMENT),
@@ -370,6 +371,9 @@ def _times(
     * eine Antwort lässt das Versanddatum stehen: „am 3. geschrieben, am 9.
       geantwortet" ist die Auskunft, für die die Liste da ist.
     * `keine_antwort` ist keine Antwort und bekommt deshalb kein Antwortdatum.
+    * `kein_bedarf` ebenso wenig — und es lässt das Versanddatum stehen: ob
+      die Mail schon heraus war, als wir den Betrieb abgeschrieben haben, ist
+      genau die Auskunft, die im Nachhinein interessiert.
     * `offen` verwirft alles — es ist der Rückweg aus dem Fehlklick, und ein
       Versanddatum ohne Versand wäre schlimmer als keines.
     """
@@ -381,10 +385,56 @@ def _times(
         return row["sent_at"], None, now
     if target in (MailState.POSITIV, MailState.ABGELEHNT):
         return row["sent_at"], now, row["followed_up_at"]
-    if target is MailState.KEINE_ANTWORT:
+    if target in (MailState.KEINE_ANTWORT, MailState.KEIN_BEDARF):
         return row["sent_at"], None, row["followed_up_at"]
 
     return None, None, None
+
+
+def _block_number_again(
+    conn: sqlite3.Connection, row: sqlite3.Row, *, username: str
+) -> None:
+    """Die Nummer einer abgeschriebenen Zusage sperren. Idempotent.
+
+    „Kein Bedarf" heißt: diesen Betrieb schreiben wir nicht an — und zwar
+    auch nicht in einem halben Jahr, wenn dieselbe Analyse noch einmal läuft.
+    Genau dafür gibt es die Blacklist, und dort steht die Nummer in aller
+    Regel längst, seit sie importiert wurde.
+
+    Trotzdem wird sie hier geschrieben, denn „in aller Regel" ist kein
+    Versprechen: eine Sperre lässt sich in der Listenverwaltung wieder
+    freigeben (`DELETE /telefonakquise/blacklist/{key}`), und dann hinge die
+    Zusicherung dieses Knopfes an einer Entscheidung, die jemand anderes
+    irgendwann einmal getroffen hat. `add_to_blacklist` ist ein
+    `INSERT OR IGNORE`: ein vorhandener Eintrag behält seine Herkunft, es
+    entsteht also höchstens der fehlende.
+
+    Herkunft `manuell` und nicht `import`: wer die Zeile später in der
+    Sperrliste sieht, soll dort keine Einfuhr lesen, die nie stattgefunden
+    hat — dieselbe Begründung, aus der es `erfasst` gibt. Ohne Nummer gibt es
+    nichts zu sperren.
+    """
+    key = db.phone_key(str(row["telefon"] or ""))
+
+    if not key:
+        return
+
+    db.add_to_blacklist(
+        conn,
+        [
+            [
+                key,
+                str(row["telefon"] or ""),
+                str(row["betrieb"] or ""),
+                BlacklistSource.MANUELL.value,
+                str(row["list_id"] or ""),
+                str(row["list_name"] or ""),
+                "kein Bedarf (Mailversand)",
+                db.now(),
+                username,
+            ]
+        ],
+    )
 
 
 def set_state(
@@ -456,10 +506,15 @@ def set_state(
                 # Die Einschätzung gehört zum Weg bis zur Mail. Danach ist sie
                 # keine Auskunft mehr, sondern ein Widerspruch — und ein still
                 # weggeschriebener Wert wäre einer, den niemand mehr sieht.
+                #
+                # Die Meldung nennt den Zustand, statt „die Mail ist heraus"
+                # zu behaupten: seit „kein Bedarf" endet der Bauweg auch an
+                # einer Zeile, an die nie eine Mail ging.
                 raise MailFollowupError(
-                    f"Die Mail an „{row['betrieb']}“ ist heraus – eine "
-                    "Bau-Einschätzung gibt es dafür nicht mehr. Sie kommt "
-                    "zurück, sobald der Versand zurückgesetzt wird."
+                    f"„{row['betrieb']}“ steht auf "
+                    f"„{MAIL_STATE_LABELS[target]}“ – eine Bau-Einschätzung "
+                    "gibt es dazu nicht mehr. Sie kommt zurück, sobald die "
+                    "Zeile wieder auf „Mail noch nicht versendet“ steht."
                 )
 
             db.set_mail_status(
@@ -498,6 +553,12 @@ def set_state(
                 ),
                 updated_by=username,
             )
+
+            if target is MailState.KEIN_BEDARF:
+                # Der Knopf verspricht „wird nicht mehr angeschrieben", und
+                # dieses Versprechen darf nicht davon abhängen, ob die Nummer
+                # seit dem Import zufällig noch gesperrt ist.
+                _block_number_again(conn, row, username=username)
 
             # Eine Datenbank, ein Zähler: `revision` zählt jede Änderung an
             # `calls.db`, damit ein Poll auf beiden Seiten dieselbe Frage

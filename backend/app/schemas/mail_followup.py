@@ -102,6 +102,20 @@ class MailState(str, Enum):
     POSITIV = "positiv"
     ABGELEHNT = "abgelehnt"
     KEINE_ANTWORT = "keine_antwort"
+    #: Kein Bedarf — **unsere eigene** Einschätzung, ohne Aussage des
+    #: Betriebs: die bestehende Website ist gut genug, der Betrieb ist schon
+    #: Kunde, die Zusage führt zu nichts. Bewusst neben `abgelehnt` und nicht
+    #: darin, dieselbe Trennung wie bei den Anruf-Ergebnissen
+    #: (`CallOutcome.KEIN_BEDARF`): `abgelehnt` ist ein Widerspruch des
+    #: Betriebs, das hier ein Urteil von uns. Beides in einen Topf zu werfen
+    #: hieße, aus der Liste einen Widerspruch herauszulesen, in der keiner
+    #: steht — und die Liste ist dazu da, gelesen zu werden.
+    #:
+    #: Praktisch ist es der Ausgang aus der Arbeit: die Zeile verlässt „Offen"
+    #: und steht in ihrem eigenen Reiter. Die Nummer bleibt dabei gesperrt
+    #: (siehe `mail_followup_service._block_number_again`), damit kein Import
+    #: den Betrieb ein zweites Mal in den Vorrat holt.
+    KEIN_BEDARF = "kein_bedarf"
 
 
 MAIL_STATE_LABELS: dict[MailState, str] = {
@@ -112,6 +126,7 @@ MAIL_STATE_LABELS: dict[MailState, str] = {
     MailState.POSITIV: "Antwort positiv",
     MailState.ABGELEHNT: "Angebot abgelehnt",
     MailState.KEINE_ANTWORT: "keine Antwort",
+    MailState.KEIN_BEDARF: "kein Bedarf (eingeschätzt)",
 }
 
 
@@ -138,13 +153,21 @@ MAIL_STATE_LABELS: dict[MailState, str] = {
 #:   der Fälligkeit heraus gesetzt, der andere überhaupt nie — er *entsteht*
 #:   aus dem Versanddatum. Deshalb taucht `nachfassen` nur als Zeile auf, nie
 #:   in einer.
+#: * `kein_bedarf` steht überall dort, wo noch nichts entschieden ist — also
+#:   auch an `offen`, und dort ist es der eigentliche Fall: die Website ist
+#:   angesehen und schon gut genug, die Mail erübrigt sich. Bis dahin war
+#:   „versendet" der einzige Weg aus `offen` heraus, und eine Zusage, aus der
+#:   nichts wird, blieb für immer in der Arbeitsliste stehen. **Nicht** an
+#:   `positiv`/`abgelehnt`: dort hat der Betrieb selbst geantwortet, und eine
+#:   eigene Einschätzung überschreibt keine Aussage.
 #: * `offen` steht überall als Rückweg: der Fehlklick gehört zum Werkzeug.
 MAIL_TRANSITIONS: dict[MailState, tuple[MailState, ...]] = {
-    MailState.OFFEN: (MailState.VERSENDET,),
+    MailState.OFFEN: (MailState.VERSENDET, MailState.KEIN_BEDARF),
     MailState.VERSENDET: (
         MailState.POSITIV,
         MailState.ABGELEHNT,
         MailState.KEINE_ANTWORT,
+        MailState.KEIN_BEDARF,
         MailState.OFFEN,
     ),
     MailState.NACHFASSEN: (
@@ -153,6 +176,7 @@ MAIL_TRANSITIONS: dict[MailState, tuple[MailState, ...]] = {
         MailState.ABGELEHNT,
         MailState.VERSENDET,
         MailState.KEINE_ANTWORT,
+        MailState.KEIN_BEDARF,
         MailState.OFFEN,
     ),
     MailState.NACHGEFASST: (
@@ -160,6 +184,7 @@ MAIL_TRANSITIONS: dict[MailState, tuple[MailState, ...]] = {
         MailState.ABGELEHNT,
         MailState.VERSENDET,
         MailState.KEINE_ANTWORT,
+        MailState.KEIN_BEDARF,
         MailState.OFFEN,
     ),
     MailState.POSITIV: (MailState.ABGELEHNT, MailState.OFFEN),
@@ -168,8 +193,13 @@ MAIL_TRANSITIONS: dict[MailState, tuple[MailState, ...]] = {
         MailState.VERSENDET,
         MailState.POSITIV,
         MailState.ABGELEHNT,
+        MailState.KEIN_BEDARF,
         MailState.OFFEN,
     ),
+    #: Nur der Rückweg. „Kein Bedarf" ist das Ende der Bearbeitung, und wer
+    #: den Betrieb doch wieder aufnimmt, fängt bei „noch nicht versendet" an
+    #: — mit einem Versanddatum, das dann auch stimmt.
+    MailState.KEIN_BEDARF: (MailState.OFFEN,),
 }
 
 
@@ -252,6 +282,19 @@ MAIL_ACTIONS: tuple[MailActionInfo, ...] = (
         description=(
             "Von Hand abgeschlossen, ohne auf die Frist zu warten. Nach "
             f"{MAIL_TIMEOUT_DAYS} Tagen passiert dasselbe von selbst."
+        ),
+        tone=OutcomeTone.NEUTRAL,
+    ),
+    MailActionInfo(
+        id=MailState.KEIN_BEDARF,
+        label="Kein Bedarf",
+        description=(
+            "Eigene Einschätzung, ohne Aussage des Betriebs – etwa weil die "
+            "bestehende Website schon gut ist oder der Betrieb bereits Kunde "
+            "ist. Die Zeile verlässt die Arbeitsliste und steht unter „Kein "
+            "Bedarf“; die Telefonnummer bleibt gesperrt, damit kein Import "
+            "den Betrieb noch einmal hereinholt. Der Grund gehört in die "
+            "Anmerkung."
         ),
         tone=OutcomeTone.NEUTRAL,
     ),
@@ -532,6 +575,10 @@ class MailCounters(BaseModel):
     positiv: int
     abgelehnt: int
     keine_antwort: int
+    #: Von uns abgeschriebene Zusagen — kein Widerspruch des Betriebs,
+    #: sondern eine Einschätzung. Eigene Zahl und nicht zu `abgelehnt`
+    #: geschlagen, aus demselben Grund, aus dem es der eigene Zustand ist.
+    kein_bedarf: int
     #: Zusagen ohne Adresse. Sie stehen mit in der Liste, aber ohne
     #: Versand-Knopf — die Nacharbeit, die sonst niemand sieht. Zählt wie die
     #: Reiter über ihr, also innerhalb eines gesetzten Marker-Filters.

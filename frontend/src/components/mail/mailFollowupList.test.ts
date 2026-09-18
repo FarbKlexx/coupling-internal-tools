@@ -40,6 +40,7 @@ const actions: MailActionInfo[] = [
   { id: "positiv", label: "Antwort positiv", description: "Will weitermachen.", tone: "positive" },
   { id: "abgelehnt", label: "Angebot abgelehnt", description: "Hat abgelehnt.", tone: "negative" },
   { id: "keine_antwort", label: "keine Antwort", description: "Von Hand.", tone: "neutral" },
+  { id: "kein_bedarf", label: "Kein Bedarf", description: "Eigene Einschätzung.", tone: "neutral" },
   { id: "offen", label: "zurücksetzen", description: "Für den Fehlklick.", tone: "neutral" },
 ];
 
@@ -109,6 +110,7 @@ function board(...entries: MailEntry[]): MailBoard {
       positiv: 0,
       abgelehnt: 0,
       keine_antwort: 0,
+      kein_bedarf: rows.filter((row) => row.state === "kein_bedarf").length,
       ohne_email: rows.filter((row) => !row.email).length,
       ready_to_build: rows.filter((row) => row.readiness === "ready_to_build").length,
       in_development: rows.filter((row) => row.readiness === "in_development").length,
@@ -199,6 +201,7 @@ describe("MailFollowupList", () => {
       "positiv",
       "abgelehnt",
       "keine_antwort",
+      "kein_bedarf",
     ]);
   });
 
@@ -306,6 +309,40 @@ describe("MailFollowupList", () => {
 
     expect(wrapper.find("li a[target='_blank']").exists()).toBe(false);
     expect(wrapper.text()).toContain("keine");
+  });
+
+  it("bietet den Ausgang aus der Arbeitsliste an einer offenen Zusage an", async () => {
+    // Bis hierher fuehrte aus „offen" allein „versendet" heraus – eine Zusage,
+    // aus der nichts wird, blieb fuer immer in der Liste stehen, die
+    // abgearbeitet werden soll.
+    const { wrapper, save } = mountList([{ ...entry, actions: ["versendet", "kein_bedarf"] }]);
+
+    const button = wrapper.findAll("li button").find((b) => b.text().includes("Kein Bedarf"));
+    await button?.trigger("click");
+
+    expect(save).toHaveBeenCalledWith("k1", { state: "kein_bedarf" });
+  });
+
+  it("zeigt „kein Bedarf“ gedaempft und nicht wie eine Ablehnung", () => {
+    // Rot ist der Widerspruch des Betriebs. Hier hat niemand widersprochen –
+    // das ist unsere eigene Einschaetzung, und die Unterscheidung ist der
+    // ganze Grund fuer den eigenen Zustand.
+    const { wrapper } = mountList([
+      {
+        ...entry,
+        state: "kein_bedarf",
+        state_label: "kein Bedarf (eingeschätzt)",
+        actions: ["offen"],
+      },
+    ]);
+
+    const label = wrapper.findAll("li span").find((s) => s.text().includes("kein Bedarf"));
+
+    expect(label?.classes()).not.toContain("text-red-400");
+    expect(label?.text()).toContain("do_not_disturb_on");
+    // Und der einzige Weg zurueck ist das Zuruecksetzen – die Zeile ist
+    // abgeschlossen, nicht in Arbeit.
+    expect(rowButtons(wrapper).some((text) => text.includes("zurücksetzen"))).toBe(true);
   });
 
   it("weist den automatisch gesetzten Zustand als solchen aus", () => {

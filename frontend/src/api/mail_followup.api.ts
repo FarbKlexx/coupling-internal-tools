@@ -18,6 +18,12 @@ import type { ContactField } from "./call_list.api";
  * Antwort* (`MailBoard.actions`) – hier stehen nur die IDs, weil das Frontend
  * jeder ID ein Symbol zuordnet. `mailStates.test.ts` hält beide Seiten
  * zusammen, nach dem Muster von `callOutcomes.test.ts`.
+ *
+ * `kein_bedarf` ist der Ausgang aus der Arbeitsliste: unsere eigene
+ * Einschätzung, dass sich die Mail erübrigt – etwa weil die bestehende
+ * Website schon gut ist. Bewusst neben `abgelehnt` und nicht darin, dieselbe
+ * Trennung wie bei den Anruf-Ergebnissen: dort hat der Betrieb widersprochen,
+ * hier haben wir geurteilt. Die Nummer bleibt dabei gesperrt.
  */
 export const MAIL_STATES = [
   "offen",
@@ -27,6 +33,7 @@ export const MAIL_STATES = [
   "positiv",
   "abgelehnt",
   "keine_antwort",
+  "kein_bedarf",
 ] as const;
 
 export type MailState = (typeof MAIL_STATES)[number];
@@ -199,6 +206,9 @@ export interface MailCounters {
   positiv: number;
   abgelehnt: number;
   keine_antwort: number;
+  /** Von uns abgeschrieben – kein Widerspruch des Betriebs, sondern eine
+   *  Einschätzung. Eigene Zahl, wie es ein eigener Zustand ist. */
+  kein_bedarf: number;
   /** Zusagen ohne Adresse – die Nacharbeit, die sonst niemand sieht. */
   ohne_email: number;
   /**
