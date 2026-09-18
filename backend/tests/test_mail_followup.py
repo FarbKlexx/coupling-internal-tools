@@ -1894,9 +1894,9 @@ def test_no_interest_takes_the_promise_out_of_the_open_list(zusagen):
     # Aus der Liste ist sie nicht verschwunden, nur aus „Offen": die Zusage
     # gilt weiter, und was aus ihr wurde, bleibt nachlesbar.
     assert board["counters"]["gesamt"] == 2
-    assert [e["contact_id"] for e in _board(client, state="kein_bedarf")["entries"]] == [
-        ids[0]
-    ]
+    assert [
+        e["contact_id"] for e in _board(client, state="kein_bedarf")["entries"]
+    ] == [ids[0]]
     assert [e["contact_id"] for e in _board(client, state="offen")["entries"]] == [
         ids[1]
     ]
@@ -1919,7 +1919,9 @@ def test_no_interest_is_our_judgement_and_not_a_refusal(zusagen):
     entry = _entry(board, ids[0])
     assert entry["promised_at"] is not None
     decisions = client.get("/telefonakquise/decisions").json()["entries"]
-    assert [d["outcome"] for d in decisions if d["contact_id"] == ids[0]] == ["zugesagt"]
+    assert [d["outcome"] for d in decisions if d["contact_id"] == ids[0]] == [
+        "zugesagt"
+    ]
 
 
 def test_an_answer_of_the_business_is_not_overruled_by_our_judgement(zusagen):
