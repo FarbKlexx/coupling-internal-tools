@@ -270,10 +270,41 @@
   transition: none !important;
 }
 
+/* Die Hoehenkette, an der die Huelle des Dashboards haengt.
+
+   Alle drei Glieder braucht es: `#app` ist der Wurzelknoten von Vue und steht
+   zwischen <body> und der Huelle. Fehlt seine Hoehe, ist die Kette
+   unterbrochen — ein Prozentwert braucht einen Bezug, und `h-full` an der
+   Huelle faellt ohne ihn auf „so hoch wie der Inhalt" zurueck, womit die
+   Kopfzeile aus dem Bild geschoben wuerde. */
+html,
+body,
+#app {
+  height: 100%;
+}
+
 html,
 body {
   font-family: "Outfit", sans-serif !important;
-  height: 100%;
+}
+
+/* Gescrollt wird im Hauptbereich, nie im Dokument.
+
+   Dass das Dokument nicht scrollt, war bisher nur eine *Folge* davon, dass
+   die Huelle genau einen Bildschirm hoch ist — eine Rechnung, die schon ein
+   einziger Scrollbalken kippt, und danach kippt sie weiter: ein waagerechter
+   Balken macht die Huelle zu hoch, das Dokument bekommt einen senkrechten
+   dazu, der nimmt Breite weg, und der waagerechte hat erst recht seinen
+   Grund. Am Ende stehen drei Bildlaufleisten um eine Seite, die in den
+   Bildschirm passt. Hier steht es als Regel statt als Nebenwirkung.
+
+   Gebunden an die Huelle des Dashboards (`:has`), nicht an `html` schlechthin:
+   die Anmeldeseite laeuft ohne dieses Layout und soll scrollen duerfen wie
+   jede gewoehnliche Seite. Ein Browser ohne `:has()` verliert nur die
+   Zusicherung, nicht das Verhalten — die Huelle misst dort dieselbe Hoehe. */
+html:has(.app-shell),
+html:has(.app-shell) body {
+  overflow: hidden;
 }
 
 body {
@@ -343,6 +374,16 @@ a {
 .content-area {
   padding: var(--content-gap);
   border-top-left-radius: calc(var(--content-gap) + var(--box-radius));
+
+  /* Der Platz fuer die eigene Bildlaufleiste ist immer reserviert, auch auf
+     einer kurzen Seite. Ohne das ist der Hauptbereich je nach Inhalt
+     unterschiedlich breit: eine Liste, die beim Tippen eine Zeile laenger
+     wird, zieht die Leiste herein, nimmt damit Breite weg — und was vorher
+     genau passte, braucht jetzt eine waagerechte Leiste. Beim Wechsel
+     zwischen zwei Seiten springt derselbe Inhalt sichtbar zur Seite.
+     Mit ueberlagernden Bildlaufleisten (macOS ohne Maus) ist die Regel
+     wirkungslos, dort gibt es das Problem auch nicht. */
+  scrollbar-gutter: stable;
 }
 
 /* Das Logo liegt als SVG mit fest weißer Füllung in `public/`. Im Hellmodus

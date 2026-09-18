@@ -2,12 +2,22 @@
   <!--
     Gescrollt wird in <main>, nicht im Dokument.
 
-    Die Huelle ist genau einen Bildschirm hoch (`h-dvh`), also bleiben
-    Kopfzeile und Navigation stehen, wo sie sind — ohne `position: fixed`,
-    ohne die Hoehe der Kopfzeile irgendwo als Zahl zu wiederholen und ohne
-    dass die Navigation eine eigene Bildlaufleiste ins Nichts bekommt.
-    `dvh` statt `vh`, damit die ein- und ausfahrende Adressleiste auf dem
-    Telefon die Hoehe nicht ueberlaufen laesst.
+    Die Huelle ist genau einen Bildschirm hoch, also bleiben Kopfzeile und
+    Navigation stehen, wo sie sind — ohne `position: fixed`, ohne die Hoehe
+    der Kopfzeile irgendwo als Zahl zu wiederholen und ohne dass die
+    Navigation eine eigene Bildlaufleiste ins Nichts bekommt.
+
+    `h-full` und nicht `h-dvh`: die Hoehe kommt jetzt ueber `html, body {
+    height: 100% }` aus dem Dokument statt aus einer Viewport-Einheit. Der
+    Unterschied ist genau ein Scrollbalken. Viewport-Einheiten messen den
+    Bildschirm *einschliesslich* eines waagerechten Scrollbalkens — taucht
+    einer auf, ist die Huelle um dessen Hoehe zu hoch, das Dokument bekommt
+    einen senkrechten Scrollbalken dazu, der nimmt Breite weg, und die
+    naechste Zeile passt erst recht nicht mehr. Ein Prozentwert kann das
+    nicht: er ist die Hoehe, die wirklich da ist. Der Grund fuer `dvh` faellt
+    damit nicht weg, er wird nur anders erfuellt — `height: 100%` loest
+    gegen den kleinen Viewport auf und laeuft mit ausgefahrener Adressleiste
+    ebenso wenig ueber.
 
     Vorher scrollte das Dokument, und die Navigation lief bei einer langen
     Liste (Mailversand, Telefonakquise) nach oben aus dem Bild. Das
@@ -15,7 +25,11 @@
     stehen: es haelt ihren Stapelkontext (`z-40`) ueber dem Inhalt und traegt
     den Fall, dass hier wieder das Dokument scrollt.
   -->
-  <div class="flex h-dvh flex-col">
+  <!-- `app-shell` ist keine Gestaltung, sondern die Marke, an der
+       `style.css` das Dokument stilllegt: nur wo diese Huelle steht, darf
+       ausschliesslich <main> scrollen (die Anmeldeseite hat kein Dashboard
+       und scrollt weiter wie jede Seite). -->
+  <div class="app-shell flex h-full flex-col">
     <!-- Topbar -->
     <!-- shrink-0: in einer Spalte darf ein Flex-Element unter seinen Inhalt
          schrumpfen — ohne das quetscht eine hohe Seite die Kopfzeile. -->
